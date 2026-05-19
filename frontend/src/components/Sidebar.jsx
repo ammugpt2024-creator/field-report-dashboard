@@ -2,32 +2,21 @@ import { Link } from "react-router-dom";
 
 function Sidebar() {
   return (
-    <div className="w-64 bg-gray-900 text-white p-6">
+    <div className="sidebar">
 
-      <h1 className="text-2xl font-bold mb-10">
-        Dashboard
-      </h1>
+      <h1>Dashboard</h1>
 
-      <nav className="flex flex-col gap-4">
+      <nav>
 
-        <Link
-          to="/"
-          className="hover:bg-gray-700 p-3 rounded"
-        >
+        <Link to="/">
           Home
         </Link>
 
-        <Link
-          to="/reports/1"
-          className="hover:bg-gray-700 p-3 rounded"
-        >
+        <Link to="/reports/1">
           Reports
         </Link>
 
-        <Link
-          to="/lab-reports/1"
-          className="hover:bg-gray-700 p-3 rounded"
-        >
+        <Link to="/lab-reports/1">
           Lab Reports
         </Link>
 

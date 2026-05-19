@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import MainLayout from "../layouts/MainLayout";
 import { supabase } from "../services/supabase";
 
 function Dashboard() {
@@ -8,6 +7,8 @@ function Dashboard() {
   const navigate = useNavigate();
 
   const [projects, setProjects] = useState([]);
+  const [search, setSearch] = useState("");
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     fetchProjects();
@@ -15,45 +16,129 @@ function Dashboard() {
 
   async function fetchProjects() {
 
+    setLoading(true);
+
     const { data, error } = await supabase
       .from("projects")
       .select("*");
 
     if (error) {
-      console.log(error);
+
+      console.log("Error fetching projects:", error);
+
     } else {
-      setProjects(data);
+
+      setProjects(data || []);
     }
+
+    setLoading(false);
   }
 
+  // SEARCH FILTER
+
+  const filteredProjects = projects.filter((project) =>
+    project.name
+      ?.toLowerCase()
+      .includes(search.toLowerCase())
+  );
+
   return (
-    <MainLayout>
 
-      <h1 className="text-4xl font-bold mb-8 text-gray-800">
-        Field Report Dashboard
-      </h1>
+    <div className="dashboard-content">
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      {/* HEADER */}
 
-        {projects.map((project) => (
-          <div
-            key={project.id}
-            onClick={() => navigate(`/reports/${project.id}`)}
-            className="bg-white rounded-xl shadow-md p-8 cursor-pointer hover:shadow-2xl transition"
-          >
-            <h2 className="text-2xl font-semibold text-gray-800">
-              {project.name}
-            </h2>
+      <div className="dashboard-header">
 
-            <p className="text-gray-500 mt-3">
-              {project.description}
-            </p>
-          </div>
-        ))}
+        <div>
+
+          <h1>
+            Field Report Dashboard
+          </h1>
+
+          <p className="dashboard-subtitle">
+            Manage field reports, lab reports, and inspection files
+          </p>
+
+        </div>
+
+        {/* SEARCH */}
+
+        <input
+          type="text"
+          placeholder="Search projects..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="search-box"
+        />
 
       </div>
 
-    </MainLayout>
+      {/* LOADING */}
+
+      {loading ? (
+
+        <div className="empty-message">
+          Loading projects...
+        </div>
+
+      ) : (
+
+        <>
+          
+          {/* PROJECT GRID */}
+
+          <div className="card-grid">
+
+            {filteredProjects.map((project) => (
+
+              <div
+                key={project.id}
+                onClick={() => navigate(`/reports/${project.id}`)}
+                className="project-card"
+              >
+
+                <div className="project-top">
+
+                  <div className="project-icon">
+                    📁
+                  </div>
+
+                </div>
+
+                <h2>
+                  {project.name}
+                </h2>
+
+                <p>
+                  {project.description}
+                </p>
+
+                <button className="open-btn">
+                  Open Project
+                </button>
+
+              </div>
+
+            ))}
+
+          </div>
+
+          {/* EMPTY MESSAGE */}
+
+          {filteredProjects.length === 0 && (
+
+            <div className="empty-message">
+              No projects found
+            </div>
+
+          )}
+
+        </>
+
+      )}
+
+    </div>
   );
 }
 

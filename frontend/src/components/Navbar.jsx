@@ -1,12 +1,12 @@
 function Navbar() {
   return (
-    <div className="bg-white shadow p-5 flex justify-between">
+    <div className="navbar">
 
-      <h2 className="text-2xl font-semibold">
+      <h2 className="navbar-title">
         Field Report System
       </h2>
 
-      <button className="bg-blue-600 text-white px-4 py-2 rounded">
+      <button className="login-btn">
         Login
       </button>
 
