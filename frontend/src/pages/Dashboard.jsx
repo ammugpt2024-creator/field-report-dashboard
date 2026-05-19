@@ -1,5 +1,18 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+
+import {
+  FolderKanban,
+  FileText,
+  FlaskConical,
+  AlertTriangle
+} from "lucide-react";
+
+import ReportsTable from "../components/ReportsTable";
+import PieChartCard from "../components/PieChartCard";
+import ActivityChart from "../components/ActivityChart";
+import StatCard from "../components/StatCard";
+
 import { supabase } from "../services/supabase";
 
 function Dashboard() {
@@ -10,36 +23,137 @@ function Dashboard() {
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
 
+  // COUNTS
+
+  const [fieldReportsCount, setFieldReportsCount] = useState(0);
+  const [labReportsCount, setLabReportsCount] = useState(0);
+  const [openIssuesCount, setOpenIssuesCount] = useState(0);
+
   useEffect(() => {
-    fetchProjects();
+
+    fetchDashboardData();
+
   }, []);
 
-  async function fetchProjects() {
+  async function fetchDashboardData() {
 
-    setLoading(true);
+    try {
 
-    const { data, error } = await supabase
-      .from("projects")
-      .select("*");
+      setLoading(true);
 
-    if (error) {
+      // FETCH PROJECTS
 
-      console.log("Error fetching projects:", error);
+      const {
+        data: projectsData,
+        error: projectsError
+      } = await supabase
+        .from("projects")
+        .select("*");
 
-    } else {
+      if (projectsError) {
 
-      setProjects(data || []);
+        console.log(
+          "Error fetching projects:",
+          projectsError
+        );
+
+      } else {
+
+        setProjects(projectsData || []);
+      }
+
+      // FETCH FIELD REPORTS
+
+      const {
+        data: fieldReports,
+        error: fieldError
+      } = await supabase
+        .from("reports")
+        .select("*")
+        .eq("type", "field");
+
+      if (fieldError) {
+
+        console.log(
+          "Error fetching field reports:",
+          fieldError
+        );
+
+      } else {
+
+        setFieldReportsCount(
+          fieldReports?.length || 0
+        );
+      }
+
+      // FETCH LAB REPORTS
+
+      const {
+        data: labReports,
+        error: labError
+      } = await supabase
+        .from("reports")
+        .select("*")
+        .eq("type", "lab");
+
+      if (labError) {
+
+        console.log(
+          "Error fetching lab reports:",
+          labError
+        );
+
+      } else {
+
+        setLabReportsCount(
+          labReports?.length || 0
+        );
+      }
+
+      // FETCH OPEN ISSUES
+
+      const {
+        data: issues,
+        error: issuesError
+      } = await supabase
+        .from("issues")
+        .select("*")
+        .eq("status", "open");
+
+      if (issuesError) {
+
+        console.log(
+          "Error fetching issues:",
+          issuesError
+        );
+
+      } else {
+
+        setOpenIssuesCount(
+          issues?.length || 0
+        );
+      }
+
+    } catch (err) {
+
+      console.log(
+        "Unexpected error:",
+        err
+      );
+
+    } finally {
+
+      setLoading(false);
     }
-
-    setLoading(false);
   }
 
   // SEARCH FILTER
 
-  const filteredProjects = projects.filter((project) =>
-    project.name
-      ?.toLowerCase()
-      .includes(search.toLowerCase())
+  const filteredProjects = projects.filter(
+    (project) =>
+      project?.name
+        ?.toLowerCase()
+        .includes(search.toLowerCase())
   );
 
   return (
@@ -50,14 +164,16 @@ function Dashboard() {
 
       <div className="dashboard-header">
 
-        <div>
+        <div className="dashboard-header-left">
 
           <h1>
             Field Report Dashboard
           </h1>
 
           <p className="dashboard-subtitle">
-            Manage field reports, lab reports, and inspection files
+            Manage field reports,
+            lab reports,
+            and inspection files
           </p>
 
         </div>
@@ -68,7 +184,9 @@ function Dashboard() {
           type="text"
           placeholder="Search projects..."
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          onChange={(e) =>
+            setSearch(e.target.value)
+          }
           className="search-box"
         />
 
@@ -79,13 +197,55 @@ function Dashboard() {
       {loading ? (
 
         <div className="empty-message">
-          Loading projects...
+          Loading dashboard...
         </div>
 
       ) : (
 
         <>
-          
+
+          {/* KPI CARDS */}
+
+          <div className="stats-grid">
+
+            <StatCard
+              title="Active Projects"
+              value={projects.length}
+              color="blue"
+              icon={
+                <FolderKanban size={24} />
+              }
+            />
+
+            <StatCard
+              title="Field Reports"
+              value={fieldReportsCount}
+              color="green"
+              icon={
+                <FileText size={24} />
+              }
+            />
+
+            <StatCard
+              title="Lab Reports"
+              value={labReportsCount}
+              color="purple"
+              icon={
+                <FlaskConical size={24} />
+              }
+            />
+
+            <StatCard
+              title="Open Issues"
+              value={openIssuesCount}
+              color="orange"
+              icon={
+                <AlertTriangle size={24} />
+              }
+            />
+
+          </div>
+
           {/* PROJECT GRID */}
 
           <div className="card-grid">
@@ -94,7 +254,6 @@ function Dashboard() {
 
               <div
                 key={project.id}
-                onClick={() => navigate(`/reports/${project.id}`)}
                 className="project-card"
               >
 
@@ -114,7 +273,14 @@ function Dashboard() {
                   {project.description}
                 </p>
 
-                <button className="open-btn">
+                <button
+                  className="open-btn"
+                  onClick={() =>
+                    navigate(
+                      `/reports/${project.id}`
+                    )
+                  }
+                >
                   Open Project
                 </button>
 
@@ -124,7 +290,7 @@ function Dashboard() {
 
           </div>
 
-          {/* EMPTY MESSAGE */}
+          {/* EMPTY STATE */}
 
           {filteredProjects.length === 0 && (
 
@@ -133,6 +299,20 @@ function Dashboard() {
             </div>
 
           )}
+
+          {/* CHARTS */}
+
+          <div className="charts-grid">
+
+            <PieChartCard />
+
+            <ActivityChart />
+
+          </div>
+
+          {/* REPORT TABLE */}
+
+          <ReportsTable />
 
         </>
 
