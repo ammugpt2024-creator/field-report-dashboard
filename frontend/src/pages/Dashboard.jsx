@@ -3,16 +3,12 @@ import { useNavigate } from "react-router-dom";
 
 import {
   FolderKanban,
-  FileText,
-  FlaskConical,
-  AlertTriangle
+  AlertTriangle,
+  Plus,
+  X
 } from "lucide-react";
 
-import ReportsTable from "../components/ReportsTable";
-import PieChartCard from "../components/PieChartCard";
-import ActivityChart from "../components/ActivityChart";
 import StatCard from "../components/StatCard";
-
 import { supabase } from "../services/supabase";
 
 function Dashboard() {
@@ -21,137 +17,66 @@ function Dashboard() {
 
   const [projects, setProjects] = useState([]);
   const [search, setSearch] = useState("");
-  const [loading, setLoading] = useState(true);
 
-  // COUNTS
+  const [showModal, setShowModal] = useState(false);
 
-  const [fieldReportsCount, setFieldReportsCount] = useState(0);
-  const [labReportsCount, setLabReportsCount] = useState(0);
-  const [openIssuesCount, setOpenIssuesCount] = useState(0);
+  const [formData, setFormData] = useState({
+    project_number: "",
+    project_name: "",
+    client_name: "",
+    client_representative: "",
+    project_location: "",
+    status: "Active"
+  });
 
   useEffect(() => {
-
-    fetchDashboardData();
-
+    fetchProjects();
   }, []);
 
-  async function fetchDashboardData() {
+  async function fetchProjects() {
 
-    try {
+    const { data, error } = await supabase
+      .from("projects")
+      .select("*")
+      .order("id", { ascending: false });
 
-      setLoading(true);
-
-      // FETCH PROJECTS
-
-      const {
-        data: projectsData,
-        error: projectsError
-      } = await supabase
-        .from("projects")
-        .select("*");
-
-      if (projectsError) {
-
-        console.log(
-          "Error fetching projects:",
-          projectsError
-        );
-
-      } else {
-
-        setProjects(projectsData || []);
-      }
-
-      // FETCH FIELD REPORTS
-
-      const {
-        data: fieldReports,
-        error: fieldError
-      } = await supabase
-        .from("reports")
-        .select("*")
-        .eq("type", "field");
-
-      if (fieldError) {
-
-        console.log(
-          "Error fetching field reports:",
-          fieldError
-        );
-
-      } else {
-
-        setFieldReportsCount(
-          fieldReports?.length || 0
-        );
-      }
-
-      // FETCH LAB REPORTS
-
-      const {
-        data: labReports,
-        error: labError
-      } = await supabase
-        .from("reports")
-        .select("*")
-        .eq("type", "lab");
-
-      if (labError) {
-
-        console.log(
-          "Error fetching lab reports:",
-          labError
-        );
-
-      } else {
-
-        setLabReportsCount(
-          labReports?.length || 0
-        );
-      }
-
-      // FETCH OPEN ISSUES
-
-      const {
-        data: issues,
-        error: issuesError
-      } = await supabase
-        .from("issues")
-        .select("*")
-        .eq("status", "open");
-
-      if (issuesError) {
-
-        console.log(
-          "Error fetching issues:",
-          issuesError
-        );
-
-      } else {
-
-        setOpenIssuesCount(
-          issues?.length || 0
-        );
-      }
-
-    } catch (err) {
-
-      console.log(
-        "Unexpected error:",
-        err
-      );
-
-    } finally {
-
-      setLoading(false);
+    if (error) {
+      console.log(error);
+    } else {
+      setProjects(data || []);
     }
   }
 
-  // SEARCH FILTER
+  async function createProject() {
+
+    const { error } = await supabase
+      .from("projects")
+      .insert([formData]);
+
+    if (error) {
+
+      alert(error.message);
+
+    } else {
+
+      setShowModal(false);
+
+      setFormData({
+        project_number: "",
+        project_name: "",
+        client_name: "",
+        client_representative: "",
+        project_location: "",
+        status: "Active"
+      });
+
+      fetchProjects();
+    }
+  }
 
   const filteredProjects = projects.filter(
     (project) =>
-      project?.name
+      project.project_name
         ?.toLowerCase()
         .includes(search.toLowerCase())
   );
@@ -160,161 +85,286 @@ function Dashboard() {
 
     <div className="dashboard-content">
 
-      {/* HEADER */}
-
       <div className="dashboard-header">
 
-        <div className="dashboard-header-left">
+        <div>
 
           <h1>
-            Field Report Dashboard
+            Projects
           </h1>
 
           <p className="dashboard-subtitle">
-            Manage field reports,
-            lab reports,
-            and inspection files
+            Manage all QA/QC projects in one place
           </p>
 
         </div>
 
-        {/* SEARCH */}
+        <div className="dashboard-actions">
 
-        <input
-          type="text"
-          placeholder="Search projects..."
-          value={search}
-          onChange={(e) =>
-            setSearch(e.target.value)
+          <button
+            className="create-project-btn"
+            onClick={() => setShowModal(true)}
+          >
+            <Plus size={18} />
+            Create Project
+          </button>
+
+          <input
+            type="text"
+            placeholder="Search projects..."
+            value={search}
+            onChange={(e) =>
+              setSearch(e.target.value)
+            }
+            className="search-box"
+          />
+
+        </div>
+
+      </div>
+
+      <div className="stats-grid">
+
+        <StatCard
+          title="Total Projects"
+          value={projects.length}
+          color="blue"
+          icon={<FolderKanban size={24} />}
+        />
+
+        <StatCard
+          title="Active Projects"
+          value={
+            projects.filter(
+              (project) =>
+                project.status === "Active"
+            ).length
           }
-          className="search-box"
+          color="green"
+          icon={<FolderKanban size={24} />}
+        />
+
+        <StatCard
+          title="Pending Review"
+          value={
+            projects.filter(
+              (project) =>
+                project.status === "Pending"
+            ).length
+          }
+          color="orange"
+          icon={<AlertTriangle size={24} />}
+        />
+
+        <StatCard
+          title="Delayed Projects"
+          value={
+            projects.filter(
+              (project) =>
+                project.status === "Delayed"
+            ).length
+          }
+          color="red"
+          icon={<AlertTriangle size={24} />}
         />
 
       </div>
 
-      {/* LOADING */}
+      <div className="card-grid">
 
-      {loading ? (
+        {filteredProjects.map((project) => (
 
-        <div className="empty-message">
-          Loading dashboard...
-        </div>
+          <div
+            key={project.id}
+            className="project-card"
+          >
 
-      ) : (
+            <div className="project-top">
 
-        <>
-
-          {/* KPI CARDS */}
-
-          <div className="stats-grid">
-
-            <StatCard
-              title="Active Projects"
-              value={projects.length}
-              color="blue"
-              icon={
-                <FolderKanban size={24} />
-              }
-            />
-
-            <StatCard
-              title="Field Reports"
-              value={fieldReportsCount}
-              color="green"
-              icon={
-                <FileText size={24} />
-              }
-            />
-
-            <StatCard
-              title="Lab Reports"
-              value={labReportsCount}
-              color="purple"
-              icon={
-                <FlaskConical size={24} />
-              }
-            />
-
-            <StatCard
-              title="Open Issues"
-              value={openIssuesCount}
-              color="orange"
-              icon={
-                <AlertTriangle size={24} />
-              }
-            />
-
-          </div>
-
-          {/* PROJECT GRID */}
-
-          <div className="card-grid">
-
-            {filteredProjects.map((project) => (
-
-              <div
-                key={project.id}
-                className="project-card"
-              >
-
-                <div className="project-top">
-
-                  <div className="project-icon">
-                    📁
-                  </div>
-
-                </div>
-
-                <h2>
-                  {project.name}
-                </h2>
-
-                <p>
-                  {project.description}
-                </p>
-
-                <button
-                  className="open-btn"
-                  onClick={() =>
-                    navigate(
-                      `/reports/${project.id}`
-                    )
-                  }
-                >
-                  Open Project
-                </button>
-
+              <div className="project-icon">
+                📁
               </div>
 
-            ))}
+              <span className="status-badge">
+                {project.status}
+              </span>
 
-          </div>
-
-          {/* EMPTY STATE */}
-
-          {filteredProjects.length === 0 && (
-
-            <div className="empty-message">
-              No projects found
             </div>
 
-          )}
+            <h2>
+              {project.project_name}
+            </h2>
 
-          {/* CHARTS */}
+            <p className="project-number">
+              {project.project_number}
+            </p>
 
-          <div className="charts-grid">
+            <p>
+              <strong>Client:</strong>
+              {" "}
+              {project.client_name}
+            </p>
 
-            <PieChartCard />
+            <p>
+              <strong>Representative:</strong>
+              {" "}
+              {project.client_representative}
+            </p>
 
-            <ActivityChart />
+            <p>
+              <strong>Location:</strong>
+              {" "}
+              {project.project_location}
+            </p>
+
+            <button
+              className="open-btn"
+              onClick={() =>
+                navigate(`/project/${project.id}`)
+              }
+            >
+              Open Project
+            </button>
 
           </div>
 
-          {/* REPORT TABLE */}
+        ))}
 
-          <ReportsTable />
+      </div>
 
-        </>
+      {filteredProjects.length === 0 && (
+
+        <div className="empty-message">
+          No projects found
+        </div>
+
+      )}
+
+      {/* MODAL */}
+
+      {showModal && (
+
+        <div className="modal-overlay">
+
+          <div className="modal">
+
+            <div className="modal-header">
+
+              <h2>
+                Create Project
+              </h2>
+
+              <button
+                className="close-btn"
+                onClick={() =>
+                  setShowModal(false)
+                }
+              >
+                <X size={20} />
+              </button>
+
+            </div>
+
+            <input
+              type="text"
+              placeholder="Project Number"
+              className="modal-input"
+              value={formData.project_number}
+              onChange={(e) =>
+                setFormData({
+                  ...formData,
+                  project_number: e.target.value
+                })
+              }
+            />
+
+            <input
+              type="text"
+              placeholder="Project Name"
+              className="modal-input"
+              value={formData.project_name}
+              onChange={(e) =>
+                setFormData({
+                  ...formData,
+                  project_name: e.target.value
+                })
+              }
+            />
+
+            <input
+              type="text"
+              placeholder="Client Name"
+              className="modal-input"
+              value={formData.client_name}
+              onChange={(e) =>
+                setFormData({
+                  ...formData,
+                  client_name: e.target.value
+                })
+              }
+            />
+
+            <input
+              type="text"
+              placeholder="Client Representative"
+              className="modal-input"
+              value={formData.client_representative}
+              onChange={(e) =>
+                setFormData({
+                  ...formData,
+                  client_representative: e.target.value
+                })
+              }
+            />
+
+            <input
+              type="text"
+              placeholder="Project Location"
+              className="modal-input"
+              value={formData.project_location}
+              onChange={(e) =>
+                setFormData({
+                  ...formData,
+                  project_location: e.target.value
+                })
+              }
+            />
+
+            <select
+              className="modal-input"
+              value={formData.status}
+              onChange={(e) =>
+                setFormData({
+                  ...formData,
+                  status: e.target.value
+                })
+              }
+            >
+
+              <option>
+                Active
+              </option>
+
+              <option>
+                Pending
+              </option>
+
+              <option>
+                Delayed
+              </option>
+
+            </select>
+
+            <button
+              className="save-btn"
+              onClick={createProject}
+            >
+              Save Project
+            </button>
+
+          </div>
+
+        </div>
 
       )}
 

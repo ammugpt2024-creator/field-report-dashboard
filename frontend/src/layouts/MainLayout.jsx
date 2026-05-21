@@ -1,22 +1,12 @@
-import Sidebar from "../components/Sidebar";
 import Navbar from "../components/Navbar";
 
 function MainLayout({ children }) {
   return (
-    <div className="flex min-h-screen bg-gray-100">
-
-      <Sidebar />
-
-      <div className="flex-1">
-
-        <Navbar />
-
-        <div className="p-6">
-          {children}
-        </div>
-
-      </div>
-
+    <div className="min-h-screen bg-slate-100">
+      <Navbar />
+      <main className="min-h-[calc(100vh-64px)] overflow-x-hidden overflow-y-auto p-0">
+        {children}
+      </main>
     </div>
   );
 }
