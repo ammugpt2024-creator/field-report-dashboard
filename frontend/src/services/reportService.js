@@ -130,15 +130,17 @@ export async function saveRowAttachmentMetadata(reportId, attachments) {
 
 export async function setReportStatus(reportId, status, options = {}) {
   const payload = {
-    status,
-    final_pdf_url: options.finalPdfUrl || null,
-    pdf_url: options.pdfUrl || null,
-    approved_at: options.approvedAt || null,
-    approved_by: options.approvedBy || null,
-    rejected_at: options.rejectedAt || null,
-    rejected_by: options.rejectedBy || null,
-    rejection_reason: options.rejectionReason || null
+    status
   };
+
+  if (options.finalPdfUrl !== undefined) payload.final_pdf_url = options.finalPdfUrl;
+  if (options.pdfUrl !== undefined) payload.pdf_url = options.pdfUrl;
+  if (options.approvedAt !== undefined) payload.approved_at = options.approvedAt;
+  if (options.approvedBy !== undefined) payload.approved_by = options.approvedBy;
+  if (options.rejectedAt !== undefined) payload.rejected_at = options.rejectedAt;
+  if (options.rejectedBy !== undefined) payload.rejected_by = options.rejectedBy;
+  if (options.rejectionReason !== undefined) payload.rejection_reason = options.rejectionReason;
+
   const { data, error } = await supabase
     .from('concrete_test_logs')
     .update(payload)

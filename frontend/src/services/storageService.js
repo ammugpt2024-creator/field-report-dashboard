@@ -24,6 +24,11 @@ export async function uploadReportPdf(projectId, reportId, pdfBlob) {
   if (error) {
     throw error;
   }
+  const { data: signedData, error: signedError } = await supabase.storage
+    .from(PDF_BUCKET)
+    .createSignedUrl(path, 60 * 60 * 24 * 30);
+  if (!signedError && signedData?.signedUrl) return signedData.signedUrl;
+
   const { data } = supabase.storage.from(PDF_BUCKET).getPublicUrl(path);
   return data.publicUrl;
 }

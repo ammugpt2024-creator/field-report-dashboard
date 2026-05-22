@@ -29,11 +29,15 @@ import {
 } from '../configs/concreteTestLogFields';
 import { workflow_validation } from '../configs/concreteTestLogValidation';
 import { scanConcreteTicket } from '../services/ticketScanner';
+import { getDailyWeatherSummary } from '../services/weatherService';
+import SignaturePad from '../components/SignaturePad';
 
 const ATTACHMENT_BUCKET = 'concrete-test-attachments';
 const PDF_BUCKET = 'report-pdfs';
+const SIGNATURE_BUCKET = 'signatures';
 const COMPANY_NAME = 'Dulles Engineering, Inc.';
 const COMPANY_LOGO_URL = 'https://img1.wsimg.com/isteam/ip/5d283b38-0950-4c46-838b-44766d9a75d2/DULLES%20ENGINEERING_new%20logo.png/%3A/rs%3Dh%3A78%2Ccg%3Atrue%2Cm/qt%3Dq%3A95';
+const COMPANY_LOGO_STORAGE_PATH = 'company-assets/dulles-engineering-logo.png';
 
 function toNullableNumber(value) {
   if (value === '' || value === null || value === undefined) return null;
@@ -147,6 +151,32 @@ function generateDfrNumber(projectNumber, projectId) {
   return `DFR-${projectCode}-${dateStamp}-${uniqueSuffix}`;
 }
 
+function toSafeStorageName(value) {
+  return String(value || 'user')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '') || 'user';
+}
+
+function getProjectStorageFolder(projectInfo, projectId) {
+  const projectName = toSafeStorageName(projectInfo?.project_name);
+  const projectNumber = toSafeStorageName(projectInfo?.project_number);
+  const suffix = projectNumber ? `_${projectNumber}` : `_project_${projectId}`;
+  return `${projectName || `project_${projectId}`}${suffix}`;
+}
+
+function dataUrlToBlob(dataUrl) {
+  const [meta, base64] = dataUrl.split(',');
+  const contentType = meta.match(/data:(.*);base64/)?.[1] || 'image/png';
+  const binary = window.atob(base64);
+  const array = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    array[index] = binary.charCodeAt(index);
+  }
+  return new Blob([array], { type: contentType });
+}
+
 function getMissingColumnName(error) {
   if (!error?.message) return null;
   return (
@@ -154,11 +184,6 @@ function getMissingColumnName(error) {
     error.message.match(/column "([^"]+)"/)?.[1] ||
     null
   );
-}
-
-function isMissingColumnError(error, columnName) {
-  const missingColumn = getMissingColumnName(error);
-  return missingColumn === columnName;
 }
 
 function isStorageBucketError(error) {
@@ -169,7 +194,7 @@ function isStorageBucketError(error) {
 async function getStorageAccessUrl(bucket, path) {
   const { data: signedData, error: signedError } = await supabase.storage
     .from(bucket)
-    .createSignedUrl(path, 60 * 60);
+    .createSignedUrl(path, 60 * 60 * 24 * 30);
 
   if (!signedError && signedData?.signedUrl) return signedData.signedUrl;
 
@@ -213,6 +238,11 @@ function getProjectValue(projectData, projectColumn) {
   const columns = Array.isArray(projectColumn) ? projectColumn : [projectColumn];
   const foundColumn = columns.find((column) => projectData?.[column]);
   return foundColumn ? projectData[foundColumn] : '';
+}
+
+function updateProjectInfoField(setProjectInfo, setHasNonFormChanges, key, value) {
+  setProjectInfo((previous) => ({ ...previous, [key]: value }));
+  setHasNonFormChanges(true);
 }
 
 function getSpecificationRules(field) {
@@ -419,8 +449,12 @@ function getRecordStatus(record, specifications = {}) {
   if (slump_in !== null && slump_in <= 0) failures.push('Slump invalid');
   if (concrete_temp_f !== null && concrete_temp_f > 120) failures.push('Concrete temperature high');
   if (air_content_percent !== null && (air_content_percent < 0 || air_content_percent > 15)) failures.push('Air content outside range');
-  if (slump_inSpec !== null && slump_in !== null && slump_in > slump_inSpec) warnings.push('Slump above specification');
-  if (airSpec !== null && air_content_percent !== null && Math.abs(air_content_percent - airSpec) > 2) warnings.push('Air content variance');
+  if (slump_inSpec !== null && slump_in !== null && slump_in > slump_inSpec) {
+    warnings.push(`Slump above specification: ${slump_in} in entered / ${slump_inSpec} in target`);
+  }
+  if (airSpec !== null && air_content_percent !== null && Math.abs(air_content_percent - airSpec) > 2) {
+    warnings.push(`Air content variance: ${air_content_percent}% entered / ${airSpec}% target (±2% tolerance)`);
+  }
   if (actual_minutes !== null && actual_minutes > 90) warnings.push('Discharge time over 90 minutes');
 
   if (failures.length > 0) return { label: 'Failed', tone: 'red', severity: 3, messages: failures };
@@ -478,23 +512,93 @@ function getRecordStatusColors(tone) {
 async function urlToDataUrl(url) {
   if (!url) return null;
   const controller = new AbortController();
-  const timeoutId = window.setTimeout(() => controller.abort(), 1500);
+  const timeoutId = window.setTimeout(() => controller.abort(), 5000);
   try {
     const response = await fetch(url, { signal: controller.signal });
     if (!response.ok) return null;
     const blob = await response.blob();
     if (!blob.type?.startsWith('image/')) return null;
-    return await new Promise((resolve) => {
+    const nativeDataUrl = await new Promise((resolve) => {
       const reader = new FileReader();
       reader.onloadend = () => resolve(reader.result);
       reader.onerror = () => resolve(null);
       reader.readAsDataURL(blob);
     });
+
+    if (getPdfImageFormat(nativeDataUrl)) return nativeDataUrl;
+
+    const bitmap = await createImageBitmap(blob);
+    const canvas = document.createElement('canvas');
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const context = canvas.getContext('2d');
+    context.fillStyle = '#ffffff';
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(bitmap, 0, 0);
+    bitmap.close?.();
+    return canvas.toDataURL('image/png');
   } catch {
     return null;
   } finally {
     window.clearTimeout(timeoutId);
   }
+}
+
+async function dataUrlToPdfImageData(dataUrl) {
+  if (getPdfImageFormat(dataUrl)) return dataUrl;
+  if (!dataUrl?.startsWith('data:image/')) return null;
+  try {
+    const blob = await (await fetch(dataUrl)).blob();
+    const bitmap = await createImageBitmap(blob);
+    const canvas = document.createElement('canvas');
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const context = canvas.getContext('2d');
+    context.fillStyle = '#ffffff';
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(bitmap, 0, 0);
+    bitmap.close?.();
+    return canvas.toDataURL('image/png');
+  } catch {
+    return null;
+  }
+}
+
+function getDullesLogoDataUrl() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 360;
+  canvas.height = 120;
+  const context = canvas.getContext('2d');
+  context.fillStyle = '#ffffff';
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.strokeStyle = '#1b75bb';
+  context.lineWidth = 10;
+  context.beginPath();
+  context.moveTo(20, 96);
+  context.lineTo(72, 20);
+  context.lineTo(124, 96);
+  context.stroke();
+  context.strokeStyle = '#111827';
+  context.lineWidth = 5;
+  context.beginPath();
+  context.moveTo(72, 22);
+  context.lineTo(72, 98);
+  context.moveTo(46, 98);
+  context.lineTo(98, 98);
+  context.stroke();
+  context.fillStyle = '#1b75bb';
+  context.font = '700 25px Arial';
+  context.fillText('DULLES', 145, 48);
+  context.fillStyle = '#111827';
+  context.font = '700 25px Arial';
+  context.fillText('ENGINEERING', 145, 80);
+  return canvas.toDataURL('image/png');
+}
+
+async function getPdfReadyImageData(url, fallbackDataUrl = '') {
+  const imageData = await urlToDataUrl(url);
+  if (imageData) return imageData;
+  return dataUrlToPdfImageData(fallbackDataUrl);
 }
 
 function triggerPdfDownload(pdfBlob, fileName) {
@@ -547,6 +651,20 @@ function addPdfImageSafely(doc, imageData, x, y, width, height) {
     console.warn('Skipping PDF image with invalid signature', error);
     return false;
   }
+}
+
+function getAttachmentAccessText(attachment) {
+  if (attachment.url) return attachment.url;
+  if (attachment.storagePath) return `${ATTACHMENT_BUCKET}/${attachment.storagePath}`;
+  return 'Stored with submitted report';
+}
+
+function getAttachmentRecordLabel(attachment, deliveryRecords = []) {
+  if (!attachment.deliveryRecordId) return 'Report level';
+  const recordIndex = deliveryRecords.findIndex((record) => record.id === attachment.deliveryRecordId);
+  if (recordIndex < 0) return 'Delivery record';
+  const record = deliveryRecords[recordIndex];
+  return `Record #${recordIndex + 1}${record.truck_number ? ` · Truck ${record.truck_number}` : ''}${record.ticket_number ? ` · Ticket ${record.ticket_number}` : ''}`;
 }
 
 function setPdfText(doc, color = PDF_STYLE.navy, size = 10, style = 'normal') {
@@ -626,14 +744,18 @@ async function renderHeader(doc, context, cursor, margins) {
   doc.setFillColor(...PDF_STYLE.navy);
   doc.roundedRect(margins.left, cursor.y, contentWidth, headerHeight, 10, 10, 'F');
 
-  const companyLogo = await urlToDataUrl(context.companyLogoUrl);
-  const companyLogoRendered = addPdfImageSafely(doc, companyLogo, margins.left + 14, cursor.y + 18, 48, 48);
+  const companyLogo = await getPdfReadyImageData(context.companyLogoUrl, getDullesLogoDataUrl());
+  const companyLogoRendered = addPdfImageSafely(doc, companyLogo, margins.left + 12, cursor.y + 13, 68, 34);
   if (!companyLogoRendered) {
     doc.setFillColor(...PDF_STYLE.white);
-    doc.roundedRect(margins.left + 14, cursor.y + 18, 48, 48, 8, 8, 'F');
+    doc.roundedRect(margins.left + 14, cursor.y + 18, 52, 42, 8, 8, 'F');
     setPdfText(doc, PDF_STYLE.navy, 13, 'bold');
-    doc.text('DE', margins.left + 38, cursor.y + 48, { align: 'center' });
+    doc.text('DE', margins.left + 40, cursor.y + 45, { align: 'center' });
   }
+  setPdfText(doc, PDF_STYLE.white, 10, 'bold');
+  doc.text(pdfValue(context.companyName), margins.left + 14, cursor.y + 64);
+  setPdfText(doc, [203, 213, 225], 6.5, 'normal');
+  doc.text('Construction QA/QC Inspection Services', margins.left + 14, cursor.y + 76);
 
   const clientLogo = await urlToDataUrl(context.clientLogoUrl);
   addPdfImageSafely(doc, clientLogo, pageWidth - margins.right - 62, cursor.y + 18, 48, 48);
@@ -649,7 +771,6 @@ async function renderHeader(doc, context, cursor, margins) {
 
   drawStatusBadge(doc, context.status, context.statusTone, pageWidth - margins.right - 92, cursor.y + 70, 78);
   setPdfText(doc, [226, 232, 240], 8, 'bold');
-  doc.text(`Technician: ${pdfValue(context.technicianName)}`, margins.left + 14, cursor.y + 78);
   doc.text(`Generated: ${context.generatedAt}`, margins.left + 14, cursor.y + 90);
 
   return { ...cursor, y: cursor.y + headerHeight + 18 };
@@ -674,24 +795,69 @@ function renderProjectInfo(doc, context, cursor, margins) {
 function renderSpecifications(doc, context, cursor, margins) {
   cursor = drawSectionTitle(doc, 'Inspection Requirements', cursor, margins);
   const specs = context.specifications;
-  return renderFieldGrid(doc, [
-    { label: 'Air Content %', value: specs.air_content_percent },
-    { label: 'Unit Weight', value: specs.unit_weight_lbs_ft3 ? `${specs.unit_weight_lbs_ft3} lbs/ft³` : '' },
-    { label: 'Slump', value: specs.slump_in ? `${specs.slump_in} in` : '' },
-    { label: 'Spread', value: specs.spread_in ? `${specs.spread_in} in` : '' },
-    { label: 'J-Ring', value: specs.j_ring_in ? `${specs.j_ring_in} in` : '' },
-    { label: 'Concrete Temp', value: specs.concrete_temp_f ? `${specs.concrete_temp_f} °F` : '' },
-    { label: 'Strength Requirement', value: context.strengthRequirement },
-    { label: 'Mix Number', value: specs.mix_number },
-    { label: 'Report Time', value: specs.report_time },
-    { label: 'Inspector Comments', value: specs.comments }
-  ], cursor, margins, 2);
+  const contentWidth = doc.internal.pageSize.getWidth() - margins.left - margins.right;
+  const labelWidth = 118;
+  const valueWidth = (contentWidth - (labelWidth * 2)) / 2;
+
+  autoTable(doc, {
+    startY: cursor.y,
+    margin: { left: margins.left, right: margins.right },
+    theme: 'grid',
+    body: [
+      [
+        'Air Content (%)',
+        pdfValue(specs.air_content_percent),
+        'Unit Weight (lbs/ft³)',
+        pdfValue(specs.unit_weight_lbs_ft3)
+      ],
+      [
+        'Slump (in)',
+        pdfValue(specs.slump_in),
+        'Concrete Temp (°F)',
+        pdfValue(specs.concrete_temp_f)
+      ],
+      [
+        'Spread (in)',
+        pdfValue(specs.spread_in),
+        'J-Ring (in)',
+        pdfValue(specs.j_ring_in)
+      ],
+      [
+        'Strength Requirement',
+        pdfValue(context.strengthRequirement),
+        'Mix Number',
+        pdfValue(specs.mix_number)
+      ],
+      [
+        'Report Time',
+        pdfValue(specs.report_time),
+        'Inspector Comments',
+        pdfValue(specs.comments)
+      ]
+    ],
+    styles: {
+      fontSize: 8.5,
+      cellPadding: 4,
+      textColor: PDF_STYLE.navy,
+      lineColor: PDF_STYLE.border,
+      lineWidth: 0.4,
+      minCellHeight: 20,
+      overflow: 'linebreak',
+      valign: 'middle'
+    },
+    columnStyles: {
+      0: { fontStyle: 'bold', fillColor: PDF_STYLE.lightSlate, textColor: PDF_STYLE.slate, cellWidth: labelWidth },
+      1: { cellWidth: valueWidth },
+      2: { fontStyle: 'bold', fillColor: PDF_STYLE.lightSlate, textColor: PDF_STYLE.slate, cellWidth: labelWidth },
+      3: { cellWidth: valueWidth }
+    }
+  });
+
+  return { ...cursor, y: doc.lastAutoTable.finalY + 14 };
 }
 
 function renderDeliveryRecords(doc, context, cursor, margins) {
-  const pageWidth = doc.internal.pageSize.getWidth();
-  const pageHeight = doc.internal.pageSize.getHeight();
-  if (pageWidth < pageHeight) {
+  if (doc.internal.pageSize.getWidth() < doc.internal.pageSize.getHeight()) {
     doc.addPage('letter', 'landscape');
     cursor = { ...cursor, y: margins.top };
   }
@@ -703,13 +869,9 @@ function renderDeliveryRecords(doc, context, cursor, margins) {
     return { ...cursor, y: cursor.y + 28 };
   }
 
-  setPdfText(doc, PDF_STYLE.slate, 8, 'normal');
-  doc.text('Delivery log format: one row per truck/test record. Headers repeat automatically across pages.', margins.left, cursor.y);
-  cursor = { ...cursor, y: cursor.y + 10 };
-
   autoTable(doc, {
-    startY: cursor.y + 8,
-    margin: { left: margins.left, right: margins.right, top: margins.top, bottom: margins.bottom },
+    startY: cursor.y,
+    margin: { left: 24, right: 24, top: margins.top, bottom: margins.bottom },
     theme: 'grid',
     showHead: 'everyPage',
     head: [[
@@ -717,89 +879,40 @@ function renderDeliveryRecords(doc, context, cursor, margins) {
       'Ticket #',
       'Truck #',
       'CY',
-      'Batched',
+      'Batch',
       'Arrival',
       'Tested',
       'Finish',
-      'Minutes',
-      'Water (gal)',
-      'Placement Location',
-      'Mix Design'
-    ]],
-    body: context.deliveryRecords.map((record, index) => [
-      pdfValue(record.test_number, String(index + 1)),
-      pdfValue(record.ticket_number),
-      pdfValue(record.truck_number),
-      pdfValue(record.cubic_yards, '0'),
-      pdfValue(record.time_batched),
-      pdfValue(record.arrival_time),
-      pdfValue(record.time_tested),
-      pdfValue(record.finish_unload),
-      pdfValue(record.actual_minutes),
-      pdfValue(record.water_added_gal, '0'),
-      pdfValue(record.placement_location),
-      pdfValue(record.mix_design)
-    ]),
-    styles: {
-      fontSize: 7.5,
-      cellPadding: 4,
-      overflow: 'linebreak',
-      textColor: PDF_STYLE.navy,
-      lineColor: PDF_STYLE.border,
-      lineWidth: 0.5,
-      valign: 'middle'
-    },
-    headStyles: {
-      fillColor: PDF_STYLE.navy,
-      textColor: PDF_STYLE.white,
-      fontStyle: 'bold',
-      fontSize: 7
-    },
-    alternateRowStyles: { fillColor: [248, 250, 252] },
-    columnStyles: {
-      0: { cellWidth: 38 },
-      1: { cellWidth: 58 },
-      2: { cellWidth: 52 },
-      3: { cellWidth: 34 },
-      4: { cellWidth: 48 },
-      5: { cellWidth: 48 },
-      6: { cellWidth: 48 },
-      7: { cellWidth: 48 },
-      8: { cellWidth: 42 },
-      9: { cellWidth: 50 },
-      10: { cellWidth: 112 },
-      11: { cellWidth: 'auto' }
-    }
-  });
-
-  cursor = { ...cursor, y: doc.lastAutoTable.finalY + 18 };
-  cursor = ensurePdfSpace(doc, cursor, 90, margins);
-
-  autoTable(doc, {
-    startY: cursor.y,
-    margin: { left: margins.left, right: margins.right, top: margins.top, bottom: margins.bottom },
-    theme: 'grid',
-    showHead: 'everyPage',
-    head: [[
-      'Test #',
-      'Truck #',
+      'Min',
+      'Water',
       'Status',
-      'Air Temp (°F)',
-      'Conc. Temp (°F)',
-      'Slump (in)',
-      'Air (%)',
-      'Unit Wt. (lbs/ft³)',
-      'Spread (in)',
-      'J-Ring (in)',
+      'Air °F',
+      'Conc °F',
+      'Slump',
+      'Air %',
+      'Unit Wt',
+      'Spread',
+      'J-Ring',
       'Set #',
-      'Cylinders',
+      'Lab',
+      'Field',
+      'Placement',
+      'Mix',
       'Comments'
     ]],
     body: context.deliveryRecords.map((record, index) => {
       const recordStatus = getRecordStatus(record, context.specifications);
       return [
         pdfValue(record.test_number, String(index + 1)),
+        pdfValue(record.ticket_number),
         pdfValue(record.truck_number),
+        pdfValue(record.cubic_yards, '0'),
+        pdfValue(record.time_batched),
+        pdfValue(record.arrival_time),
+        pdfValue(record.time_tested),
+        pdfValue(record.finish_unload),
+        pdfValue(record.actual_minutes),
+        pdfValue(record.water_added_gal, '0'),
         recordStatus.label,
         pdfValue(record.air_temp_f),
         pdfValue(record.concrete_temp_f),
@@ -809,43 +922,60 @@ function renderDeliveryRecords(doc, context, cursor, margins) {
         pdfValue(record.spread_in),
         pdfValue(record.j_ring_in),
         pdfValue(record.set_number),
-        `Lab ${pdfValue(record.lab_cylinders, '0')} / Field ${pdfValue(record.field_cylinders, '0')}`,
+        pdfValue(record.lab_cylinders, '0'),
+        pdfValue(record.field_cylinders, '0'),
+        pdfValue(record.placement_location),
+        pdfValue(record.mix_design),
         pdfValue(record.comments)
       ];
     }),
     styles: {
-      fontSize: 7.5,
-      cellPadding: 4,
+      fontSize: 5.7,
+      cellPadding: { top: 2.2, right: 1.5, bottom: 2.2, left: 1.5 },
       overflow: 'linebreak',
       textColor: PDF_STYLE.navy,
       lineColor: PDF_STYLE.border,
-      lineWidth: 0.5,
-      valign: 'middle'
+      lineWidth: 0.35,
+      minCellHeight: 13,
+      valign: 'middle',
+      halign: 'center'
     },
     headStyles: {
       fillColor: PDF_STYLE.navy,
       textColor: PDF_STYLE.white,
       fontStyle: 'bold',
-      fontSize: 7
+      fontSize: 5.6,
+      minCellHeight: 18
     },
     alternateRowStyles: { fillColor: [248, 250, 252] },
     columnStyles: {
-      0: { cellWidth: 38 },
-      1: { cellWidth: 48 },
-      2: { cellWidth: 54 },
-      3: { cellWidth: 48 },
-      4: { cellWidth: 58 },
-      5: { cellWidth: 44 },
-      6: { cellWidth: 42 },
-      7: { cellWidth: 70 },
-      8: { cellWidth: 50 },
-      9: { cellWidth: 48 },
-      10: { cellWidth: 42 },
-      11: { cellWidth: 72 },
-      12: { cellWidth: 'auto' }
+      0: { cellWidth: 20 },
+      1: { cellWidth: 32 },
+      2: { cellWidth: 32 },
+      3: { cellWidth: 20 },
+      4: { cellWidth: 29 },
+      5: { cellWidth: 29 },
+      6: { cellWidth: 29 },
+      7: { cellWidth: 29 },
+      8: { cellWidth: 22 },
+      9: { cellWidth: 26 },
+      10: { cellWidth: 36, halign: 'left' },
+      11: { cellWidth: 24 },
+      12: { cellWidth: 28 },
+      13: { cellWidth: 26 },
+      14: { cellWidth: 22 },
+      15: { cellWidth: 32 },
+      16: { cellWidth: 28 },
+      17: { cellWidth: 28 },
+      18: { cellWidth: 24 },
+      19: { cellWidth: 20 },
+      20: { cellWidth: 22 },
+      21: { cellWidth: 54, halign: 'left' },
+      22: { cellWidth: 30, halign: 'left' },
+      23: { cellWidth: 44, halign: 'left' }
     },
     didParseCell: (data) => {
-      if (data.section !== 'body' || data.column.index !== 2) return;
+      if (data.section !== 'body' || data.column.index !== 10) return;
       const status = String(data.cell.raw).toLowerCase();
       if (status.includes('fail')) {
         data.cell.styles.textColor = PDF_STYLE.red;
@@ -909,41 +1039,67 @@ async function renderAttachments(doc, context, cursor, margins) {
   const cardWidth = pageWidth - margins.left - margins.right;
 
   for (const attachment of context.attachments) {
-    cursor = ensurePdfSpace(doc, cursor, 64, margins);
+    const isImage = attachment.type?.startsWith('image/');
+    const cardHeight = isImage ? 122 : 70;
+    cursor = ensurePdfSpace(doc, cursor, cardHeight + 10, margins);
     doc.setFillColor(...PDF_STYLE.lightSlate);
-    doc.roundedRect(margins.left, cursor.y, cardWidth, 54, 8, 8, 'F');
+    doc.roundedRect(margins.left, cursor.y, cardWidth, cardHeight, 8, 8, 'F');
 
-    const imageUrl = attachment.previewUrl || attachment.url;
-    const imageData = attachment.type?.startsWith('image/') ? await urlToDataUrl(imageUrl) : null;
-    const imageRendered = addPdfImageSafely(doc, imageData, margins.left + 10, cursor.y + 8, 40, 38);
+    const freshAccessUrl = attachment.storagePath
+      ? await getStorageAccessUrl(ATTACHMENT_BUCKET, attachment.storagePath)
+      : attachment.url;
+    const imageUrl = attachment.previewUrl?.startsWith('blob:') ? attachment.previewUrl : freshAccessUrl || attachment.previewUrl || attachment.url;
+    const imageData = isImage ? await urlToDataUrl(imageUrl) : null;
+    const imageWidth = isImage ? 110 : 42;
+    const imageHeight = isImage ? 92 : 42;
+    const imageRendered = addPdfImageSafely(doc, imageData, margins.left + 10, cursor.y + 10, imageWidth, imageHeight);
     if (!imageRendered) {
       doc.setFillColor(...PDF_STYLE.white);
-      doc.roundedRect(margins.left + 10, cursor.y + 8, 40, 38, 6, 6, 'F');
+      doc.roundedRect(margins.left + 10, cursor.y + 10, imageWidth, imageHeight, 6, 6, 'F');
       setPdfText(doc, PDF_STYLE.slate, 7, 'bold');
-      doc.text('FILE', margins.left + 30, cursor.y + 30, { align: 'center' });
+      doc.text(isImage ? 'IMAGE' : 'FILE', margins.left + 10 + imageWidth / 2, cursor.y + 10 + imageHeight / 2 + 3, { align: 'center' });
     }
 
+    const textX = margins.left + imageWidth + 24;
+    const textWidth = cardWidth - imageWidth - 36;
     setPdfText(doc, PDF_STYLE.navy, 10, 'bold');
-    doc.text(pdfValue(attachment.name), margins.left + 62, cursor.y + 22);
+    doc.text(doc.splitTextToSize(pdfValue(attachment.name), textWidth).slice(0, 2), textX, cursor.y + 22);
     setPdfText(doc, PDF_STYLE.slate, 8, 'bold');
-    doc.text(`Type: ${pdfValue(attachment.category)}   Size: ${attachment.size ? `${Math.round(attachment.size / 1024)} KB` : '-'}`, margins.left + 62, cursor.y + 38);
-    cursor = { ...cursor, y: cursor.y + 64 };
+    doc.text(`Type: ${pdfValue(attachment.category)}   Size: ${attachment.size ? `${Math.round(attachment.size / 1024)} KB` : '-'}`, textX, cursor.y + 48);
+    setPdfText(doc, PDF_STYLE.slate, 7, 'bold');
+    doc.text(getAttachmentRecordLabel(attachment, context.deliveryRecords), textX, cursor.y + 62);
+    setPdfText(doc, PDF_STYLE.blue, 7, 'normal');
+    const accessUrl = freshAccessUrl || getAttachmentAccessText(attachment);
+    if (accessUrl?.startsWith('http')) {
+      doc.textWithLink('Access: Click here', textX, cursor.y + (isImage ? 78 : 64), { url: accessUrl });
+    } else {
+      doc.text('Stored with submitted report', textX, cursor.y + (isImage ? 78 : 64));
+    }
+    cursor = { ...cursor, y: cursor.y + cardHeight + 10 };
   }
 
   return cursor;
 }
 
-function renderSignatures(doc, cursor, margins, context) {
+async function renderSignatures(doc, cursor, margins, context) {
   cursor = drawSectionTitle(doc, 'Signatures', cursor, margins);
   const pageWidth = doc.internal.pageSize.getWidth();
   const width = (pageWidth - margins.left - margins.right - 20) / 3;
   const labels = ['Technician Signature', 'QA Reviewer Signature', 'Date Approved'];
+  const technicianSignature = await urlToDataUrl(context.technicianSignatureUrl);
   labels.forEach((label, index) => {
     const x = margins.left + index * (width + 10);
     doc.setDrawColor(...PDF_STYLE.border);
     doc.line(x, cursor.y + 36, x + width, cursor.y + 36);
+    if (label === 'Technician Signature' && technicianSignature) {
+      addPdfImageSafely(doc, technicianSignature, x, cursor.y + 2, width, 30);
+    }
     setPdfText(doc, PDF_STYLE.slate, 8, 'bold');
     doc.text(label.toUpperCase(), x, cursor.y + 50);
+    if (label === 'Technician Signature' && context.technicianName) {
+      setPdfText(doc, PDF_STYLE.navy, 8, 'normal');
+      doc.text(context.technicianName, x, cursor.y + 64);
+    }
     if (label === 'QA Reviewer Signature' && context.approvalBy) {
       setPdfText(doc, PDF_STYLE.navy, 8, 'normal');
       doc.text(context.approvalBy, x, cursor.y + 64);
@@ -956,7 +1112,7 @@ function renderSignatures(doc, cursor, margins, context) {
   return { ...cursor, y: cursor.y + 80 };
 }
 
-function drawApprovalSeal(doc, margins) {
+function drawApprovalSeal(doc) {
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
   doc.setTextColor(200, 210, 220);
@@ -1077,6 +1233,8 @@ function ConcreteTestLog() {
   const [attachmentPreview, setAttachmentPreview] = useState(null);
   const [generatedPdf, setGeneratedPdf] = useState(null);
   const [pdfGenerationStatus, setPdfGenerationStatus] = useState('');
+  const [technicianSignature, setTechnicianSignature] = useState('');
+  const [weatherLookupStatus, setWeatherLookupStatus] = useState('');
   const [activeStepIndex, setActiveStepIndex] = useState(0);
   const stepIds = useMemo(() => workflowSections.map((step) => step.id), []);
   const activeStepId = stepIds[activeStepIndex] || 'project';
@@ -1086,6 +1244,7 @@ function ConcreteTestLog() {
   const deliveryRecordRowIdsRef = useRef({});
   const removedDeliveryRecordIdsRef = useRef([]);
   const pdfGenerationInProgressRef = useRef(false);
+  const weatherLookupAttemptedRef = useRef(false);
 
   const isLocked = isStatusLocked(status);
   const hasUnsavedChanges = isDirty || hasNonFormChanges;
@@ -1157,10 +1316,9 @@ function ConcreteTestLog() {
     () =>
       stepIds.reduce((state, stepId, index) => {
         const isComplete = stepCompletion[stepId];
-        const previousComplete = stepId === 'pdf' || index === 0 || stepIds.slice(0, index).every((id) => stepCompletion[id]);
         state[stepId] = {
-          status: index === activeStepIndex ? 'active' : previousComplete ? (isComplete ? 'completed' : 'invalid') : 'locked',
-          unlocked: previousComplete || index === activeStepIndex
+          status: index === activeStepIndex ? 'active' : isComplete ? 'completed' : 'invalid',
+          unlocked: true
         };
         return state;
       }, {}),
@@ -1331,7 +1489,8 @@ function ConcreteTestLog() {
                     previewUrl: item.file_url,
                     uploaded: true,
                     url: item.file_url,
-                    storagePath: item.storage_path
+                    storagePath: item.storage_path,
+                    deliveryRecordId: item.delivery_record_id || null
                   }))
                 );
               }
@@ -1356,6 +1515,36 @@ function ConcreteTestLog() {
       setValue('dfr_number', dfrNumber, { shouldDirty: false, shouldTouch: false, shouldValidate: false });
     }
   }, [loading, projectId, projectInfo, getValues, setValue]);
+
+  const populateWeatherFromLocation = useCallback(async ({ force = false } = {}) => {
+    if (isLocked) return;
+    if (!force && projectInfo.weather) return;
+    if (!force && weatherLookupAttemptedRef.current) return;
+
+    weatherLookupAttemptedRef.current = true;
+    setWeatherLookupStatus('Fetching daily high/low...');
+    try {
+      const weatherSummary = await getDailyWeatherSummary({
+        projectLocation: projectInfo.project_location,
+        date: new Date().toISOString().slice(0, 10),
+        preferGps: true
+      });
+      setProjectInfo((previous) => ({ ...previous, weather: weatherSummary }));
+      setHasNonFormChanges(true);
+      setWeatherLookupStatus('Auto populated');
+    } catch (error) {
+      console.error('Weather lookup failed', error);
+      setWeatherLookupStatus('Enter weather manually');
+    }
+  }, [isLocked, projectInfo.project_location, projectInfo.weather]);
+
+  useEffect(() => {
+    if (loading || isLocked || projectInfo.weather || !projectInfo.project_name) return;
+    const weatherTimer = window.setTimeout(() => {
+      populateWeatherFromLocation();
+    }, 0);
+    return () => window.clearTimeout(weatherTimer);
+  }, [isLocked, loading, populateWeatherFromLocation, projectInfo.project_name, projectInfo.weather]);
 
   useEffect(() => {
     function warnOnUnload(event) {
@@ -1400,42 +1589,13 @@ function ConcreteTestLog() {
     const nextIndex = stepIds.indexOf(stepId);
     if (nextIndex < 0 || nextIndex === activeStepIndex) return;
 
-    if (stepId === 'pdf') {
-      setActiveStepIndex(nextIndex);
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-      return;
-    }
-
-    const isUnlocked = stepIds.slice(0, nextIndex).every((id) => getStepCompletion(id, projectInfo, getValues(), deliveryRecords, attachments));
-    if (!isUnlocked) {
-      setErrors(['Complete earlier workflow steps before opening this section.']);
-      return;
-    }
-
-    if (nextIndex > activeStepIndex) {
-      const isValid = await validateStep(activeStepId, {
-        projectInfo,
-        specifications: getValues(),
-        records: deliveryRecords,
-        attachments,
-        setErrors,
-        setRecordFieldErrors,
-        trigger,
-        setError,
-        clearErrors
-      });
-      if (!isValid) return;
-
-      try {
-        await saveReportData('draft', { silent: false });
-      } catch (error) {
-        setErrors([error.message || 'Unable to save your changes before moving to the next section.']);
-        return;
-      }
-    }
-
     setActiveStepIndex(nextIndex);
+    setErrors([]);
     window.scrollTo({ top: 0, behavior: 'smooth' });
+
+    if (!isLocked && hasWorkflowProgress) {
+      saveReportData(REPORT_STATUS.DRAFT, { silent: true }).catch(() => {});
+    }
   }
 
   async function goToNextStep() {
@@ -1503,6 +1663,7 @@ function ConcreteTestLog() {
 
   function removeRecord(recordId) {
     setHasNonFormChanges(true);
+    setAttachments((previous) => previous.filter((attachment) => attachment.deliveryRecordId !== recordId));
     setDeliveryRecords((previous) => {
       if (previous.length === 1) return previous;
       const persistedRecordId = deliveryRecordRowIdsRef.current[recordId];
@@ -1521,7 +1682,7 @@ function ConcreteTestLog() {
     setCollapsedRecords((previous) => ({ ...previous, [recordId]: !previous[recordId] }));
   }
 
-  function handleAttachmentFiles(files, category) {
+  function handleAttachmentFiles(files, category, deliveryRecordId = null) {
     const newAttachments = Array.from(files || []).map((file) => ({
       id: crypto.randomUUID(),
       file,
@@ -1531,7 +1692,9 @@ function ConcreteTestLog() {
       type: file.type || 'application/octet-stream',
       previewUrl: file.type?.startsWith('image/') ? URL.createObjectURL(file) : '',
       uploaded: false,
-      url: ''
+      url: '',
+      storagePath: '',
+      deliveryRecordId
     }));
     setAttachments((previous) => [...previous, ...newAttachments]);
     if (newAttachments.length > 0) setHasNonFormChanges(true);
@@ -1554,7 +1717,7 @@ function ConcreteTestLog() {
         recordId: deliveryRecords[0]?.id,
         values: extracted
       });
-      handleAttachmentFiles([file], 'scan-ticket');
+      handleAttachmentFiles([file], 'scan-ticket', deliveryRecords[0]?.id || null);
     } finally {
       setScanLoading(false);
       event.target.value = '';
@@ -1602,9 +1765,10 @@ function ConcreteTestLog() {
     project_id: Number(projectId),
     status: nextStatus,
     revision_no: nextRevision,
+    dfr_number: getValues('dfr_number'),
     rejection_reason: nextStatus === REPORT_STATUS.REJECTED ? undefined : null,
     ...buildPayloadFromFields(projectInfoFields, projectInfo)
-  }), [projectId, projectInfo, revisionNo]);
+  }), [getValues, projectId, projectInfo, revisionNo]);
 
   const buildSpecificationPayload = useCallback((logId) => ({
     log_id: logId,
@@ -1640,10 +1804,15 @@ function ConcreteTestLog() {
     if (pendingAttachments.length === 0) return [];
 
     const uploaded = [];
+    const projectFolder = getProjectStorageFolder(projectInfo, projectId);
     for (const attachment of pendingAttachments) {
       setUploadProgress((previous) => ({ ...previous, [attachment.id]: 25 }));
       const safeName = attachment.name.replace(/[^a-zA-Z0-9_.-]/g, '_');
-      const path = `project-${projectId}/concrete-test-log-${logId}/${attachment.category}-${Date.now()}-${safeName}`;
+      const deliveryRecordRowId = attachment.deliveryRecordId
+        ? deliveryRecordRowIdsRef.current[attachment.deliveryRecordId]
+        : null;
+      const attachmentScope = deliveryRecordRowId ? `records/record_${deliveryRecordRowId}` : 'report';
+      const path = `${projectFolder}/concrete-test-logs/log_${logId}/attachments/${attachmentScope}/${attachment.category}-${Date.now()}-${safeName}`;
 
       const { error } = await supabase.storage.from(ATTACHMENT_BUCKET).upload(path, attachment.file, {
         contentType: attachment.type,
@@ -1660,15 +1829,19 @@ function ConcreteTestLog() {
         storagePath: path
       };
 
-      const { error: attachmentError } = await supabase.from('concrete_attachments').insert({
-        log_id: logId,
-        category: attachment.category,
-        file_name: attachment.name,
-        file_url: attachmentUrl,
-        storage_path: path,
-        content_type: attachment.type,
-        file_size: attachment.size
-      });
+      const { error: attachmentError } = await runMutationWithColumnFallback(
+        {
+          log_id: logId,
+          delivery_record_id: deliveryRecordRowId,
+          category: attachment.category,
+          file_name: attachment.name,
+          file_url: attachmentUrl,
+          storage_path: path,
+          content_type: attachment.type,
+          file_size: attachment.size
+        },
+        (nextPayload) => supabase.from('concrete_attachments').insert(nextPayload)
+      );
       if (attachmentError) throw attachmentError;
 
       uploaded.push(uploadedAttachment);
@@ -1680,7 +1853,7 @@ function ConcreteTestLog() {
     );
 
     return uploaded;
-  }, [attachments, projectId]);
+  }, [attachments, projectId, projectInfo]);
 
  
 
@@ -1869,18 +2042,68 @@ function ConcreteTestLog() {
       setShowSubmitConfirmation(false);
       return;
     }
+    if (!technicianSignature) {
+      setErrors(['Technician digital signature is required before submitting for QA review.']);
+      return;
+    }
 
     try {
+      const logId = await saveReportData(REPORT_STATUS.IN_PROGRESS);
+      const { signatureUrl, signaturePath } = await uploadTechnicianSignature(logId);
+      setPdfGenerationStatus('Generating QA review PDF...');
+      const { pdfBlob, pdfFileName } = await createEngineeringPdfDocument(REPORT_STATUS.SUBMITTED_FOR_REVIEW, {
+        technicianSignatureUrl: signatureUrl
+      });
+      const { pdfAccessUrl } = await uploadGeneratedPdf(logId, pdfBlob, REPORT_STATUS.SUBMITTED_FOR_REVIEW);
+      await runMutationWithColumnFallback(
+        {
+          technician_signature_url: signatureUrl,
+          technician_signature_storage_path: signaturePath,
+          submitted_at: new Date().toISOString(),
+          submitted_by: projectInfo.technician_name
+        },
+        (nextPayload) =>
+          supabase
+            .from('concrete_test_logs')
+            .update(nextPayload)
+            .eq('id', logId)
+      );
       await saveReportData(REPORT_STATUS.SUBMITTED_FOR_REVIEW);
+      setGeneratedPdf((previous) => {
+        if (previous?.url?.startsWith('blob:')) URL.revokeObjectURL(previous.url);
+        return { url: pdfAccessUrl, name: pdfFileName, generatedAt: new Date() };
+      });
+      setPdfGenerationStatus('QA review PDF saved.');
       reset(getValues());
       setHasNonFormChanges(false);
       setShowSubmitConfirmation(false);
       navigate(`/project/${projectId}/field-reports/concrete-test-log`);
     } catch (error) {
       console.error('Submit failed', error);
-      setErrors([error.message || 'Concrete test log could not be submitted.']);
+      const message = isStorageBucketError(error)
+        ? `Concrete test log saved, but the QA review PDF could not be uploaded. Confirm the "${PDF_BUCKET}" bucket exists and has upload policies.`
+        : error.message || 'Concrete test log could not be submitted.';
+      setErrors([message]);
       setShowSubmitConfirmation(false);
     }
+  }
+
+  async function uploadTechnicianSignature(logId) {
+    const signatureBlob = dataUrlToBlob(technicianSignature);
+    const projectFolder = getProjectStorageFolder(projectInfo, projectId);
+    const technicianName = toSafeStorageName(projectInfo.technician_name);
+    const dfrNumber = toSafeStorageName(getValues('dfr_number'));
+    const signaturePath = `${projectFolder}/concrete-test-logs/log_${logId}/signatures/${technicianName}_technician_digital_signature_${dfrNumber}.png`;
+    const { error } = await supabase.storage.from(SIGNATURE_BUCKET).upload(signaturePath, signatureBlob, {
+      contentType: signatureBlob.type,
+      upsert: true
+    });
+    if (error) throw error;
+
+    const signatureUrl = await getStorageAccessUrl(SIGNATURE_BUCKET, signaturePath);
+    if (!signatureUrl) throw new Error(`The "${SIGNATURE_BUCKET}" bucket exists, but the app could not create a readable signature URL.`);
+
+    return { signatureUrl, signaturePath };
   }
 
   async function handleGeneratePdfAction(event) {
@@ -1894,43 +2117,42 @@ function ConcreteTestLog() {
     }
   }
 
-  async function generateEngineeringPdf() {
-    console.log('Generate PDF clicked');
-    setErrors([]);
-    setPdfGenerationStatus('Preparing PDF...');
-    try {
-      const previewOnly = ![REPORT_STATUS.APPROVED, REPORT_STATUS.FINALIZED].includes(status);
-      const logId = reportIdRef.current || (await saveReportData(REPORT_STATUS.IN_PROGRESS));
-      const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'letter' });
-      const margins = { top: 36, right: 40, bottom: 50, left: 40 };
-      const specifications = getValues();
-      const generatedAt = formatPdfTimestamp(new Date());
-      const isFinalApproved = [REPORT_STATUS.APPROVED, REPORT_STATUS.FINALIZED].includes(normalizeReportStatus(status));
-      const pdfContext = {
-        projectInfo,
-        specifications,
-        deliveryRecords,
-        attachments,
-        summary,
-        status: getStatusLabel(status),
-        statusTone: getStatusTone(status),
-        projectName: projectInfo.project_name,
-        technicianName: projectInfo.technician_name,
-        reviewerName: projectInfo.qc_rep || 'QA Reviewer',
-        approvalBy: approvalBy || projectInfo.qc_rep || 'QA Reviewer',
-        approvedAt: approvedAt ? new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'short', day: '2-digit' }).format(new Date(approvedAt)) : '',
-        dfrNumber: specifications.dfr_number,
-        dateSampled: new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'short', day: '2-digit' }).format(new Date()),
-        generatedAt,
-        weather: projectInfo.weather || 'Not recorded',
-        batchPlant: projectInfo.batch_plant || 'Not recorded',
-        mixDesign: specifications.mix_number || deliveryRecords.find((record) => record.mix_design)?.mix_design || 'Not recorded',
-        strengthRequirement: specifications.strength_spec ? `${specifications.strength_spec}` : 'Not recorded',
-        companyName: COMPANY_NAME,
-        revision: revisionNo || 1,
-        companyLogoUrl: projectInfo.company_logo_url || COMPANY_LOGO_URL,
-        clientLogoUrl: projectInfo.client_logo_url || ''
-      };
+  async function createEngineeringPdfDocument(targetStatus = status, overrides = {}) {
+    const normalizedTargetStatus = normalizeReportStatus(targetStatus);
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'letter' });
+    const margins = { top: 36, right: 40, bottom: 50, left: 40 };
+    const specifications = getValues();
+    const generatedAt = formatPdfTimestamp(new Date());
+    const isFinalApproved = [REPORT_STATUS.APPROVED, REPORT_STATUS.FINALIZED].includes(normalizedTargetStatus);
+    const { data: companyLogoStorageData } = await supabase.storage
+      .from(PDF_BUCKET)
+      .createSignedUrl(COMPANY_LOGO_STORAGE_PATH, 60 * 60 * 24 * 30);
+    const pdfContext = {
+      projectInfo,
+      specifications,
+      deliveryRecords,
+      attachments,
+      summary,
+      status: getStatusLabel(normalizedTargetStatus),
+      statusTone: getStatusTone(normalizedTargetStatus),
+      projectName: projectInfo.project_name,
+      technicianName: projectInfo.technician_name,
+      technicianSignatureUrl: overrides.technicianSignatureUrl || '',
+      reviewerName: projectInfo.qc_rep || 'QA Reviewer',
+      approvalBy: approvalBy || projectInfo.qc_rep || 'QA Reviewer',
+      approvedAt: approvedAt ? new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'short', day: '2-digit' }).format(new Date(approvedAt)) : '',
+      dfrNumber: specifications.dfr_number,
+      dateSampled: new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'short', day: '2-digit' }).format(new Date()),
+      generatedAt,
+      weather: projectInfo.weather || 'Not recorded',
+      batchPlant: projectInfo.batch_plant || 'Not recorded',
+      mixDesign: specifications.mix_number || deliveryRecords.find((record) => record.mix_design)?.mix_design || 'Not recorded',
+      strengthRequirement: specifications.strength_spec ? `${specifications.strength_spec}` : 'Not recorded',
+      companyName: COMPANY_NAME,
+      revision: revisionNo || 1,
+      companyLogoUrl: projectInfo.company_logo_url || companyLogoStorageData?.signedUrl || COMPANY_LOGO_URL,
+      clientLogoUrl: projectInfo.client_logo_url || ''
+    };
 
       let cursor = { y: margins.top };
       cursor = await renderHeader(doc, pdfContext, cursor, margins);
@@ -1938,15 +2160,65 @@ function ConcreteTestLog() {
       cursor = renderSpecifications(doc, pdfContext, cursor, margins);
       cursor = renderDeliveryRecords(doc, pdfContext, cursor, margins);
       cursor = await renderAttachments(doc, pdfContext, cursor, margins);
-      if (isFinalApproved) {
+      if (isFinalApproved || normalizedTargetStatus === REPORT_STATUS.SUBMITTED_FOR_REVIEW || normalizedTargetStatus === REPORT_STATUS.UNDER_QA_REVIEW) {
         cursor = renderSummary(doc, pdfContext, cursor, margins);
-        cursor = renderSignatures(doc, cursor, margins, pdfContext);
-        drawApprovalSeal(doc, margins);
+        await renderSignatures(doc, cursor, margins, pdfContext);
+        if (isFinalApproved) drawApprovalSeal(doc);
       }
       renderFooter(doc, pdfContext, margins);
 
-      const pdfBlob = doc.output('blob');
-      const pdfFileName = `${pdfContext.dfrNumber || `concrete-test-log-${logId}`}.pdf`;
+    const pdfBlob = doc.output('blob');
+    const pdfFileName = `${pdfContext.dfrNumber || 'concrete-test-log'}.pdf`;
+    return { pdfBlob, pdfFileName };
+  }
+
+  async function uploadGeneratedPdf(logId, pdfBlob, targetStatus = status) {
+    const normalizedTargetStatus = normalizeReportStatus(targetStatus);
+    const projectFolder = getProjectStorageFolder(projectInfo, projectId);
+    const dfrNumber = toSafeStorageName(getValues('dfr_number'));
+    const fileName = `${dfrNumber || `concrete_test_log_${logId}`}.pdf`;
+    const path = `${projectFolder}/concrete-test-logs/log_${logId}/pdf/${fileName}`;
+    const { error } = await supabase.storage.from(PDF_BUCKET).upload(path, pdfBlob, {
+      contentType: 'application/pdf',
+      upsert: true
+    });
+    if (error) throw error;
+
+    const pdfAccessUrl = await getStorageAccessUrl(PDF_BUCKET, path);
+    if (!pdfAccessUrl) {
+      throw new Error(`The "${PDF_BUCKET}" bucket exists, but the app could not create a readable Storage URL.`);
+    }
+
+    const pdfPayload = {
+      pdf_url: pdfAccessUrl,
+      pdf_storage_path: path
+    };
+    if ([REPORT_STATUS.APPROVED, REPORT_STATUS.FINALIZED].includes(normalizedTargetStatus)) {
+      pdfPayload.final_pdf_url = pdfAccessUrl;
+      pdfPayload.status = REPORT_STATUS.FINALIZED;
+    }
+
+    const { error: pdfUrlError } = await runMutationWithColumnFallback(
+      pdfPayload,
+      (nextPayload) =>
+        supabase
+          .from('concrete_test_logs')
+          .update(nextPayload)
+          .eq('id', logId)
+    );
+    if (pdfUrlError) throw pdfUrlError;
+
+    return { pdfAccessUrl, path };
+  }
+
+  async function generateEngineeringPdf() {
+    console.log('Generate PDF clicked');
+    setErrors([]);
+    setPdfGenerationStatus('Preparing PDF...');
+    try {
+      const previewOnly = ![REPORT_STATUS.APPROVED, REPORT_STATUS.FINALIZED].includes(status);
+      const logId = reportIdRef.current || (await saveReportData(REPORT_STATUS.IN_PROGRESS));
+      const { pdfBlob, pdfFileName } = await createEngineeringPdfDocument(status);
       const localPdfUrl = triggerPdfDownload(pdfBlob, pdfFileName);
       setPdfGenerationStatus(previewOnly ? 'Preview generated. Download has started.' : 'Final approved PDF generated.');
       setGeneratedPdf((previous) => {
@@ -1958,12 +2230,11 @@ function ConcreteTestLog() {
         return;
       }
 
-      const path = `project-${projectId}/concrete-test-log-${logId}/concrete-test-log.pdf`;
-      const { error } = await supabase.storage.from(PDF_BUCKET).upload(path, pdfBlob, {
-        contentType: 'application/pdf',
-        upsert: true
-      });
-      if (error) {
+      try {
+        const { pdfAccessUrl } = await uploadGeneratedPdf(logId, pdfBlob, status);
+        setStatus(REPORT_STATUS.FINALIZED);
+        window.open(pdfAccessUrl, '_blank', 'noopener,noreferrer');
+      } catch (error) {
         if (isStorageBucketError(error)) {
           setErrors([`PDF downloaded locally. Create Supabase Storage bucket "${PDF_BUCKET}" to save and share PDF files from Supabase.`]);
           window.open(localPdfUrl, '_blank', 'noopener,noreferrer');
@@ -1971,22 +2242,6 @@ function ConcreteTestLog() {
         }
         throw error;
       }
-
-      const pdfAccessUrl = await getStorageAccessUrl(PDF_BUCKET, path);
-      if (!pdfAccessUrl) {
-        setErrors([`PDF downloaded locally. The "${PDF_BUCKET}" bucket exists, but the app could not create a readable Storage URL. Add Storage policies or make the bucket public.`]);
-        window.open(localPdfUrl, '_blank', 'noopener,noreferrer');
-        return;
-      }
-
-      const { error: pdfUrlError } = await supabase
-        .from('concrete_test_logs')
-        .update({ final_pdf_url: pdfAccessUrl, status: REPORT_STATUS.FINALIZED })
-        .eq('id', logId);
-      if (pdfUrlError && !isMissingColumnError(pdfUrlError, 'final_pdf_url')) throw pdfUrlError;
-
-      setStatus(REPORT_STATUS.FINALIZED);
-      window.open(pdfAccessUrl, '_blank', 'noopener,noreferrer');
     } catch (error) {
       console.error('PDF generation failed', error);
       setPdfGenerationStatus('PDF generation failed.');
@@ -2036,7 +2291,6 @@ function ConcreteTestLog() {
                 const { status, unlocked } = stepState[step.id] || { status: 'locked', unlocked: false };
                 const isActive = status === 'active';
                 const isComplete = status === 'completed';
-                const isLocked = status === 'locked';
                 return (
                   <button
                     key={step.id}
@@ -2048,12 +2302,10 @@ function ConcreteTestLog() {
                         ? 'bg-blue-600 text-white shadow-sm shadow-blue-200/40'
                         : isComplete
                         ? 'bg-emerald-600 text-white'
-                        : isLocked
-                        ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
                         : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                     }`}
                   >
-                    <span className={`inline-flex h-6 w-6 items-center justify-center rounded-full bg-white text-[11px] font-bold ${isLocked ? 'text-slate-400' : 'text-slate-900'}`}>
+                    <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-white text-[11px] font-bold text-slate-900">
                       {isComplete ? '✓' : index + 1}
                     </span>
                     <span>{step.shortLabel || step.label}</span>
@@ -2068,14 +2320,46 @@ function ConcreteTestLog() {
               <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
                 <div>
                   <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Project Information</p>
-                  <h2 className="mt-2 text-lg font-semibold text-slate-950">Read-only metadata</h2>
+                  <h2 className="mt-2 text-lg font-semibold text-slate-950">Auto-filled report metadata</h2>
                 </div>
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
                 {projectInfoFields.map((field) => (
                   <div key={field.key} className="rounded-3xl bg-slate-50 px-4 py-3">
                     <p className="text-[11px] uppercase tracking-[0.3em] text-slate-500">{field.label}</p>
-                    <p className="mt-2 text-sm font-semibold leading-6 text-slate-950">{projectInfo[field.key] || '—'}</p>
+                    {field.readOnly ? (
+                      <p className="mt-2 text-sm font-semibold leading-6 text-slate-950">{projectInfo[field.key] || '—'}</p>
+                    ) : (
+                      <>
+                        <input
+                          type={field.type || 'text'}
+                          value={projectInfo[field.key] || ''}
+                          onChange={(event) => {
+                            updateProjectInfoField(setProjectInfo, setHasNonFormChanges, field.key, event.target.value);
+                            if (field.key === 'weather') setWeatherLookupStatus('Edited manually');
+                          }}
+                          placeholder={field.key === 'weather' ? 'Auto high/low weather or enter manually' : `Enter ${field.label.toLowerCase()}`}
+                          disabled={isLocked}
+                          className="mt-2 h-10 w-full rounded-2xl border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-950 outline-none focus:border-blue-700 focus:ring-4 focus:ring-blue-100 disabled:bg-slate-100"
+                        />
+                        {field.key === 'weather' && (
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => populateWeatherFromLocation({ force: true })}
+                              disabled={isLocked || weatherLookupStatus === 'Fetching daily high/low...'}
+                              className="inline-flex h-8 items-center gap-2 rounded-full border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:border-blue-200 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {weatherLookupStatus === 'Fetching daily high/low...' && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                              Auto-fill high/low
+                            </button>
+                            {weatherLookupStatus && (
+                              <span className="text-xs font-semibold text-slate-500">{weatherLookupStatus}</span>
+                            )}
+                          </div>
+                        )}
+                      </>
+                    )}
                   </div>
                 ))}
               </div>
@@ -2212,7 +2496,7 @@ function ConcreteTestLog() {
                       {!collapsed && (
                         <div className="space-y-4 border-t border-slate-200 px-4 py-4">
                           {recordStatus.messages?.length > 0 && (
-                            <div className={`rounded-3xl bg-red-50 px-4 py-3 text-sm font-semibold ${badgeClass(recordStatus.tone)}`}>
+                            <div className={`rounded-3xl px-4 py-3 text-sm font-semibold ${badgeClass(recordStatus.tone)}`}>
                               {recordStatus.messages.join(' · ')}
                             </div>
                           )}
@@ -2250,6 +2534,74 @@ function ConcreteTestLog() {
                               </div>
                             </div>
                           ))}
+                          <div className="rounded-3xl bg-white px-4 py-4 shadow-sm">
+                            <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                              <div>
+                                <div className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-500">Record Attachments</div>
+                                <p className="mt-1 text-xs font-medium text-slate-500">Files captured for this truck ticket only.</p>
+                              </div>
+                              <div className="flex flex-wrap gap-2">
+                                {attachmentTypes
+                                  .filter((type) => ['batch-ticket', 'test-photo', 'cylinder-photo', 'delivery-slip'].includes(type.key))
+                                  .map((type) => (
+                                    <label key={type.key} className="inline-flex cursor-pointer items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-800 hover:bg-slate-50">
+                                      <UploadCloud className="h-3.5 w-3.5" />
+                                      {type.label}
+                                      <input
+                                        type="file"
+                                        multiple
+                                        className="hidden"
+                                        accept={type.key.includes('photo') || type.key === 'batch-ticket' ? 'image/*,.pdf' : undefined}
+                                        onChange={(event) => {
+                                          handleAttachmentFiles(event.target.files, type.key, record.id);
+                                          event.target.value = '';
+                                        }}
+                                        disabled={isLocked}
+                                      />
+                                    </label>
+                                  ))}
+                              </div>
+                            </div>
+                            {attachments.filter((attachment) => attachment.deliveryRecordId === record.id).length > 0 ? (
+                              <div className="grid gap-2 sm:grid-cols-2">
+                                {attachments
+                                  .filter((attachment) => attachment.deliveryRecordId === record.id)
+                                  .map((attachment) => (
+                                    <div key={attachment.id} className="flex items-center gap-3 rounded-2xl bg-slate-50 px-3 py-2">
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          if (attachment.previewUrl || attachment.type?.startsWith('image/')) setAttachmentPreview(attachment);
+                                          else if (attachment.url) window.open(attachment.url, '_blank', 'noopener,noreferrer');
+                                        }}
+                                        className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-white text-slate-500"
+                                      >
+                                        {attachment.previewUrl ? (
+                                          <img src={attachment.previewUrl} alt="" className="h-full w-full object-cover" />
+                                        ) : (
+                                          <Paperclip className="h-4 w-4" />
+                                        )}
+                                      </button>
+                                      <div className="min-w-0 flex-1">
+                                        <p className="truncate text-xs font-semibold text-slate-950">{attachment.name}</p>
+                                        <p className="mt-1 text-[10px] uppercase tracking-[0.16em] text-slate-500">{attachment.category}</p>
+                                      </div>
+                                      <button
+                                        type="button"
+                                        onClick={() => removeAttachment(attachment.id)}
+                                        disabled={isLocked}
+                                        className="rounded-full border border-slate-200 p-2 text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+                                        aria-label={`Delete ${attachment.name}`}
+                                      >
+                                        <Trash2 className="h-3.5 w-3.5" />
+                                      </button>
+                                    </div>
+                                  ))}
+                              </div>
+                            ) : (
+                              <p className="rounded-2xl bg-slate-50 px-3 py-2 text-xs font-medium text-slate-500">No files attached to this record yet.</p>
+                            )}
+                          </div>
                         </div>
                       )}
                     </article>
@@ -2558,6 +2910,17 @@ function ConcreteTestLog() {
                 <p className="mt-2 font-semibold text-slate-950">{attachments.length}</p>
               </div>
             </div>
+            <div className="mt-6">
+              <SignaturePad
+                label="Technician Digital Signature"
+                value={technicianSignature}
+                onSave={setTechnicianSignature}
+                disabled={saving}
+              />
+              <p className="mt-3 text-xs font-medium text-slate-500">
+                Signature file: {toSafeStorageName(projectInfo.technician_name)}_technician_digital_signature_{toSafeStorageName(getValues('dfr_number'))}.png
+              </p>
+            </div>
             <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:justify-end">
               <button
                 type="button"
@@ -2569,6 +2932,7 @@ function ConcreteTestLog() {
               <button
                 type="button"
                 onClick={confirmSubmitReport}
+                disabled={!technicianSignature || saving}
                 className="rounded-2xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:bg-slate-300 disabled:text-slate-500 disabled:cursor-not-allowed disabled:opacity-70"
               >
                 Submit Report

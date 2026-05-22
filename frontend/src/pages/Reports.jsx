@@ -15,10 +15,7 @@ function Reports() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetchReports();
-  }, [projectId]);
-
-  async function fetchReports() {
+    async function fetchReports() {
     try {
       setLoading(true);
       const { data, error } = await supabase
@@ -30,14 +27,38 @@ function Reports() {
       if (error) {
         console.error('Error fetching reports:', error);
       } else {
-        setReports(data || []);
+        const reportRows = data || [];
+        const reportIds = reportRows.map((report) => report.id);
+        let specificationsByLogId = {};
+        if (reportIds.length > 0) {
+          const { data: specificationsData, error: specificationsError } = await supabase
+            .from('concrete_specifications')
+            .select('log_id,dfr_number')
+            .in('log_id', reportIds);
+          if (!specificationsError) {
+            specificationsByLogId = (specificationsData || []).reduce((state, specification) => {
+              state[specification.log_id] = specification;
+              return state;
+            }, {});
+          }
+        }
+
+        setReports(
+          reportRows.map((report) => ({
+            ...report,
+            dfr_number: report.dfr_number || specificationsByLogId[report.id]?.dfr_number || ''
+          }))
+        );
       }
     } catch (err) {
       console.error('Unexpected error:', err);
     } finally {
       setLoading(false);
     }
-  }
+    }
+
+    fetchReports();
+  }, [projectId]);
 
   const formatTimestamp = (value) => {
     if (!value) return '—';
@@ -111,6 +132,8 @@ function Reports() {
   const uniqueTechnicians = Array.from(
     new Set(reports.map((report) => report.data_logger).filter(Boolean))
   );
+
+  const getReportPdfUrl = (report) => report.final_pdf_url || report.pdf_url || '';
 
   return (
     <div className="min-h-screen bg-slate-100 p-8">
@@ -235,9 +258,9 @@ function Reports() {
                     <td className="px-4 py-4 text-slate-700">{formatTimestamp(report.created_at)}</td>
                     <td className="px-4 py-4"><span className={statusBadgeClass(report.status)}>{getReportStatusLabel(report.status)}</span></td>
                     <td className="px-4 py-4">
-                      {report.pdf_url ? (
+                      {getReportPdfUrl(report) ? (
                         <a
-                          href={report.pdf_url}
+                          href={getReportPdfUrl(report)}
                           target="_blank"
                           rel="noreferrer"
                           className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-200"
@@ -256,9 +279,9 @@ function Reports() {
                         >
                           <Eye className="h-3.5 w-3.5" /> View
                         </button>
-                        {report.pdf_url && (
+                        {getReportPdfUrl(report) && (
                           <a
-                            href={report.pdf_url}
+                            href={getReportPdfUrl(report)}
                             download
                             className="inline-flex items-center gap-2 rounded-2xl bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700"
                           >

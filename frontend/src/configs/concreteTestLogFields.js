@@ -13,7 +13,7 @@ export const projectInfoFields = [
     label: 'Project Number',
     type: 'text',
     required: true,
-    readOnly: true,
+    readOnly: false,
     sourceColumns: ['project_number'],
     defaultValue: ''
   },
@@ -23,7 +23,7 @@ export const projectInfoFields = [
     label: 'Project Name',
     type: 'text',
     required: true,
-    readOnly: true,
+    readOnly: false,
     sourceColumns: ['project_name'],
     defaultValue: ''
   },
@@ -33,7 +33,7 @@ export const projectInfoFields = [
     label: 'General Contractor',
     type: 'text',
     required: false,
-    readOnly: true,
+    readOnly: false,
     sourceColumns: ['gc', 'client_name'],
     defaultValue: ''
   },
@@ -43,7 +43,7 @@ export const projectInfoFields = [
     label: 'GC Representative',
     type: 'text',
     required: false,
-    readOnly: true,
+    readOnly: false,
     sourceColumns: ['gc_rep', 'client_representative'],
     defaultValue: ''
   },
@@ -53,7 +53,7 @@ export const projectInfoFields = [
     label: 'Project Location',
     type: 'text',
     required: false,
-    readOnly: true,
+    readOnly: false,
     sourceColumns: ['location', 'project_location'],
     defaultValue: ''
   },
@@ -65,6 +65,24 @@ export const projectInfoFields = [
     required: true,
     readOnly: true,
     sourceColumns: ['data_logger'],
+    defaultValue: ''
+  },
+  {
+    key: 'weather',
+    dbColumn: 'weather',
+    label: 'Weather',
+    type: 'text',
+    required: false,
+    readOnly: false,
+    defaultValue: ''
+  },
+  {
+    key: 'batch_plant',
+    dbColumn: 'batch_plant',
+    label: 'Batch Plant',
+    type: 'text',
+    required: false,
+    readOnly: false,
     defaultValue: ''
   }
 ];

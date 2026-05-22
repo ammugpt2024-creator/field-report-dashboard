@@ -38,8 +38,9 @@ export default function ConcreteTestLogDetails() {
   const { projectId, reportId } = useParams();
   const navigate = useNavigate();
 
-  const { role, roleLabel } = useAuth();
+  const { role } = useAuth();
   const [report, setReport] = useState(null);
+  const [specifications, setSpecifications] = useState(null);
   const [rows, setRows] = useState([]);
   const [attachments, setAttachments] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -65,8 +66,18 @@ export default function ConcreteTestLogDetails() {
           throw reportError || new Error('Report not found');
         }
 
+        const { data: specificationsData, error: specificationsError } = await supabase
+          .from('concrete_specifications')
+          .select('*')
+          .eq('log_id', reportId)
+          .maybeSingle();
+
+        if (specificationsError) {
+          throw specificationsError;
+        }
+
         const { data: rowsData, error: rowsError } = await supabase
-          .from('concrete_test_log_rows')
+          .from('concrete_delivery_testing_records')
           .select('*')
           .eq('log_id', reportId)
           .order('id', { ascending: true });
@@ -76,7 +87,7 @@ export default function ConcreteTestLogDetails() {
         }
 
         const { data: attachmentsData, error: attachmentsError } = await supabase
-          .from('concrete_test_log_attachments')
+          .from('concrete_attachments')
           .select('*')
           .eq('log_id', reportId)
           .order('id', { ascending: true });
@@ -86,6 +97,7 @@ export default function ConcreteTestLogDetails() {
         }
 
         setReport(reportData);
+        setSpecifications(specificationsData || null);
         setRows(rowsData || []);
         setAttachments(attachmentsData || []);
       } catch (err) {
@@ -100,6 +112,7 @@ export default function ConcreteTestLogDetails() {
   }, [reportId]);
 
   const reportStatus = normalizeReportStatus(report?.status);
+  const reportPdfUrl = report?.final_pdf_url || report?.pdf_url;
   const canApprove = (role === 'qc_approver' || role === 'admin') && [
     REPORT_STATUS.SUBMITTED_FOR_REVIEW,
     REPORT_STATUS.UNDER_QA_REVIEW
@@ -120,41 +133,41 @@ export default function ConcreteTestLogDetails() {
       dataLogger: reportData.data_logger,
       subContractor: reportData.sub_contractor,
       totalQuantityPlaced: reportData.total_quantity_placed,
-      dfrNumber: reportData.dfr_number,
+      dfrNumber: reportData.dfr_number || specifications?.dfr_number,
       timeIn: reportData.time_in,
       timeOut: reportData.time_out,
-      airContentSpec: reportData.air_content_spec,
-      unitWeightSpec: reportData.unit_weight_spec,
-      slumpSpec: reportData.slump_spec,
-      jRingSpec: reportData.j_ring_spec,
-      spreadSpec: reportData.spread_spec,
-      strengthSpec: reportData.strength_spec,
-      mixNoSpec: reportData.mix_no_spec
+      airContentSpec: specifications?.air_content || reportData.air_content_spec,
+      unitWeightSpec: specifications?.unit_weight || reportData.unit_weight_spec,
+      slumpSpec: specifications?.slump || reportData.slump_spec,
+      jRingSpec: specifications?.j_ring || reportData.j_ring_spec,
+      spreadSpec: specifications?.spread || reportData.spread_spec,
+      strengthSpec: specifications?.speed_of_stress || reportData.strength_spec,
+      mixNoSpec: specifications?.mix_no || reportData.mix_no_spec
     };
   }
 
   function mapRowsForPdf(savedRows) {
     return savedRows.map((row) => ({
-      testNo: row.test_no,
-      ticketNo: row.ticket_no,
-      truckNo: row.truck_no,
+      testNo: row.test_number,
+      ticketNo: row.ticket_number,
+      truckNo: row.truck_number,
       cubicYards: row.cubic_yards,
-      totalPlaced: row.total_placed,
+      totalPlaced: row.total_placed_qty,
       timeBatched: row.time_batched,
       arrivalTime: row.arrival_time,
-      timeSampled: row.time_sampled,
-      startPlacement: row.start_placement,
+      timeSampled: row.time_tested,
+      startPlacement: row.placement,
       finishUnload: row.finish_unload,
       actualMinutes: row.actual_minutes,
-      waterAdded: row.water_added,
-      airTemp: row.air_temp,
-      concreteTemp: row.concrete_temp,
-      slump: row.slump,
-      airContent: row.air_content,
-      unitWeight: row.unit_weight,
-      jRing: row.j_ring,
-      spread: row.spread,
-      setNo: row.set_no,
+      waterAdded: row.water_added_gal,
+      airTemp: row.air_temp_f,
+      concreteTemp: row.concrete_temp_f,
+      slump: row.slump_in,
+      airContent: row.air_content_percent,
+      unitWeight: row.unit_weight_lbs_ft3,
+      jRing: row.j_ring_in,
+      spread: row.spread_in,
+      setNo: row.set_number,
       labCylinders: row.lab_cylinders,
       fieldCylinders: row.field_cylinders,
       comments: row.comments,
@@ -191,6 +204,7 @@ export default function ConcreteTestLogDetails() {
       const status = approvalAction === 'approve' ? REPORT_STATUS.APPROVED : REPORT_STATUS.REJECTED;
       const options = {
         pdfUrl,
+        finalPdfUrl: approvalAction === 'approve' ? pdfUrl : undefined,
         approvedAt: approvalAction === 'approve' ? new Date().toISOString() : null,
         approvedBy: approvalAction === 'approve' ? role : null,
         rejectedAt: approvalAction !== 'approve' ? new Date().toISOString() : null,
@@ -201,7 +215,7 @@ export default function ConcreteTestLogDetails() {
       await setReportStatus(report.id, status, options);
       await uploadSignature(projectId, report.id, qcSignature, 'qc');
 
-      setReport((prev) => prev ? { ...prev, status, pdf_url: pdfUrl } : prev);
+      setReport((prev) => prev ? { ...prev, status, pdf_url: pdfUrl, final_pdf_url: pdfUrl } : prev);
       setApprovalModalOpen(false);
       alert(`Report ${approvalAction === 'approve' ? 'approved' : approvalAction === 'reject' ? 'rejected' : 'marked for changes'}.`);
     } catch (err) {
@@ -260,9 +274,9 @@ export default function ConcreteTestLogDetails() {
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-3">
-              {report.pdf_url && (
+              {reportPdfUrl && (
                 <a
-                  href={report.pdf_url}
+                  href={reportPdfUrl}
                   target="_blank"
                   rel="noreferrer"
                   className="inline-flex items-center gap-2 rounded-2xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white hover:bg-blue-700"
@@ -276,6 +290,7 @@ export default function ConcreteTestLogDetails() {
                   <button
                     type="button"
                     onClick={() => openApprovalModal('approve')}
+                    disabled={processing}
                     className="rounded-2xl bg-emerald-600 px-5 py-3 text-sm font-semibold text-white hover:bg-emerald-700"
                   >
                     Approve
@@ -283,6 +298,7 @@ export default function ConcreteTestLogDetails() {
                   <button
                     type="button"
                     onClick={() => openApprovalModal('reject')}
+                    disabled={processing}
                     className="rounded-2xl bg-rose-600 px-5 py-3 text-sm font-semibold text-white hover:bg-rose-700"
                   >
                     Reject
@@ -290,6 +306,7 @@ export default function ConcreteTestLogDetails() {
                   <button
                     type="button"
                     onClick={() => openApprovalModal('request_changes')}
+                    disabled={processing}
                     className="rounded-2xl bg-amber-600 px-5 py-3 text-sm font-semibold text-white hover:bg-amber-700"
                   >
                     Request Changes
@@ -323,7 +340,7 @@ export default function ConcreteTestLogDetails() {
             <dl className="mt-4 space-y-3 text-sm text-slate-700">
               <div>
                 <dt className="font-semibold text-slate-900">DFR Number</dt>
-                <dd>{report.dfr_number || '—'}</dd>
+                <dd>{report.dfr_number || specifications?.dfr_number || '—'}</dd>
               </div>
               <div>
                 <dt className="font-semibold text-slate-900">Status</dt>
@@ -368,13 +385,13 @@ export default function ConcreteTestLogDetails() {
             <h2 className="text-lg font-semibold text-slate-900">Concrete specifications</h2>
             <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {[
-                ['Air Content', report.air_content_spec],
-                ['Unit Weight', report.unit_weight_spec],
-                ['Slump', report.slump_spec],
-                ['J-Ring', report.j_ring_spec],
-                ['Spread', report.spread_spec],
-                ['Strength', report.strength_spec],
-                ['Mix No.', report.mix_no_spec],
+                ['Air Content', specifications?.air_content ?? report.air_content_spec],
+                ['Unit Weight', specifications?.unit_weight ?? report.unit_weight_spec],
+                ['Slump', specifications?.slump ?? report.slump_spec],
+                ['J-Ring', specifications?.j_ring ?? report.j_ring_spec],
+                ['Spread', specifications?.spread ?? report.spread_spec],
+                ['Strength', specifications?.speed_of_stress ?? report.strength_spec],
+                ['Mix No.', specifications?.mix_no ?? report.mix_no_spec],
               ].map(([label, value]) => (
                 <div key={label} className="rounded-3xl border border-slate-200 p-4">
                   <p className="text-sm uppercase tracking-[0.12em] text-slate-500">{label}</p>
@@ -410,13 +427,13 @@ export default function ConcreteTestLogDetails() {
                 {rows.length > 0 ? (
                   rows.map((row) => (
                     <tr key={row.id} className="hover:bg-slate-50">
-                      <td className="px-3 py-3">{row.test_no || '—'}</td>
-                      <td className="px-3 py-3">{row.ticket_no || '—'}</td>
-                      <td className="px-3 py-3">{row.truck_no || '—'}</td>
+                      <td className="px-3 py-3">{row.test_number || '—'}</td>
+                      <td className="px-3 py-3">{row.ticket_number || '—'}</td>
+                      <td className="px-3 py-3">{row.truck_number || '—'}</td>
                       <td className="px-3 py-3">{row.cubic_yards || '—'}</td>
-                      <td className="px-3 py-3">{row.slump || '—'}</td>
-                      <td className="px-3 py-3">{row.air_content || '—'}</td>
-                      <td className="px-3 py-3">{row.concrete_temp || '—'}</td>
+                      <td className="px-3 py-3">{row.slump_in || '—'}</td>
+                      <td className="px-3 py-3">{row.air_content_percent || '—'}</td>
+                      <td className="px-3 py-3">{row.concrete_temp_f || '—'}</td>
                       <td className="px-3 py-3">{row.comments || '—'}</td>
                     </tr>
                   ))
