@@ -54,19 +54,19 @@ function ProjectDetails() {
         <div className="project-card">
 
           <h2>
-            Field Reports
+            Field Operations
           </h2>
 
           <p>
             Daily field inspections,
-            QA/QC observations,
+            compliance observations,
             site activities,
             safety notes,
             manpower logs.
           </p>
 
           <button className="open-btn">
-            Open Field Reports
+            Open Field Operations
           </button>
 
         </div>
@@ -74,7 +74,7 @@ function ProjectDetails() {
         <div className="project-card">
 
           <h2>
-            Lab Reports
+            Concrete Quality Reports
           </h2>
 
           <p>
@@ -86,7 +86,7 @@ function ProjectDetails() {
           </p>
 
           <button className="open-btn">
-            Open Lab Reports
+            Open Concrete Quality Reports
           </button>
 
         </div>

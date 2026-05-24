@@ -52,7 +52,7 @@ Deno.serve(async (req) => {
     }
 
     const to = body.reviewerEmail || body.to || body.recipientEmail || body.recipient_email;
-    const subject = String(body.subject || "QC Review Notification");
+    const subject = String(body.subject || "Validation Notification");
     const html = String(body.html || body.body_html || body.message || "");
 
     if (!to) throw new Error("Missing recipient email. Expected `to`.");

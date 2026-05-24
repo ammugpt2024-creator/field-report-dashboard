@@ -87,10 +87,10 @@ function Dashboard() {
         <div className="rounded-3xl bg-white p-8 shadow-sm border border-slate-200">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
-              <p className="text-sm uppercase tracking-[0.32em] text-slate-400">QC Management Platform</p>
-              <h1 className="mt-3 text-4xl font-semibold text-slate-900">Projects</h1>
+              <p className="text-sm uppercase tracking-[0.32em] text-slate-400">QCore</p>
+              <h1 className="mt-3 text-4xl font-semibold text-slate-900">Project Operations</h1>
               <p className="mt-2 text-slate-600">
-                Manage all QA/QC projects in one place
+                Manage enterprise quality and compliance operations in one place.
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-3">
@@ -99,12 +99,12 @@ function Dashboard() {
                 className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white hover:bg-slate-800"
               >
                 <Plus size={18} />
-                Create Project
+                Create Project Operation
               </button>
               <div className="relative">
                 <input
                   type="text"
-                  placeholder="Search projects..."
+                  placeholder="Search project operations..."
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   className="w-64 rounded-2xl border border-slate-300 bg-white py-3 pl-11 pr-4 text-sm text-slate-900 focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-200"
@@ -116,13 +116,13 @@ function Dashboard() {
 
         <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
           <StatCard
-            title="Total Projects"
+            title="Total Project Operations"
             value={projects.length}
             color="blue"
             icon={<FolderKanban size={24} />}
           />
           <StatCard
-            title="Active Projects"
+            title="Active Project Operations"
             value={projects.filter((project) => project.status === "Active").length}
             color="green"
             icon={<FolderKanban size={24} />}
@@ -134,7 +134,7 @@ function Dashboard() {
             icon={<AlertTriangle size={24} />}
           />
           <StatCard
-            title="Delayed Projects"
+            title="Delayed Project Operations"
             value={projects.filter((project) => project.status === "Delayed").length}
             color="red"
             icon={<AlertTriangle size={24} />}
@@ -194,7 +194,7 @@ function Dashboard() {
           <div className="rounded-3xl border border-dashed border-slate-200 bg-slate-50 p-12 text-center text-slate-600">
             <FolderKanban className="mx-auto mb-4 h-12 w-12 text-slate-400" />
             <p className="text-lg font-semibold">No projects found</p>
-            <p className="mt-2 text-sm">Create a new project to get started with QA/QC management.</p>
+            <p className="mt-2 text-sm">Create a new project to get started with compliance operations.</p>
           </div>
         )}
 

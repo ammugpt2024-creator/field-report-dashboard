@@ -63,7 +63,7 @@ textarea {
 /* SIDEBAR */
 
 .sidebar {
-  width: 240px;
+  width: min(15rem, 100%);
   background: linear-gradient(
     to bottom,
     #0f172a,

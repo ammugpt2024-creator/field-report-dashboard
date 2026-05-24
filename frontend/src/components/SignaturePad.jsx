@@ -203,8 +203,8 @@ export default function SignaturePad({
           <h2 className="text-2xl font-semibold text-slate-900">{label}</h2>
           <p className="text-sm text-slate-500">
             {allowTypedSignature
-              ? 'Draw or type your signature to include it in the submitted QA/QC report.'
-              : 'Draw your signature with your finger or stylus to include it in the submitted QA/QC report.'}
+              ? 'Draw or type your signature to include it in the submitted compliance record.'
+              : 'Draw your signature with your finger or stylus to include it in the submitted compliance record.'}
           </p>
         </div>
         {!value && (

@@ -1,14 +1,18 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { supabase } from "../services/supabase";
+import { getRoleHomeRoute } from "../utils/navigation";
+import { BRAND } from "../config/branding";
 
 function Login() {
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const navigate = useNavigate();
 
   async function handleLogin() {
 
-    const { error } = await supabase.auth.signInWithPassword({
+    const { data, error } = await supabase.auth.signInWithPassword({
       email,
       password,
     });
@@ -16,24 +20,34 @@ function Login() {
     if (error) {
       alert(error.message);
     } else {
-      window.location.href = "/";
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("role")
+        .eq("id", data?.user?.id)
+        .maybeSingle();
+
+      navigate(getRoleHomeRoute(profile?.role), { replace: true });
     }
   }
 
   return (
 
-    <div className="flex min-h-screen w-full max-w-full items-center justify-center overflow-x-hidden bg-gray-100 px-4">
+    <div className="flex min-h-screen w-full max-w-full items-center justify-center overflow-x-hidden bg-slate-100 px-4">
 
       <div className="w-full max-w-[420px] rounded-2xl bg-white p-6 shadow-xl sm:p-10">
 
         <div className="text-center mb-8">
 
-          <h1 className="text-4xl font-bold text-blue-600 mb-2">
-            QCore
+          <h1 className="text-4xl font-bold text-slate-950 mb-2">
+            {BRAND.name}
           </h1>
 
-          <p className="text-gray-500">
-            Quality Control & Field Operations Platform
+          <p className="text-xs font-semibold uppercase tracking-[0.28em] text-blue-700">
+            {BRAND.tagline}
+          </p>
+
+          <p className="mt-3 text-sm font-medium text-gray-500">
+            {BRAND.platformDescription}
           </p>
 
         </div>

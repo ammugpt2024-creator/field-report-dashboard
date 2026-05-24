@@ -59,7 +59,7 @@ export const projectInfoFields = [
   {
     key: 'technician_name',
     dbColumn: 'data_logger',
-    label: 'Technician Name',
+    label: 'Field Engineer Name',
     type: 'text',
     required: true,
     readOnly: true,
@@ -127,7 +127,7 @@ export const specificationFields = [
 
   {
     key: 'concrete_temp_f',
-    label: 'Concrete Temp (°F)',
+    label: 'Material Temp (°F)',
     dbColumn: 'concrete_temp',
     type: 'text',
     valueType: 'text',
@@ -193,15 +193,15 @@ export const deliveryRecordFields = [
   { key: 'actual_minutes', dbColumn: 'actual_minutes', label: 'Actual Minutes', type: 'text', valueType: 'text', readOnly: true, required: false, section: 'time_tracking', defaultValue: '', validation: null },
   { key: 'water_added_gal', dbColumn: 'water_added_gal', label: 'Water Added (gal)', type: 'text', valueType: 'text', required: false, section: 'field_test_results', defaultValue: '', validation: null },
   { key: 'air_temp_f', dbColumn: 'air_temp_f', label: 'Air Temp (°F)', type: 'text', valueType: 'text', required: false, section: 'field_test_results', defaultValue: '', validation: null },
-  { key: 'concrete_temp_f', dbColumn: 'concrete_temp_f', label: 'Concrete Temp (°F)', type: 'text', valueType: 'text', required: false, section: 'field_test_results', defaultValue: '', validation: null },
+  { key: 'concrete_temp_f', dbColumn: 'concrete_temp_f', label: 'Material Temp (°F)', type: 'text', valueType: 'text', required: false, section: 'field_test_results', defaultValue: '', validation: null },
   { key: 'slump_in', dbColumn: 'slump_in', label: 'Slump (in)', type: 'text', valueType: 'text', required: false, section: 'field_test_results', defaultValue: '', validation: null },
   { key: 'air_content_percent', dbColumn: 'air_content_percent', label: 'Air Content (%)', type: 'text', valueType: 'text', required: false, section: 'field_test_results', defaultValue: '', validation: null },
   { key: 'unit_weight_lbs_ft3', dbColumn: 'unit_weight_lbs_ft3', label: 'Unit Weight (lbs/ft³)', type: 'text', valueType: 'text', required: false, section: 'field_test_results', defaultValue: '', validation: null },
   { key: 'j_ring_in', dbColumn: 'j_ring_in', label: 'J-Ring (in)', type: 'text', valueType: 'text', required: false, section: 'field_test_results', defaultValue: '', validation: null },
   { key: 'spread_in', dbColumn: 'spread_in', label: 'Spread (in)', type: 'text', valueType: 'text', required: false, section: 'field_test_results', defaultValue: '', validation: null },
   { key: 'set_number', dbColumn: 'set_number', label: 'Set Number', type: 'text', valueType: 'text', readOnly: true, required: false, section: 'cylinder_tracking', defaultValue: '' },
-  { key: 'lab_cylinders', dbColumn: 'lab_cylinders', label: 'Lab Cylinders', type: 'text', valueType: 'text', required: false, section: 'cylinder_tracking', defaultValue: '', validation: null },
-  { key: 'field_cylinders', dbColumn: 'field_cylinders', label: 'Field Cylinders', type: 'text', valueType: 'text', required: false, section: 'cylinder_tracking', defaultValue: '', validation: null },
+  { key: 'lab_cylinders', dbColumn: 'lab_cylinders', label: 'Lab Samples', type: 'text', valueType: 'text', required: false, section: 'cylinder_tracking', defaultValue: '', validation: null },
+  { key: 'field_cylinders', dbColumn: 'field_cylinders', label: 'Field Samples', type: 'text', valueType: 'text', required: false, section: 'cylinder_tracking', defaultValue: '', validation: null },
   { key: 'comments', dbColumn: 'comments', label: 'Comments', type: 'textarea', valueType: 'text', required: false, section: 'inspector_notes', defaultValue: '' },
   { key: 'row_status', dbColumn: 'row_status', label: 'Record Result', type: 'select', valueType: 'text', required: false, section: 'inspector_notes', defaultValue: '' }
 ];
@@ -210,7 +210,7 @@ export const deliveryRecordGroups = [
   { key: 'delivery_details', title: 'Delivery Details' },
   { key: 'time_tracking', title: 'Time Tracking' },
   { key: 'field_test_results', title: 'Field Test Results' },
-  { key: 'cylinder_tracking', title: 'Cylinder Tracking' },
+  { key: 'cylinder_tracking', title: 'Strength Verification' },
   { key: 'inspector_notes', title: 'Inspector Notes' }
 ];
 
@@ -220,7 +220,7 @@ export const attachmentTypes = [
   { key: 'batch-ticket', label: 'Batch Ticket' },
   { key: 'delivery-slip', label: 'Delivery Slip' },
   { key: 'test-photo', label: 'Test Photo' },
-  { key: 'cylinder-photo', label: 'Cylinder Photo' },
+  { key: 'cylinder-photo', label: 'Strength Sample Photo' },
   { key: 'supporting-document', label: 'Supporting Document' },
   { key: 'scan-ticket', label: 'Scanned Ticket' }
 ];
@@ -237,9 +237,9 @@ export const reportStatusList = [
 
 export const workflowSections = [
   { id: 'project', label: 'Project Information', shortLabel: 'Project Info', icon: FileText },
-  { id: 'specifications', label: 'Concrete Specifications', shortLabel: 'Specifications', icon: FlaskConical },
-  { id: 'records', label: 'Delivery Records', shortLabel: 'Records', icon: ClipboardCheck },
-  { id: 'attachments', label: 'Attachments', shortLabel: 'Attachments', icon: UploadCloud },
+  { id: 'specifications', label: 'Material Specifications', shortLabel: 'Specifications', icon: FlaskConical },
+  { id: 'records', label: 'Material Records', shortLabel: 'Records', icon: ClipboardCheck },
+  { id: 'attachments', label: 'Evidence Center', shortLabel: 'Evidence', icon: UploadCloud },
   { id: 'summary', label: 'Review & Submit', shortLabel: 'Review', icon: ClipboardCheck }
 ];
 

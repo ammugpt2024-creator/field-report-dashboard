@@ -22,6 +22,7 @@ import {
   normalizeReportStatus,
   ACTION_IDS
 } from '../workflow/workflowEngine';
+import { MODULE_NAMES, WORKFLOW_LABELS } from '../config/branding';
 
 const REVIEWABLE_STATUSES = [
   REPORT_STATUS.SUBMITTED_FOR_QC,
@@ -138,7 +139,7 @@ export default function ConcreteTestLogDetails() {
   const reportStatus = normalizeReportStatus(report?.status);
   const reportPdfUrl = report?.final_pdf_url || report?.pdf_url;
   const effectiveProjectId = projectId || report?.project_id;
-  const reviewerName = profile?.full_name || profile?.email || session?.user?.email || role || 'QA/QC Reviewer';
+  const reviewerName = profile?.full_name || profile?.email || session?.user?.email || role || WORKFLOW_LABELS.validationReviewer;
   const canApprove = canReviewReports(role) && REVIEWABLE_STATUSES.includes(reportStatus);
   const getIssueKey = (row, fieldKey) => `${row.id || row.test_number || 'row'}:${fieldKey}`;
   const isIssueMarked = (row, fieldKey) => markedIssues.some((issue) => issue.key === getIssueKey(row, fieldKey));
@@ -152,7 +153,7 @@ export default function ConcreteTestLogDetails() {
           id: 'current-rejection',
           action: REPORT_STATUS.REVISION_REQUIRED,
           remarks: report.rejection_reason,
-          performed_by_name: report.reviewed_by_name || 'QA/QC Reviewer',
+          performed_by_name: report.reviewed_by_name || WORKFLOW_LABELS.validationReviewer,
           performed_at: report.rejected_at || report.reviewed_at || report.updated_at
         }]
       : []),
@@ -208,7 +209,7 @@ export default function ConcreteTestLogDetails() {
         type="button"
         onClick={() => toggleMarkedIssue(row, field)}
         title={marked ? 'Remove faulty value mark' : 'Mark this value as faulty'}
-        className={`inline-flex max-w-[180px] items-center gap-1.5 rounded-lg border px-2 py-1 text-left font-semibold transition ${
+        className={`inline-flex max-w-full items-center gap-1.5 rounded-lg border px-2 py-1 text-left font-semibold transition sm:max-w-[180px] ${
           marked
             ? 'border-rose-200 bg-rose-50 text-rose-700 ring-2 ring-rose-100'
             : 'border-transparent text-slate-700 hover:border-amber-200 hover:bg-amber-50 hover:text-amber-800'
@@ -237,14 +238,14 @@ export default function ConcreteTestLogDetails() {
         userId: session?.user?.id,
         userRole: role,
         userName: reviewerName,
-        comments: 'Report opened by QA/QC reviewer.',
+        comments: 'Record opened by validation reviewer.',
         metadata: { action: 'UNDER_REVIEW' }
       });
 
       await addReviewHistory({
         reportId: report.id,
         action: REPORT_STATUS.UNDER_REVIEW,
-        remarks: 'Report opened by QA/QC reviewer.',
+        remarks: 'Record opened by validation reviewer.',
         performedBy: session?.user?.id,
         performedByName: reviewerName,
         performedByRole: role
@@ -254,7 +255,7 @@ export default function ConcreteTestLogDetails() {
     }
 
     markUnderReview().catch((err) => {
-      console.error('Unable to mark report under QC review', err);
+      console.error('Unable to mark record under validation review', err);
     });
   }, [report?.id, reportStatus, role, session?.user?.id, reviewerName]);
 
@@ -394,9 +395,10 @@ export default function ConcreteTestLogDetails() {
       for (let pageNumber = pdf.numPages; pageNumber >= 1; pageNumber -= 1) {
         const pdfPage = await pdf.getPage(pageNumber);
         const textContent = await pdfPage.getTextContent();
-        const qaLabel = textContent.items.find((item) => (
-          String(item.str || '').toUpperCase().includes('QA REVIEWER SIGNATURE')
-        ));
+        const qaLabel = textContent.items.find((item) => {
+          const label = String(item.str || '').toUpperCase();
+          return label.includes('QUALITY REVIEWER SIGNATURE') || label.includes('QA REVIEWER SIGNATURE');
+        });
         const dateLabel = textContent.items.find((item) => (
           String(item.str || '').toUpperCase().includes('DATE APPROVED')
         ));
@@ -479,7 +481,7 @@ export default function ConcreteTestLogDetails() {
       try {
         signatureBytes = await sourceToBytes(qcSignatureUrl);
       } catch (signatureError) {
-        console.warn('Unable to load QC signature image for PDF stamp.', signatureError);
+        console.warn('Unable to load validation signature image for PDF stamp.', signatureError);
       }
     }
     let signatureImage = null;
@@ -504,7 +506,7 @@ export default function ConcreteTestLogDetails() {
           }
         }
       } catch (technicianSignatureError) {
-        console.warn('Unable to load technician signature image for PDF cleanup.', technicianSignatureError);
+        console.warn('Unable to load field engineer signature image for PDF cleanup.', technicianSignatureError);
       }
     }
 
@@ -519,7 +521,7 @@ export default function ConcreteTestLogDetails() {
     const reviewerNameY = signatureLineY - 34;
     const dateValueY = signatureLineY + 22;
     const approvalDate = formatApprovalDate(approvedAtOverride);
-    const approvalReviewerName = reviewerNameOverride || report?.reviewed_by_name || 'QA/QC Reviewer';
+    const approvalReviewerName = reviewerNameOverride || report?.reviewed_by_name || WORKFLOW_LABELS.validationReviewer;
 
     const statusText = String(statusLabel || 'APPROVED').toUpperCase();
     const statusBadgeWidth = Math.max(64, boldFont.widthOfTextAtSize(statusText, 8) + 18);
@@ -659,7 +661,7 @@ export default function ConcreteTestLogDetails() {
       setReport((previous) => previous
         ? { ...previous, pdf_url: refreshedPdfUrl, final_pdf_url: refreshedPdfUrl }
         : previous);
-      if (force) setApprovedPdfRefreshStatus('Approved PDF refreshed with QC signature and approval date.');
+      if (force) setApprovedPdfRefreshStatus('Approved deliverable refreshed with validation signature and approval date.');
     } catch (error) {
       console.error('Unable to refresh approved PDF snapshot', error);
       if (force) setApprovedPdfRefreshStatus(`Unable to refresh approved PDF: ${error?.message || 'Unknown error'}`);
@@ -763,7 +765,7 @@ export default function ConcreteTestLogDetails() {
     const decisionAction = actionOverride || approvalAction;
     const activeSignature = signatureOverride || qcSignature;
     if (decisionAction === 'approve' && !activeSignature) {
-      alert('QC signature is required before approval.');
+      alert('Validation signature is required before approval.');
       return;
     }
     const decisionRemarks = [
@@ -787,7 +789,7 @@ export default function ConcreteTestLogDetails() {
           qcSignatureUrl = await uploadSignature(effectiveProjectId, report.id, activeSignature, 'qc');
           qcSignatureStoragePath = getSignatureStoragePath(effectiveProjectId, report.id, 'qc');
         } catch (signatureError) {
-          console.warn('QC signature upload failed; approval will continue with audit metadata only.', signatureError);
+          console.warn('Validation signature upload failed; approval will continue with audit metadata only.', signatureError);
         }
 
         try {
@@ -892,7 +894,7 @@ export default function ConcreteTestLogDetails() {
       });
     } catch (err) {
       console.error('Approval flow failed', err);
-      alert(`Unable to complete QC approval: ${err?.message || 'Unknown error'}`);
+      alert(`Unable to complete validation approval: ${err?.message || 'Unknown error'}`);
     } finally {
       setProcessing(false);
     }
@@ -944,7 +946,7 @@ export default function ConcreteTestLogDetails() {
                 onClick={() => navigate(effectiveProjectId ? `/project/${effectiveProjectId}/field-reports/concrete-test-log` : -1)}
                 className="mb-3 inline-flex min-h-11 items-center gap-2 rounded-2xl px-1 text-sm font-semibold text-slate-200 hover:text-white sm:mb-4"
               >
-                <ChevronLeft className="w-5 h-5" /> Back to Report Dashboard
+                <ChevronLeft className="w-5 h-5" /> Back to Validation Center
               </button>
               {effectiveProjectId && (
                 <button
@@ -953,12 +955,12 @@ export default function ConcreteTestLogDetails() {
                   className="mb-3 inline-flex min-h-11 items-center gap-2 rounded-2xl border border-white/15 bg-white/10 px-3 py-2 text-sm font-semibold text-white hover:bg-white/15 sm:mb-4 sm:ml-4"
                 >
                   <FolderKanban className="h-4 w-4" />
-                  Project Workspace
+                  {MODULE_NAMES.projectHub}
                 </button>
               )}
-              <h1 className="break-words text-2xl font-semibold sm:text-4xl">QC Review: {report.dfr_number || 'Concrete Test Log'}</h1>
+              <h1 className="break-words text-2xl font-semibold sm:text-4xl">Validation Review: {report.dfr_number || 'Field Operations Record'}</h1>
               <p className="mt-2 max-w-2xl text-slate-300">
-                Perform professional QA/QC review of the submitted log metrics and generated PDF artifact.
+                Perform professional validation of the submitted assurance record and generated digital deliverable.
               </p>
             </div>
             <div className="flex w-full flex-wrap items-center gap-3 lg:w-auto">
@@ -1016,14 +1018,14 @@ export default function ConcreteTestLogDetails() {
                   <dd className="mt-1 font-medium">{report.project_name || '—'}</dd>
                 </div>
                 <div className="sm:col-span-2">
-                  <dt className="text-xs uppercase tracking-wider text-slate-400 font-bold">Technician</dt>
+                  <dt className="text-xs uppercase tracking-wider text-slate-400 font-bold">Field Engineer</dt>
                   <dd className="mt-1 font-medium">{report.data_logger || '—'}</dd>
                 </div>
                 {(reportStatus === REPORT_STATUS.APPROVED || reportStatus === REPORT_STATUS.FINALIZED) && (
                   <div className="sm:col-span-2 grid grid-cols-1 gap-4 border-t border-slate-100 pt-4 sm:grid-cols-2">
                     <div>
                       <dt className="text-xs uppercase tracking-wider text-emerald-600 font-bold">Approved By</dt>
-                      <dd className="mt-1 text-emerald-900 font-bold">{report.reviewed_by_name || 'QA Reviewer'}</dd>
+                      <dd className="mt-1 text-emerald-900 font-bold">{report.reviewed_by_name || WORKFLOW_LABELS.validationReviewer}</dd>
                     </div>
                     <div>
                       <dt className="text-xs uppercase tracking-wider text-emerald-600 font-bold">Approved On</dt>
@@ -1037,8 +1039,8 @@ export default function ConcreteTestLogDetails() {
             {visibleReviewComments.length > 0 && (
               <div className="rounded-3xl border border-amber-200 bg-amber-50 p-6 shadow-sm">
                 <div className="border-b border-amber-200 pb-3">
-                  <p className="text-xs font-bold uppercase tracking-[0.18em] text-amber-700">QA/QC Review</p>
-                  <h2 className="mt-1 text-lg font-semibold text-slate-950">QC Review Comments</h2>
+                  <p className="text-xs font-bold uppercase tracking-[0.18em] text-amber-700">Validation Review</p>
+                  <h2 className="mt-1 text-lg font-semibold text-slate-950">Validation Comments</h2>
                 </div>
                 <div className="mt-4 space-y-3">
                   {visibleReviewComments.map((comment) => (
@@ -1052,7 +1054,7 @@ export default function ConcreteTestLogDetails() {
                         </p>
                       </div>
                       <p className="mt-2 text-sm font-semibold text-slate-900">
-                        {comment.performed_by_name || 'QA/QC Reviewer'}
+                        {comment.performed_by_name || WORKFLOW_LABELS.validationReviewer}
                       </p>
                       <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-700">
                         {comment.remarks}
@@ -1068,7 +1070,7 @@ export default function ConcreteTestLogDetails() {
                 <h2 className="text-lg font-semibold text-slate-900">Delivery & testing records</h2>
                 {canApprove && (
                   <p className="mt-2 text-sm font-medium text-slate-500">
-                    Select any questionable value to flag it for technician revision. Flagged values are added to the QC review comments.
+                    Select any questionable value to flag it for field engineer revision. Flagged values are added to the validation comments.
                   </p>
                 )}
               </div>
@@ -1092,7 +1094,7 @@ export default function ConcreteTestLogDetails() {
                           {QC_MARKABLE_FIELDS.map((field) => (
                             <td
                               key={`${row.id}-${field.key}`}
-                              className={`px-2 py-3 ${field.key === 'comments' ? 'max-w-[180px]' : ''}`}
+                              className={`px-2 py-3 ${field.key === 'comments' ? 'max-w-full sm:max-w-[180px]' : ''}`}
                             >
                               {renderReviewValue(row, field)}
                             </td>
@@ -1148,7 +1150,7 @@ export default function ConcreteTestLogDetails() {
             </div>
 
             <div className="rounded-3xl bg-white p-6 shadow-sm">
-              <h2 className="text-lg font-semibold text-slate-900 border-b border-slate-100 pb-3">Uploaded attachments</h2>
+              <h2 className="text-lg font-semibold text-slate-900 border-b border-slate-100 pb-3">{MODULE_NAMES.evidenceCenter}</h2>
               {attachments.length > 0 ? (
                 <div className="mt-4 grid gap-3 sm:grid-cols-2">
                   {attachments.map((attachment) => (
@@ -1175,7 +1177,7 @@ export default function ConcreteTestLogDetails() {
             {reportPdfUrl ? (
               <PdfViewer
                 url={reportPdfUrl}
-                fileName={`QC_Review_${report.dfr_number || report.id}.pdf`}
+                fileName={`Validation_Review_${report.dfr_number || report.id}.pdf`}
               />
             ) : (
               <div className="flex flex-col items-center justify-center h-full bg-white rounded-3xl border-2 border-dashed border-slate-200 p-12 text-center">
@@ -1184,7 +1186,7 @@ export default function ConcreteTestLogDetails() {
                 </div>
                 <h3 className="text-lg font-semibold text-slate-900">No PDF artifact generated</h3>
                 <p className="mt-2 text-slate-500 max-w-xs mx-auto">
-                  A PDF snapshot must be generated by the technician before a final QC review can be completed.
+                  A digital deliverable must be generated by the field engineer before final validation can be completed.
                 </p>
               </div>
             )}
@@ -1212,7 +1214,7 @@ export default function ConcreteTestLogDetails() {
                 <p className="text-sm font-semibold text-slate-600">
                   {reportStatus === REPORT_STATUS.APPROVED || reportStatus === REPORT_STATUS.FINALIZED
                     ? 'This report has been approved and is now immutable.'
-                    : 'Awaiting technician submission for review.'}
+                    : 'Awaiting field engineer submission for review.'}
                 </p>
               </div>
             )}
@@ -1240,7 +1242,7 @@ export default function ConcreteTestLogDetails() {
         open={approvalModalOpen}
         title={
           approvalAction === 'approve'
-            ? 'QC Approval Signature'
+            ? 'Validation Approval Signature'
             : approvalAction === 'reject'
             ? 'Reject Report'
             : 'Request Changes'
@@ -1249,8 +1251,8 @@ export default function ConcreteTestLogDetails() {
           approvalAction === 'approve'
             ? 'Please sign to approve and finalize the report.'
             : approvalAction === 'reject'
-            ? 'Sign to reject this report and notify the technician of the issue.'
-            : 'Sign to request changes and return the report to the technician for revision.'
+            ? 'Sign to reject this report and notify the field engineer of the issue.'
+            : 'Sign to request changes and return the report to the field engineer for revision.'
         }
         disabled={processing}
         value={qcSignature}
@@ -1273,7 +1275,7 @@ export default function ConcreteTestLogDetails() {
             </button>
             <PdfViewer
               url={reportPdfUrl}
-              fileName={`Concrete_Test_Log_${report.dfr_number || report.id}.pdf`}
+              fileName={`Material_Assurance_${report.dfr_number || report.id}.pdf`}
               onClose={() => setShowPdfViewer(false)}
             />
           </div>

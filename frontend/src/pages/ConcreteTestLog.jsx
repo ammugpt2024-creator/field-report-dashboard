@@ -43,6 +43,7 @@ import {
   normalizeReportStatus
 } from '../workflow/workflowEngine';
 import ActionButton from '../components/ActionButton';
+import { BRAND, MODULE_NAMES, WORKFLOW_LABELS } from '../config/branding';
 
 const ATTACHMENT_BUCKET = 'concrete-test-attachments';
 const PDF_BUCKET = 'report-pdfs';
@@ -407,7 +408,7 @@ function getMissingRequiredValueErrors({
 
   SPECIFICATION_COMPLETION_FIELDS.forEach((key) => {
     if (!hasEnteredValue(specifications[key])) {
-      validationErrors.push(`${sectionPrefix('Concrete Specifications')}${getFieldLabel(specificationFields, key)} is missing.`);
+      validationErrors.push(`${sectionPrefix('Material Specifications')}${getFieldLabel(specificationFields, key)} is missing.`);
     }
   });
 
@@ -584,7 +585,7 @@ function getRecordStatus(record, reportStatus = REPORT_STATUS.DRAFT) {
 
   const hasAnyRecordData = deliveryRecordFields.some((field) => field.key !== 'test_number' && Boolean(record[field.key]));
   if (!hasAnyRecordData) {
-    return { label: 'Pending', tone: 'slate', severity: 0 };
+    return { label: 'Draft', tone: 'slate', severity: 0 };
   }
 
   const normalizedStatus = normalizeReportStatus(reportStatus);
@@ -592,13 +593,13 @@ function getRecordStatus(record, reportStatus = REPORT_STATUS.DRAFT) {
     return { label: 'Ready for Review', tone: 'amber', severity: 1, messages: [] };
   }
   if ([REPORT_STATUS.SUBMITTED_FOR_QC, REPORT_STATUS.UNDER_REVIEW, REPORT_STATUS.RESUBMITTED].includes(normalizedStatus)) {
-    return { label: 'QC Review', tone: 'amber', severity: 1, messages: [] };
+    return { label: WORKFLOW_LABELS.submittedForValidation, tone: 'amber', severity: 1, messages: [] };
   }
   if ([REPORT_STATUS.REJECTED, REPORT_STATUS.REVISION_REQUIRED].includes(normalizedStatus)) {
     return { label: 'Revision Required', tone: 'red', severity: 2, messages: [] };
   }
 
-  return { label: 'Passed', tone: 'emerald', severity: 1, messages: [] };
+  return { label: 'Approved', tone: 'emerald', severity: 1, messages: [] };
 }
 
 function badgeClass(tone) {
@@ -1072,13 +1073,13 @@ async function renderHeader(doc, context, cursor, margins) {
   setPdfText(doc, PDF_STYLE.white, 10, 'bold');
   doc.text(pdfValue(context.companyName), margins.left + 14, cursor.y + 64);
   setPdfText(doc, [203, 213, 225], 6.5, 'normal');
-  doc.text('Construction QA/QC Inspection Services', margins.left + 14, cursor.y + 76);
+  doc.text('Quality & Compliance Operations', margins.left + 14, cursor.y + 76);
 
   const clientLogo = await urlToDataUrl(context.clientLogoUrl);
   addPdfImageSafely(doc, clientLogo, pageWidth - margins.right - 62, cursor.y + 18, 48, 48);
 
   setPdfText(doc, PDF_STYLE.white, 20, 'bold');
-  doc.text('Concrete Test Log', pageWidth / 2, cursor.y + 31, { align: 'center' });
+  doc.text('Field Operations Record', pageWidth / 2, cursor.y + 31, { align: 'center' });
   setPdfText(doc, [203, 213, 225], 10, 'bold');
   doc.text(pdfValue(context.projectName), pageWidth / 2, cursor.y + 49, { align: 'center' });
 
@@ -1101,7 +1102,7 @@ function renderProjectInfo(doc, context, cursor, margins) {
     { label: 'General Contractor', value: context.projectInfo.general_contractor },
     { label: 'GC Representative', value: context.projectInfo.gc_representative },
     { label: 'Project Location', value: context.projectInfo.project_location },
-    { label: 'Technician Name', value: context.projectInfo.technician_name },
+    { label: 'Field Engineer Name', value: context.projectInfo.technician_name },
     { label: 'Weather', value: context.weather },
     { label: 'Batch Plant', value: context.batchPlant },
     { label: 'Mix No.', value: context.mixDesign },
@@ -1130,7 +1131,7 @@ function renderSpecifications(doc, context, cursor, margins) {
       [
         'Slump (in)',
         pdfValue(specs.slump_in),
-        'Concrete Temp (°F)',
+        'Material Temp (°F)',
         pdfValue(specs.concrete_temp_f)
       ],
       [
@@ -1179,7 +1180,7 @@ function renderDeliveryRecords(doc, context, cursor, margins) {
     cursor = { ...cursor, y: margins.top };
   }
 
-  cursor = drawSectionTitle(doc, 'Concrete Delivery & Testing Records', cursor, margins);
+  cursor = drawSectionTitle(doc, 'Material Delivery & Verification Records', cursor, margins);
   if (!context.deliveryRecords.length) {
     setPdfText(doc, PDF_STYLE.slate, 10, 'bold');
     doc.text('No delivery records entered.', margins.left, cursor.y + 12);
@@ -1307,14 +1308,14 @@ function renderDeliveryRecords(doc, context, cursor, margins) {
 }
 
 function renderSummary(doc, context, cursor, margins) {
-  cursor = drawSectionTitle(doc, 'QA/QC Summary', cursor, margins);
+  cursor = drawSectionTitle(doc, 'Compliance Summary', cursor, margins);
   const summaryCards = [
     { label: 'Total Records', value: context.summary.totalRecords, tone: PDF_STYLE.blue },
-    { label: 'Total Cubic Yards', value: context.summary.totalCubicYards.toFixed(1), tone: PDF_STYLE.blue },
-    { label: 'Total Cylinders', value: context.summary.totalLabCylinders + context.summary.totalFieldCylinders, tone: PDF_STYLE.blue },
-    { label: 'Passed Tests', value: context.summary.passedTests, tone: PDF_STYLE.emerald },
-    { label: 'Failed Tests', value: context.summary.failedTests, tone: PDF_STYLE.red },
-    { label: 'Pending Review', value: context.summary.pendingReview, tone: PDF_STYLE.amber }
+    { label: 'Total Quantity', value: context.summary.totalCubicYards.toFixed(1), tone: PDF_STYLE.blue },
+    { label: 'Strength Samples', value: context.summary.totalLabCylinders + context.summary.totalFieldCylinders, tone: PDF_STYLE.blue },
+    { label: 'Approved Checks', value: context.summary.passedTests, tone: PDF_STYLE.emerald },
+    { label: 'Requires Action', value: context.summary.failedTests, tone: PDF_STYLE.red },
+    { label: 'Under Validation', value: context.summary.pendingReview, tone: PDF_STYLE.amber }
   ];
 
   const pageWidth = doc.internal.pageSize.getWidth();
@@ -1719,13 +1720,13 @@ async function appendSignaturePage(pdfBlob, context) {
 
   const fields = [
     {
-      label: 'TECHNICIAN SIGNATURE',
+      label: 'FIELD ENGINEER SIGNATURE',
       name: context.technicianName || '-',
       image: technicianSignature
     },
     {
-      label: 'QA REVIEWER SIGNATURE',
-      name: context.approvalBy || 'QA Reviewer',
+      label: 'QUALITY REVIEWER SIGNATURE',
+      name: context.approvalBy || WORKFLOW_LABELS.validationReviewer,
       image: qcSignature
     },
     {
@@ -1792,26 +1793,26 @@ async function renderSignatures(doc, cursor, margins, context) {
   cursor = drawSectionTitle(doc, 'Signatures', cursor, margins);
   const pageWidth = doc.internal.pageSize.getWidth();
   const width = (pageWidth - margins.left - margins.right - 20) / 3;
-  const labels = ['Technician Signature', 'QA Reviewer Signature', 'Date Approved'];
+  const labels = ['Field Engineer Signature', 'Quality Reviewer Signature', 'Date Approved'];
   const technicianSignature = await urlToDataUrl(context.technicianSignatureUrl);
   const qcSignature = await urlToDataUrl(context.qcSignatureUrl);
   labels.forEach((label, index) => {
     const x = margins.left + index * (width + 10);
     doc.setDrawColor(...PDF_STYLE.border);
     doc.line(x, cursor.y + 36, x + width, cursor.y + 36);
-    if (label === 'Technician Signature' && technicianSignature) {
+    if (label === 'Field Engineer Signature' && technicianSignature) {
       addPdfImageSafely(doc, technicianSignature, x, cursor.y + 2, width, 30);
     }
-    if (label === 'QA Reviewer Signature' && qcSignature) {
+    if (label === 'Quality Reviewer Signature' && qcSignature) {
       addPdfImageSafely(doc, qcSignature, x, cursor.y + 2, width, 30);
     }
     setPdfText(doc, PDF_STYLE.slate, 8, 'bold');
     doc.text(label.toUpperCase(), x, cursor.y + 50);
-    if (label === 'Technician Signature' && context.technicianName) {
+    if (label === 'Field Engineer Signature' && context.technicianName) {
       setPdfText(doc, PDF_STYLE.navy, 8, 'normal');
       doc.text(context.technicianName, x, cursor.y + 64);
     }
-    if (label === 'QA Reviewer Signature' && context.approvalBy) {
+    if (label === 'Quality Reviewer Signature' && context.approvalBy) {
       setPdfText(doc, PDF_STYLE.navy, 8, 'normal');
       doc.text(context.approvalBy, x, cursor.y + 64);
     }
@@ -1847,7 +1848,7 @@ function renderFooter(doc, context, margins) {
     setPdfText(doc, PDF_STYLE.slate, 8, 'normal');
     doc.text(context.companyName, margins.left, pageHeight - 19);
     doc.text(`Generated ${context.generatedAt}`, pageWidth / 2, pageHeight - 19, { align: 'center' });
-    doc.text(`QCore QA/QC • Rev ${context.revision} • Page ${page} of ${pageCount}`, pageWidth - margins.right, pageHeight - 19, { align: 'right' });
+    doc.text(`${BRAND.footer} • Rev ${context.revision} • Page ${page} of ${pageCount}`, pageWidth - margins.right, pageHeight - 19, { align: 'right' });
   }
 }
 
@@ -2050,7 +2051,7 @@ function ConcreteTestLog() {
     REPORT_STATUS.RESUBMITTED
   ].includes(normalizedStatus);
   const reviewBadgeTone = summary.failedTests > 0 ? 'red' : isAwaitingQaReview ? 'amber' : workflowComplete ? 'emerald' : 'amber';
-  const reviewBadgeLabel = summary.failedTests > 0 ? 'Not Ready' : isAwaitingQaReview ? 'Pending Review' : workflowComplete ? 'Ready' : 'Needs Data';
+  const reviewBadgeLabel = summary.failedTests > 0 ? 'Needs Attention' : isAwaitingQaReview ? WORKFLOW_LABELS.submittedForValidation : workflowComplete ? 'Ready' : 'Needs Data';
   const hasWorkflowProgress =
     Object.values(projectInfo).some(Boolean) ||
     Object.values(currentSpecifications).some(Boolean) ||
@@ -2289,7 +2290,7 @@ function ConcreteTestLog() {
           }
 	      } catch (error) {
         console.error('Concrete log initialization failed', error);
-        setErrors(['Project information or technician profile could not be loaded from Supabase.']);
+        setErrors(['Project information or field engineer profile could not be loaded from Supabase.']);
       } finally {
         setLoading(false);
       }
@@ -2806,8 +2807,8 @@ function ConcreteTestLog() {
         });
         return logId;
       } catch (error) {
-        console.error('Concrete test log save failed', error);
-        if (!silent) setErrors([error.message || 'Concrete test log could not be saved to Supabase.']);
+        console.error('Field operations record save failed', error);
+        if (!silent) setErrors([error.message || 'Field operations record could not be saved to Supabase.']);
         throw error;
       } finally {
         setSaving(false);
@@ -2875,7 +2876,7 @@ function ConcreteTestLog() {
       return;
     }
     if (!technicianSignature) {
-      setErrors(['Technician digital signature is required before submitting for QA review.']);
+      setErrors(['Field engineer digital signature is required before submitting for quality review.']);
       return;
     }
 
@@ -2885,16 +2886,26 @@ function ConcreteTestLog() {
         : REPORT_STATUS.SUBMITTED_FOR_QC;
       const logId = await saveReportData(REPORT_STATUS.GENERATED);
       const { signatureUrl, signaturePath } = await uploadTechnicianSignature(logId);
-      setPdfGenerationStatus('Generating QA review PDF...');
+      setPdfGenerationStatus('Generating quality review PDF...');
       const { pdfBlob, pdfFileName } = await createEngineeringPdfDocument(submittingStatus, {
         technicianSignatureUrl: signatureUrl
       });
       const { pdfAccessUrl } = await uploadGeneratedPdf(logId, pdfBlob, submittingStatus);
       const submittedAt = new Date().toISOString();
+      const { data: qcProfiles } = await supabase
+        .from('profiles')
+        .select('*')
+        .in('role', ['qc', 'qc_approver', 'qc_manager', 'admin']);
+      const assignedReviewer = (qcProfiles || []).find((item) => item.role === 'qc_approver') ||
+        (qcProfiles || []).find((item) => item.role === 'qc') ||
+        (qcProfiles || []).find((item) => item.role === 'qc_manager') ||
+        (qcProfiles || [])[0] ||
+        null;
       await runMutationWithColumnFallback(
         {
           status: submittingStatus,
           is_locked: true,
+          qc_assigned_to: assignedReviewer?.id || null,
           technician_signature_url: signatureUrl,
           technician_signature_storage_path: signaturePath,
           submitted_at: submittedAt,
@@ -2911,16 +2922,12 @@ function ConcreteTestLog() {
       await addReviewHistory({
         reportId: logId,
         action: submittingStatus,
-        remarks: 'Report submitted successfully to QA/QC review.',
+        remarks: 'Record submitted successfully for validation.',
         performedBy: session?.user?.id || null,
         performedByName: profile?.full_name || projectInfo.technician_name,
         performedByRole: role
       });
       const reviewUrl = `${window.location.origin}/qc/review/${logId}`;
-      const { data: qcProfiles } = await supabase
-        .from('profiles')
-        .select('*')
-        .in('role', ['qc', 'qc_approver', 'qc_manager', 'admin']);
       const qcRecipients = Array.from(new Set((qcProfiles || [])
         .map((item) => item.email)
         .filter(Boolean)));
@@ -2937,7 +2944,7 @@ function ConcreteTestLog() {
       });
       await queueAndSendNotification({
         reportId: logId,
-        recipientEmail: qcRecipients[0],
+        recipientEmail: assignedReviewer?.email || qcRecipients[0] || 'ammugpt2024@gmail.com',
         subject: qcEmail.subject,
         html: qcEmail.html,
         notificationType: 'qc_review_required',
@@ -2948,7 +2955,7 @@ function ConcreteTestLog() {
         if (previous?.url?.startsWith('blob:')) URL.revokeObjectURL(previous.url);
         return { url: pdfAccessUrl, name: pdfFileName, generatedAt: new Date() };
       });
-      setPdfGenerationStatus('Report submitted successfully to QA/QC review.');
+      setPdfGenerationStatus('Record submitted successfully for validation.');
       
       // Clear session storage for this project so the next "New Report" is fresh
       window.sessionStorage.removeItem(getReportSessionKey(projectId));
@@ -2962,8 +2969,8 @@ function ConcreteTestLog() {
     } catch (error) {
       console.error('Submit failed', error);
       const message = isStorageBucketError(error)
-        ? `Concrete test log saved, but the QA review PDF could not be uploaded. Confirm the "${PDF_BUCKET}" bucket exists and has upload policies.`
-        : error.message || 'Concrete test log could not be submitted.';
+        ? `Field operations record saved, but the validation deliverable could not be uploaded. Confirm the "${PDF_BUCKET}" bucket exists and has upload policies.`
+        : error.message || 'Field operations record could not be submitted.';
       setErrors([message]);
       setShowSubmitConfirmation(false);
     }
@@ -3021,8 +3028,8 @@ function ConcreteTestLog() {
       technicianName: projectInfo.technician_name,
       technicianSignatureUrl: overrides.technicianSignatureUrl || '',
       qcSignatureUrl: overrides.qcSignatureUrl || qcSignatureUrl,
-      reviewerName: projectInfo.qc_rep || 'QA Reviewer',
-      approvalBy: approvalBy || projectInfo.qc_rep || 'QA Reviewer',
+      reviewerName: projectInfo.qc_rep || WORKFLOW_LABELS.validationReviewer,
+      approvalBy: approvalBy || projectInfo.qc_rep || WORKFLOW_LABELS.validationReviewer,
       approvedAt: approvedAt ? new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'short', day: '2-digit' }).format(new Date(approvedAt)) : '',
       dfrNumber: specifications.dfr_number,
       dateSampled: new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'short', day: '2-digit' }).format(new Date()),
@@ -3053,7 +3060,7 @@ function ConcreteTestLog() {
     if (isFinalApproved || normalizedTargetStatus === REPORT_STATUS.SUBMITTED_FOR_QC || normalizedTargetStatus === REPORT_STATUS.UNDER_REVIEW || normalizedTargetStatus === REPORT_STATUS.RESUBMITTED) {
       pdfBlob = await appendSignaturePage(pdfBlob, pdfContext);
     }
-    const pdfFileName = `${pdfContext.dfrNumber || 'concrete-test-log'}.pdf`;
+    const pdfFileName = `${pdfContext.dfrNumber || 'field-operations-record'}.pdf`;
     return { pdfBlob, pdfFileName };
   }
 
@@ -3061,7 +3068,7 @@ function ConcreteTestLog() {
     const normalizedTargetStatus = normalizeReportStatus(targetStatus);
     const projectFolder = getProjectStorageFolder(projectInfo, projectId);
     const dfrNumber = toSafeStorageName(getValues('dfr_number'));
-    const fileName = `${dfrNumber || `concrete_test_log_${logId}`}.pdf`;
+    const fileName = `${dfrNumber || `field_operations_record_${logId}`}.pdf`;
     const path = `${projectFolder}/concrete-test-logs/log_${logId}/pdf/${fileName}`;
     const { error } = await supabase.storage.from(PDF_BUCKET).upload(path, pdfBlob, {
       contentType: 'application/pdf',
@@ -3139,7 +3146,7 @@ function ConcreteTestLog() {
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-100 text-sm font-semibold text-slate-700">
-        Loading concrete QA/QC testing log...
+        Loading field operations workspace...
       </div>
     );
   }
@@ -3149,9 +3156,9 @@ function ConcreteTestLog() {
       <div className="sticky top-0 z-20 border-b border-slate-200 bg-white/95 backdrop-blur-sm">
         <div className="mx-auto flex w-full max-w-6xl flex-col gap-3 px-4 py-3 sm:px-6 lg:flex-row lg:items-center lg:justify-between">
           <div className="min-w-0">
-            <p className="text-[11px] uppercase tracking-[0.3em] text-slate-500">Concrete QA/QC Inspection</p>
+            <p className="text-[11px] uppercase tracking-[0.3em] text-slate-500">{MODULE_NAMES.materialAssurance}</p>
             <h1 className="mt-2 break-words text-xl font-semibold text-slate-950 sm:text-2xl">
-              {projectInfo.project_name || 'Concrete Test Log'}
+              {projectInfo.project_name || 'Field Operations Record'}
             </h1>
           </div>
           <div className="flex flex-wrap items-center gap-2 text-sm text-slate-600 sm:gap-3">
@@ -3161,7 +3168,7 @@ function ConcreteTestLog() {
               className="inline-flex min-h-11 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-800 shadow-sm hover:bg-slate-50"
             >
               <FolderKanban className="h-4 w-4" />
-              Project Workspace
+              {MODULE_NAMES.projectHub}
             </button>
             <StatusBadge status={status} />
             <span>Autosave: {saving ? 'Saving...' : hasUnsavedChanges ? 'Pending' : formatTimestamp(lastSavedAt)}</span>
@@ -3280,7 +3287,7 @@ function ConcreteTestLog() {
             <section className="rounded-3xl bg-white p-5 shadow-sm">
               <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
                 <div>
-                  <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Concrete Specifications</p>
+                  <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Material Specifications</p>
                   <h2 className="mt-2 text-lg font-semibold text-slate-950">Inspection requirements</h2>
                 </div>
               </div>
@@ -3642,9 +3649,9 @@ function ConcreteTestLog() {
               <div className="mt-4 grid gap-3 sm:grid-cols-2">
                 {[
                   ['Total Records', summary.totalRecords],
-                  ['Cubic Yards', summary.totalCubicYards.toFixed(1)],
-                  ['Passed', summary.passedTests],
-                  ['Failed', summary.failedTests]
+                  ['Total Quantity', summary.totalCubicYards.toFixed(1)],
+                  ['Approved Checks', summary.passedTests],
+                  ['Requires Action', summary.failedTests]
                 ].map(([label, value]) => (
                   <div key={label} className="rounded-2xl bg-slate-50 px-3 py-3 shadow-sm">
                     <p className="text-[11px] uppercase tracking-[0.3em] text-slate-500">{label}</p>
@@ -3700,7 +3707,7 @@ function ConcreteTestLog() {
                 <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
                   <div>
                     <p className="text-[11px] uppercase tracking-[0.3em] text-slate-500">PDF delivery table preview</p>
-                    <h3 className="mt-1 text-base font-semibold text-slate-950">Concrete Delivery & Testing Records</h3>
+                    <h3 className="mt-1 text-base font-semibold text-slate-950">Material Delivery & Verification Records</h3>
                   </div>
                   <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-600 shadow-sm">
                     {deliveryReviewRows.length} {deliveryReviewRows.length === 1 ? 'record' : 'records'}
@@ -3709,7 +3716,7 @@ function ConcreteTestLog() {
                 {deliveryReviewRows.length > 0 ? (
                   <>
                   <div className="hidden rounded-2xl border border-slate-200 bg-white lg:block">
-                    <table className="min-w-[1320px] w-full border-collapse text-left text-[11px] text-slate-800">
+                    <table className="w-full table-fixed border-collapse text-left text-[10px] text-slate-800 xl:text-[11px]">
                       <thead className="bg-slate-950 text-white">
                         <tr>
                           {DELIVERY_REVIEW_COLUMNS.map((column) => (
@@ -3837,7 +3844,7 @@ function ConcreteTestLog() {
                   onClick={goToCorrectionReview}
                   className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-900 hover:bg-slate-50"
                 >
-                  Back to QA/QC Review
+                  Back to Validation Review
                 </button>
                 <div />
               </div>
@@ -3851,10 +3858,10 @@ function ConcreteTestLog() {
           <div className="w-full max-w-2xl rounded-[32px] bg-white p-6 shadow-2xl shadow-slate-950/10">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Ready to submit for QA review</p>
+                <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Ready to submit for validation</p>
                 <h2 className="mt-3 text-2xl font-semibold text-slate-950">Confirm submission details</h2>
                 <p className="mt-2 text-sm font-medium text-slate-600">
-                  The QA review PDF will be generated and saved automatically when this report is submitted.
+                  The validation deliverable will be generated and saved automatically when this record is submitted.
                 </p>
               </div>
               <button
@@ -3881,7 +3888,7 @@ function ConcreteTestLog() {
             </div>
             <div className="mt-6">
               <DigitalSignaturePad
-                label="Technician Digital Signature"
+                label="Field Engineer Digital Signature"
                 value={technicianSignature}
                 onSave={setTechnicianSignature}
                 disabled={saving}
@@ -3891,10 +3898,10 @@ function ConcreteTestLog() {
               <p className="mt-3 text-xs font-medium text-slate-500">
                 Signature file: {toSafeStorageName(projectInfo.technician_name)}_technician_digital_signature_{toSafeStorageName(getValues('dfr_number'))}.png
               </p>
-              <p className={`mt-2 text-sm font-semibold ${technicianSignature ? 'text-emerald-700' : 'text-amber-700'}`}>
-                {technicianSignature
-                  ? 'Signature complete. Submit To QC is now available.'
-                  : 'Complete and save the technician signature to unlock Submit To QC.'}
+                  <p className={`mt-2 text-sm font-semibold ${technicianSignature ? 'text-emerald-700' : 'text-amber-700'}`}>
+                    {technicianSignature
+                  ? `${WORKFLOW_LABELS.submitForValidation} is now available.`
+                  : `Complete and save the field engineer signature to unlock ${WORKFLOW_LABELS.submitForValidation}.`}
               </p>
             </div>
             <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:justify-end">
@@ -3904,7 +3911,7 @@ function ConcreteTestLog() {
                 onClick={() => setShowSubmitConfirmation(false)}
               />
               <ActionButton
-                label="Submit To QC"
+                label={WORKFLOW_LABELS.submitForValidation}
                 icon={Send}
                 intent="neutral"
                 onClick={confirmSubmitReport}
@@ -3967,7 +3974,7 @@ function ConcreteTestLog() {
               />
             )}
             <ActionButton
-              label="Submit To QC"
+              label={WORKFLOW_LABELS.submitForValidation}
               icon={Send}
               intent="neutral"
               onClick={submitReport}

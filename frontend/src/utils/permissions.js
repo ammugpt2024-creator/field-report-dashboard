@@ -9,6 +9,7 @@ export const ROLES = {
   QC_APPROVER: 'qc_approver',
   QC: 'qc',
   TECHNICIAN: 'technician',
+  CLIENT: 'client',
   VIEWER: 'viewer'
 };
 
@@ -18,6 +19,7 @@ export const ROLE_HIERARCHY = {
   [ROLES.QC_APPROVER]: 4,
   [ROLES.QC]: 3,
   [ROLES.TECHNICIAN]: 2,
+  [ROLES.CLIENT]: 1,
   [ROLES.VIEWER]: 1
 };
 
@@ -195,11 +197,11 @@ export function canApproveReport(userRole, reportStatus) {
  */
 export function getRoleLabel(userRole) {
   const labels = {
-    [ROLES.ADMIN]: 'Administrator',
-    [ROLES.QC_MANAGER]: 'QC Manager',
-    [ROLES.QC_APPROVER]: 'QC Approver',
-    [ROLES.QC]: 'QC Reviewer',
-    [ROLES.TECHNICIAN]: 'Technician',
+    [ROLES.ADMIN]: 'Organization Admin',
+    [ROLES.QC_MANAGER]: 'Operations Manager',
+    [ROLES.QC_APPROVER]: 'Quality Reviewer',
+    [ROLES.QC]: 'Quality Reviewer',
+    [ROLES.TECHNICIAN]: 'Field Engineer',
     [ROLES.VIEWER]: 'Viewer'
   };
   return labels[String(userRole || '').toLowerCase()] || 'Unknown';

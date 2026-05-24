@@ -7,6 +7,7 @@ import { isQcRole } from '../utils/permissions';
 import StatusBadge from '../components/StatusBadge';
 import ReportActions from '../components/ReportActions';
 import { ACTION_IDS, normalizeReportStatus } from '../workflow/workflowEngine';
+import { BRAND, MODULE_NAMES, WORKFLOW_LABELS } from '../config/branding';
 
 const REPORT_REGISTER_STATUSES = [
   'GENERATED',
@@ -243,12 +244,12 @@ function Reports() {
         <div className="rounded-3xl bg-white p-5 shadow-sm border border-slate-200 sm:p-8">
           <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
             <div className="min-w-0">
-              <p className="text-sm uppercase tracking-[0.32em] text-slate-400">QC Management Platform</p>
-              <h1 className="mt-3 text-3xl font-semibold text-slate-900 sm:text-4xl">Report Dashboard</h1>
+              <p className="text-sm uppercase tracking-[0.32em] text-slate-400">{BRAND.name}</p>
+              <h1 className="mt-3 text-3xl font-semibold text-slate-900 sm:text-4xl">{MODULE_NAMES.digitalDeliverables}</h1>
               <p className="mt-2 text-slate-600">
                 {isQcUser
-                  ? 'Review submitted concrete test logs, open PDFs, and approve or return reports.'
-                  : 'Track generated, submitted, and approved concrete test log reports.'}
+                  ? 'Review submitted assurance records, open digital deliverables, and approve or return work.'
+                  : 'Track generated, submitted, and approved digital deliverables.'}
               </p>
               {hiddenDraftCount > 0 && (
                 <p className="mt-2 text-sm font-medium text-slate-500">
@@ -264,15 +265,15 @@ function Reports() {
                 className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-800 shadow-sm hover:bg-slate-50 sm:w-auto lg:self-end"
               >
                 <FolderKanban className="h-4 w-4" />
-                Project Workspace
+                {MODULE_NAMES.projectHub}
               </button>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <div className="rounded-3xl bg-slate-50 p-4 text-sm text-slate-700">
-                <p className="font-semibold text-slate-900">Generated Reports</p>
+                <p className="font-semibold text-slate-900">Generated Deliverables</p>
                 <p className="mt-2 text-2xl font-semibold">{reports.length}</p>
               </div>
               <div className="rounded-3xl bg-sky-50 p-4 text-sm text-slate-700">
-                <p className="font-semibold text-slate-900">Pending QC</p>
+                <p className="font-semibold text-slate-900">{WORKFLOW_LABELS.submittedForValidation}</p>
                 <p className="mt-2 text-2xl font-semibold">
                   {reports.filter((r) => {
                     const status = normalizeStatus(r.status);
@@ -303,7 +304,7 @@ function Reports() {
                 <input
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search DFR, project or technician"
+                  placeholder="Search DFR, project, or field engineer"
                   className="w-full rounded-2xl border border-slate-300 bg-white py-3 pl-11 pr-4 text-sm text-slate-900 focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-200"
                 />
               </div>
@@ -318,9 +319,9 @@ function Reports() {
                 <option value="all">All</option>
                 <option value="draft">Draft</option>
                 <option value="generated">Generated</option>
-                <option value="submitted_for_qc">Submitted For QC</option>
+                <option value="submitted_for_qc">{WORKFLOW_LABELS.submittedForValidation}</option>
                 <option value="under_review">Under Review</option>
-                <option value="revision_required">Revision Required</option>
+                <option value="revision_required">{WORKFLOW_LABELS.revisionRequired}</option>
                 <option value="resubmitted">Resubmitted</option>
                 <option value="approved">Approved</option>
                 <option value="finalized">Finalized</option>
@@ -328,7 +329,7 @@ function Reports() {
               </select>
             </label>
             <label className="block">
-              <span className="text-sm font-semibold text-slate-700">Technician</span>
+              <span className="text-sm font-semibold text-slate-700">Field Engineer</span>
               <select
                 value={technicianFilter}
                 onChange={(e) => setTechnicianFilter(e.target.value)}
@@ -362,7 +363,7 @@ function Reports() {
                 <tr>
                   <th className="px-4 py-3 font-semibold">DFR #</th>
                   <th className="px-4 py-3 font-semibold">Project</th>
-                  <th className="px-4 py-3 font-semibold">Technician</th>
+                  <th className="px-4 py-3 font-semibold">Field Engineer</th>
                   <th className="px-4 py-3 font-semibold">Sample Date</th>
                   <th className="px-4 py-3 font-semibold">Updated</th>
                   <th className="px-4 py-3 font-semibold text-center">Status</th>
@@ -409,7 +410,7 @@ function Reports() {
                 </div>
                 <div className="mb-4 grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
                   <div>
-                    <p className="text-xs text-slate-500">Technician</p>
+                    <p className="text-xs text-slate-500">Field Engineer</p>
                     <p className="font-medium text-slate-900">{report.data_logger || 'Unassigned'}</p>
                   </div>
                   <div>

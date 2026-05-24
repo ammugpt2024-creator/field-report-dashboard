@@ -1,5 +1,6 @@
 import { supabase } from './supabase';
 import { getReportStatusLabel } from '../constants/reportWorkflow';
+import { BRAND, MODULE_NAMES } from '../config/branding';
 
 const DEFAULT_QC_REVIEWER_EMAIL = 'ammugpt2024@gmail.com';
 const FORCE_RESEND_TEST_RECIPIENT = true;
@@ -14,7 +15,7 @@ function formatDateTime(value = new Date()) {
   }).format(value instanceof Date ? value : new Date(value));
 }
 
-function baseEmailShell({ title, intro, rows, ctaLabel, ctaUrl, footer = 'QCore QC Platform' }) {
+function baseEmailShell({ title, intro, rows, ctaLabel, ctaUrl, footer = BRAND.name }) {
   const rowHtml = rows
     .map(([label, value]) => `
       <tr>
@@ -28,7 +29,7 @@ function baseEmailShell({ title, intro, rows, ctaLabel, ctaUrl, footer = 'QCore 
     <div style="margin:0;padding:24px;background:#f1f5f9;font-family:Arial,Helvetica,sans-serif;color:#0f172a;">
       <div style="max-width:680px;margin:0 auto;background:#ffffff;border:1px solid #dbe4ee;border-radius:18px;overflow:hidden;">
         <div style="background:#0f172a;color:#ffffff;padding:24px 28px;">
-          <p style="margin:0 0 8px;letter-spacing:0.22em;text-transform:uppercase;color:#cbd5e1;font-size:12px;">Construction QA/QC Workflow</p>
+          <p style="margin:0 0 8px;letter-spacing:0.22em;text-transform:uppercase;color:#cbd5e1;font-size:12px;">${BRAND.tagline}</p>
           <h1 style="margin:0;font-size:24px;line-height:1.25;">${title}</h1>
         </div>
         <div style="padding:28px;">
@@ -51,22 +52,22 @@ function baseEmailShell({ title, intro, rows, ctaLabel, ctaUrl, footer = 'QCore 
 }
 
 export function buildQcReviewEmail({ report, reviewUrl, pdfUrl }) {
-  const dfr = report.dfr_number || 'Concrete Test Log';
+  const dfr = report.dfr_number || MODULE_NAMES.materialAssurance;
   return {
-    subject: `[QC REVIEW REQUIRED] ${dfr}`,
+    subject: `[VALIDATION REQUIRED] ${dfr}`,
     html: baseEmailShell({
-      title: 'Concrete Field Report Ready For QC Review',
-      intro: 'A concrete delivery and testing report has been submitted for QA/QC review. Please review the attached PDF snapshot and complete the approval decision in QCore.',
+      title: 'Concrete Quality Report Ready For Review',
+      intro: `A field operations record has been submitted for validation. Please review the attached digital deliverable and complete the decision in ${BRAND.name}.`,
       rows: [
         ['DFR #', dfr],
         ['Project', report.project_name],
         ['Submitted By', report.data_logger || report.submitted_by_name],
         ['Submitted On', formatDateTime(report.submitted_at || new Date())],
         ['Status', getReportStatusLabel(report.status)],
-        ['PDF Snapshot', 'Attached to this email'],
-        ['Secure PDF Link', pdfUrl || 'Available in QCore']
+        ['Digital Deliverable', 'Attached to this email'],
+        ['Secure Link', pdfUrl || `Available in ${BRAND.name}`]
       ],
-      ctaLabel: 'Review Report',
+      ctaLabel: 'Open Validation Workspace',
       ctaUrl: reviewUrl
     })
   };
@@ -85,12 +86,12 @@ export function blobToBase64(blob) {
 }
 
 export function buildApprovalEmail({ report, reviewerName }) {
-  const dfr = report.dfr_number || 'Concrete Test Log';
+  const dfr = report.dfr_number || MODULE_NAMES.materialAssurance;
   return {
     subject: `[APPROVED] ${dfr}`,
     html: baseEmailShell({
-      title: 'Report Approved',
-      intro: 'Your concrete QA/QC report has been approved.',
+      title: 'Record Approved',
+      intro: 'Your field operations record has been approved.',
       rows: [
         ['DFR #', dfr],
         ['Project', report.project_name],
@@ -98,26 +99,26 @@ export function buildApprovalEmail({ report, reviewerName }) {
         ['Approved On', formatDateTime(new Date())],
         ['Status', 'Approved']
       ],
-      ctaLabel: 'View Report',
+      ctaLabel: 'View Digital Deliverable',
       ctaUrl: report.review_url || ''
     })
   };
 }
 
 export function buildRejectionEmail({ report, reviewerName, remarks }) {
-  const dfr = report.dfr_number || 'Concrete Test Log';
+  const dfr = report.dfr_number || MODULE_NAMES.materialAssurance;
   return {
-    subject: `[REVISION REQUIRED] ${dfr}`,
+    subject: `[REQUIRES ACTION] ${dfr}`,
     html: baseEmailShell({
-      title: 'Revision Required',
-      intro: 'Your concrete QA/QC report requires revisions before approval.',
+      title: 'Action Required',
+      intro: 'Your field operations record requires action before approval.',
       rows: [
         ['DFR #', dfr],
         ['Project', report.project_name],
         ['Reviewed By', reviewerName],
         ['Reviewed On', formatDateTime(new Date())],
         ['Reviewer Remarks', remarks || 'No remarks provided.'],
-        ['Status', 'Revision Required']
+        ['Status', 'Requires Action']
       ],
       ctaLabel: 'Update Report',
       ctaUrl: report.review_url || ''
@@ -161,7 +162,7 @@ export async function queueAndSendNotification({
 
   const attachments = pdfBlob
     ? [{
-        filename: pdfFileName || `QCore_Report_${reportId}.pdf`,
+        filename: pdfFileName || `${BRAND.name}_Deliverable_${reportId}.pdf`,
         content: await blobToBase64(pdfBlob)
       }]
     : [];

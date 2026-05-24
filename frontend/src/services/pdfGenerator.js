@@ -1,8 +1,9 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { BRAND } from '../config/branding';
 
-const COMPANY_NAME = 'Dulles Engineering';
-const SYSTEM_NAME = 'QCore QA/QC System';
+const COMPANY_NAME = 'Customer Organization';
+const SYSTEM_NAME = BRAND.name;
 const REVISION_VERSION = 'v1.0';
 
 function getPdfImageFormat(dataUrl) {
@@ -108,7 +109,7 @@ async function removeGeneratedSignatureCaption(dataUrl) {
   }
 }
 
-function renderPdfHeader(doc, { projectName, dfrNumber, dateSampled, technician, statusBadge, generatedAt }, layout) {
+function renderPdfHeader(doc, { projectName, dfrNumber, dateSampled, technician, statusBadge, generatedAt, companyName }, layout) {
   const { marginLeft, marginTop, contentWidth } = layout;
   const pageWidth = doc.internal.pageSize.getWidth();
 
@@ -120,16 +121,16 @@ function renderPdfHeader(doc, { projectName, dfrNumber, dateSampled, technician,
   doc.setFontSize(14);
   doc.setTextColor(255);
   doc.setFont('helvetica', 'bold');
-  doc.text(COMPANY_NAME, marginLeft, 20);
+  doc.text(companyName || COMPANY_NAME, marginLeft, 20);
   doc.setFontSize(9);
   doc.setFont('helvetica', 'normal');
-  doc.text(SYSTEM_NAME, marginLeft, 36);
+  doc.text(`${SYSTEM_NAME} Digital Deliverable`, marginLeft, 36);
 
   // Report title and identifiers
   doc.setFontSize(16);
   doc.setTextColor(255);
   doc.setFont('helvetica', 'bold');
-  doc.text('CONCRETE TEST LOG', marginLeft + contentWidth / 2 - 60, 28);
+  doc.text('FIELD OPERATIONS RECORD', marginLeft + contentWidth / 2 - 80, 28);
 
   doc.setFontSize(9);
   doc.setTextColor(255);
@@ -137,7 +138,7 @@ function renderPdfHeader(doc, { projectName, dfrNumber, dateSampled, technician,
   doc.text(`Project: ${projectName || '-'}`, marginLeft, 56 + 12);
   doc.text(`DFR: ${dfrNumber || '-'}`, marginLeft + 240, 56 + 12);
   doc.text(`Date Sampled: ${dateSampled || '-'}`, marginLeft + 380, 56 + 12);
-  doc.text(`Technician: ${technician || '-'}`, marginLeft + 520, 56 + 12);
+  doc.text(`Field Engineer: ${technician || '-'}`, marginLeft + 520, 56 + 12);
 
   // Status badge
   if (statusBadge) {
@@ -287,7 +288,7 @@ function renderDeliveryRecord(doc, record, index, y, layout) {
   doc.roundedRect(blockX, y, blockW, headerH, 4, 4, 'F');
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(255);
-  const statusLabel = record.status || (record.slump ? 'Passed' : 'Pending');
+  const statusLabel = record.status || (record.slump ? 'Approved' : 'Draft');
   doc.text(`RECORD #${index + 1} — ${statusLabel.toUpperCase()}`, blockX + 12, y + 18);
 
   let cursorY = y + headerH + blockPadding;
@@ -329,14 +330,14 @@ function renderDeliveryRecord(doc, record, index, y, layout) {
   // Move cursor down for next sections
   cursorY += Math.max(truckItems.length, timeItems.length) * 12 + 8;
 
-  // Concrete Testing (two columns)
+  // Material verification (two columns)
   doc.setFont('helvetica', 'bold');
-  doc.text('Concrete Testing', colX, cursorY);
+  doc.text('Material Verification', colX, cursorY);
   doc.setFont('helvetica', 'normal');
   const testItems = [
     ['Slump (in)', record.slump],
     ['Air Content (%)', record.airContent || record.air_content],
-    ['Concrete Temp (°F)', record.concreteTemp || record.concrete_temp],
+    ['Material Temp (°F)', record.concreteTemp || record.concrete_temp],
     ['Unit Weight', record.unitWeight || record.unit_weight],
     ['Spread (in)', record.spread],
     ['J-Ring (in)', record.jRing || record.j_ring],
@@ -351,18 +352,18 @@ function renderDeliveryRecord(doc, record, index, y, layout) {
   const testRows = Math.ceil(testItems.length / 2);
   cursorY += testRows * 12 + 8;
 
-  // Cylinder Information
+  // Strength verification information
   doc.setFont('helvetica', 'bold');
-  doc.text('Cylinder Info', colX, cursorY);
+  doc.text('Strength Verification', colX, cursorY);
   doc.setFont('helvetica', 'normal');
-  doc.text(`Lab Cylinders: ${record.labCylinders ?? record.lab_cylinders ?? '-'}`, colX + 100, cursorY);
-  doc.text(`Field Cylinders: ${record.fieldCylinders ?? record.field_cylinders ?? '-'}`, colX + 260, cursorY);
+  doc.text(`Lab Samples: ${record.labCylinders ?? record.lab_cylinders ?? '-'}`, colX + 120, cursorY);
+  doc.text(`Field Samples: ${record.fieldCylinders ?? record.field_cylinders ?? '-'}`, colX + 280, cursorY);
 
   cursorY += 18;
 
-  // Inspector Comments (full width)
+  // Field observations (full width)
   doc.setFont('helvetica', 'bold');
-  doc.text('Inspector Comments', colX, cursorY);
+  doc.text('Field Observations', colX, cursorY);
   doc.setFont('helvetica', 'normal');
   const comments = record.comments || record.notes || '';
   const split = doc.splitTextToSize(comments || '-', blockW - 24);
@@ -381,7 +382,7 @@ function renderAttachments(doc, attachmentsList, y, layout) {
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(10);
   doc.setTextColor(15, 23, 42);
-  doc.text('ATTACHMENTS', marginLeft, y);
+  doc.text('EVIDENCE CENTER', marginLeft, y);
   y += 14;
 
   const thumbW = 90;
@@ -422,16 +423,16 @@ function renderSummary(doc, summary, y, layout) {
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(10);
   doc.setTextColor(15, 23, 42);
-  doc.text('QA/QC SUMMARY', marginLeft, y);
+  doc.text('COMPLIANCE SUMMARY', marginLeft, y);
   y += 14;
 
   const cards = [
     ['Total Records', summary.totalRecords],
-    ['Total Cubic Yards', summary.totalCubicYards],
-    ['Total Cylinders', summary.totalCylinders],
-    ['Passed Tests', summary.passedTests],
-    ['Failed Tests', summary.failedTests],
-    ['Pending Review', summary.pendingReview]
+    ['Total Quantity', summary.totalCubicYards],
+    ['Strength Samples', summary.totalCylinders],
+    ['Approved Checks', summary.passedTests],
+    ['Requires Action', summary.failedTests],
+    ['Under Validation', summary.pendingReview]
   ];
 
   const cardW = Math.floor((contentWidth - 24) / 3);
@@ -482,14 +483,14 @@ function renderSignatures(doc, signatures, y, layout) {
 
   const items = [
     {
-      label: 'Technician Signature',
+      label: 'Field Engineer Signature',
       value: signatures?.technician,
       name: signatures?.technicianName || signatures?.technician_name || ''
     },
     {
-      label: 'QA Reviewer Signature',
+      label: 'Quality Reviewer Signature',
       value: signatures?.qcApproval,
-      name: signatures?.qcReviewerName || signatures?.reviewerName || signatures?.approvalBy || 'QA Reviewer'
+      name: signatures?.qcReviewerName || signatures?.reviewerName || signatures?.approvalBy || 'Quality Reviewer'
     },
     {
       label: 'Date Approved',
@@ -528,7 +529,7 @@ function renderFooter(doc, layout) {
     const footerY = doc.internal.pageSize.getHeight() - layout.marginBottom + 8;
     doc.setFontSize(8);
     doc.setTextColor(120);
-    doc.text(`${COMPANY_NAME} · ${SYSTEM_NAME} · ${REVISION_VERSION}`, layout.marginLeft, footerY);
+    doc.text(`${layout.companyName || COMPANY_NAME} · ${BRAND.footer} · ${REVISION_VERSION}`, layout.marginLeft, footerY);
     doc.text(`Generated: ${layout.generatedAt}`, pageWidth - layout.marginLeft - 140, footerY);
     doc.text(`Page ${i} of ${pageCount}`, pageWidth - layout.marginLeft, footerY, { align: 'right' });
   }
@@ -553,8 +554,10 @@ export async function generateConcreteTestLogPdf({ form, rows = [], weather, sig
     dateSampled: form.dateSampled,
     technician: form.dataLogger || form.technician || form.technician_name,
     statusBadge: { label: form.status || 'Draft', color: [16, 185, 129] },
-    generatedAt: layout.generatedAt
+    generatedAt: layout.generatedAt,
+    companyName: form.companyName || form.company_name || form.clientName || form.client_name || form.company || COMPANY_NAME
   };
+  layout.companyName = layout.headerData.companyName;
 
   let cursorY = renderPdfHeader(doc, layout.headerData, layout) + 8;
 
@@ -569,7 +572,7 @@ export async function generateConcreteTestLogPdf({ form, rows = [], weather, sig
   doc.setFontSize(12);
   doc.setTextColor(15, 23, 42);
   cursorY = ensureSpace(doc, cursorY, 18, layout, { headerData: layout.headerData });
-  doc.text('DELIVERY & TESTING RECORDS', layout.marginLeft, cursorY);
+  doc.text('MATERIAL DELIVERY & VERIFICATION RECORDS', layout.marginLeft, cursorY);
   cursorY += 16;
 
   rows.forEach((row, idx) => {

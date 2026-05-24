@@ -76,26 +76,26 @@ function LabReports() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100">
+    <div className="min-h-screen w-full max-w-full overflow-x-hidden bg-gradient-to-br from-gray-50 to-gray-100">
       {/* Header */}
       <div className="bg-white border-b border-gray-200 shadow-sm">
-        <div className="max-w-7xl mx-auto px-6 py-6">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-4">
+        <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6">
+          <div className="mb-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex min-w-0 items-center gap-4">
               <button
                 onClick={() => navigate(`/project/${projectId}`)}
                 className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
               >
                 <ChevronLeft className="w-6 h-6 text-gray-600" />
               </button>
-              <div>
-                <h1 className="text-3xl font-bold text-gray-900">Lab Reports</h1>
-                <p className="text-gray-600 text-sm mt-1">Concrete testing, soil analysis, and laboratory QA/QC documentation</p>
+              <div className="min-w-0">
+                <h1 className="break-words text-3xl font-bold text-gray-900">Lab Intelligence</h1>
+                <p className="text-gray-600 text-sm mt-1">Manage laboratory verification records and compliance documentation.</p>
               </div>
             </div>
             <button
               onClick={() => navigate(`/project/${projectId}/lab-reports/create`)}
-              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-green-600 to-green-700 text-white rounded-lg font-semibold hover:shadow-lg transition-shadow"
+              className="flex min-h-11 w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-green-600 to-green-700 px-4 py-2 font-semibold text-white transition-shadow hover:shadow-lg sm:w-auto"
             >
               <Plus className="w-5 h-5" />
               Create Lab Report
@@ -105,11 +105,12 @@ function LabReports() {
       </div>
 
       {/* Main Content */}
-      <div className="max-w-7xl mx-auto px-6 py-8">
+      <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
         <div className="bg-white rounded-xl shadow-md overflow-hidden border border-gray-200">
           {reports.length > 0 ? (
-            <div className="overflow-x-auto">
-              <table className="w-full">
+            <>
+            <div className="hidden lg:block">
+              <table className="w-full table-fixed">
                 <thead>
                   <tr className="bg-gray-50 border-b border-gray-200">
                     <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
@@ -131,7 +132,7 @@ function LabReports() {
                       Status
                     </th>
                     <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                      Technician
+                      Field Engineer
                     </th>
                     <th className="px-6 py-4 text-center text-xs font-semibold text-gray-600 uppercase tracking-wider">
                       Actions
@@ -182,16 +183,60 @@ function LabReports() {
                 </tbody>
               </table>
             </div>
+            <div className="space-y-4 p-4 lg:hidden">
+              {reports.map((report, idx) => (
+                <article key={idx} className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="min-w-0">
+                      <h3 className="break-words text-lg font-bold text-gray-900">{report.number}</h3>
+                      <p className="mt-1 text-sm font-semibold text-gray-600">{report.date}</p>
+                    </div>
+                    <span className={`inline-flex w-fit rounded-full px-3 py-1 text-xs font-medium ${getStatusColor(report.status)}`}>
+                      {report.status}
+                    </span>
+                  </div>
+                  <div className="mt-4 grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
+                    <div>
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Test Type</p>
+                      <p className="mt-1 flex items-center gap-2 font-semibold text-gray-800">{getTestIcon(report.testType)} {report.testType}</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Specimen</p>
+                      <p className="mt-1 font-semibold text-gray-800">{report.specimen}</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Result</p>
+                      <p className="mt-1 font-semibold text-gray-800">{report.result}</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Field Engineer</p>
+                      <p className="mt-1 font-semibold text-gray-800">{report.technician}</p>
+                    </div>
+                  </div>
+                  <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    <button className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-blue-50 px-4 py-2 font-semibold text-blue-700">
+                      <Eye className="h-4 w-4" />
+                      View Report
+                    </button>
+                    <button className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-green-50 px-4 py-2 font-semibold text-green-700">
+                      <Download className="h-4 w-4" />
+                      Export PDF
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+            </>
           ) : (
             <div className="px-6 py-12 text-center">
-              <p className="text-gray-600">No lab reports found</p>
+              <p className="text-gray-600">No concrete quality reports found</p>
             </div>
           )}
         </div>
 
         {/* Results Summary */}
         <div className="mt-4 text-sm text-gray-600">
-          Showing <span className="font-semibold">{reports.length}</span> lab reports
+          Showing <span className="font-semibold">{reports.length}</span> concrete quality reports
         </div>
       </div>
     </div>

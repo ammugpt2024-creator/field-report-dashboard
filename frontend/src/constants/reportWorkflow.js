@@ -13,11 +13,11 @@ export const REPORT_STATUS = {
 export const REPORT_STATUS_LABELS = {
   [REPORT_STATUS.DRAFT]: 'Draft',
   [REPORT_STATUS.GENERATED]: 'Generated',
-  [REPORT_STATUS.SUBMITTED_FOR_QC]: 'Submitted For QC',
+  [REPORT_STATUS.SUBMITTED_FOR_QC]: 'Under Validation',
   [REPORT_STATUS.UNDER_REVIEW]: 'Under Review',
   [REPORT_STATUS.APPROVED]: 'Approved',
   [REPORT_STATUS.REJECTED]: 'Rejected',
-  [REPORT_STATUS.REVISION_REQUIRED]: 'Revision Required',
+  [REPORT_STATUS.REVISION_REQUIRED]: 'Requires Action',
   [REPORT_STATUS.RESUBMITTED]: 'Resubmitted',
   [REPORT_STATUS.FINALIZED]: 'Approved'
 };

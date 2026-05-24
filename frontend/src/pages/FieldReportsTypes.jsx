@@ -15,9 +15,9 @@ function FieldReportsTypes() {
   const types = [
     {
       id: 'concrete-test-log',
-      title: 'Concrete Test Log',
+      title: 'Field Operations',
       description:
-        'Track concrete placement tests, batch data, slump, air content, cylinders, and acceptance results onsite.',
+        'Track material placement, batch data, verification checks, strength samples, and acceptance results onsite.',
       icon: ClipboardList,
       color: 'bg-blue-50',
       iconColor: 'text-blue-700',
@@ -75,11 +75,11 @@ function FieldReportsTypes() {
         <div className="mb-10">
 
           <h1 className="text-4xl font-bold text-gray-900 tracking-tight">
-            Field Reports
+            Field Operations
           </h1>
 
           <p className="text-gray-600 mt-3 text-lg">
-            Select a report category to manage field QA/QC documentation.
+            Select an operational workflow to manage field compliance documentation.
           </p>
 
         </div>
@@ -149,7 +149,7 @@ function FieldReportsTypes() {
                 {/* Footer */}
 
                 <div className="mt-6 flex items-center text-sm font-medium text-blue-600">
-                  Open Report
+                  Open Workflow
                   <span className="ml-2 transition-transform group-hover:translate-x-1">
                     →
                   </span>

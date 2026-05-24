@@ -1,8 +1,29 @@
 import { useLocation, useNavigate } from "react-router-dom";
 import { useState } from "react";
-import { FolderKanban, Home, LogOut, Menu, ShieldCheck, X } from "lucide-react";
+import {
+  BarChart3,
+  Bell,
+  Building2,
+  ClipboardCheck,
+  FileCheck2,
+  FileClock,
+  FileText,
+  FolderKanban,
+  Home,
+  LayoutDashboard,
+  LogOut,
+  Menu,
+  ShieldCheck,
+  Users,
+  Workflow,
+  X
+} from "lucide-react";
 import { supabase } from "../services/supabase";
 import { useAuth } from "../context/AuthContext";
+import { getRoleHomeRoute } from "../utils/navigation";
+import { isQcRole, ROLES } from "../utils/permissions";
+import { BRAND, MODULE_NAMES } from "../config/branding";
+import { FIELD_ENGINEER_NAV } from "../modules/field-engineer/fieldEngineerConfig";
 
 function Navbar() {
 
@@ -15,13 +36,14 @@ function Navbar() {
     session,
     profile,
     roleLabel,
-    companyName
+    companyName,
+    role
   } = useAuth();
 
   const displayName =
     profile?.full_name ||
     session?.user?.email?.split("@")?.[0] ||
-    "Technician";
+    "Field Engineer";
   const initials = displayName
     .split(" ")
     .filter(Boolean)
@@ -29,11 +51,48 @@ function Navbar() {
     .map((part) => part[0]?.toUpperCase())
     .join("") || "U";
   const projectId = location.pathname.match(/\/project\/([^/]+)/)?.[1];
-  const mobileLinks = [
-    { label: "Project Home", icon: Home, path: projectId ? `/project/${projectId}` : "/" },
-    ...(projectId ? [{ label: "Report Dashboard", icon: FolderKanban, path: `/project/${projectId}/field-reports/concrete-test-log` }] : []),
-    ...(projectId ? [{ label: "QC Review Queue", icon: ShieldCheck, path: `/project/${projectId}/qc-review-dashboard` }] : [])
-  ];
+  const normalizedRole = String(role || "").toLowerCase();
+  const mobileLinks = (() => {
+    if (normalizedRole === ROLES.TECHNICIAN) {
+      return FIELD_ENGINEER_NAV;
+    }
+
+    if (normalizedRole === ROLES.ADMIN) {
+      return [
+        { label: MODULE_NAMES.platformAdministration, icon: LayoutDashboard, path: "/admin/dashboard" },
+        { label: "Organizations", icon: Building2, path: "/admin/dashboard?module=organizations" },
+        { label: "Users", icon: Users, path: "/admin/dashboard?module=users" },
+        { label: "Workflow Engine", icon: Workflow, path: "/admin/dashboard?module=workflow" },
+        { label: "Audit Logs", icon: ClipboardCheck, path: "/admin/dashboard?module=audit" }
+      ];
+    }
+
+    if (normalizedRole === ROLES.QC_MANAGER || normalizedRole === "project_manager" || normalizedRole === "manager") {
+      return [
+        { label: MODULE_NAMES.commandCenter, icon: LayoutDashboard, path: "/manager/dashboard" },
+        { label: MODULE_NAMES.validationCenter, icon: ShieldCheck, path: "/qc/dashboard" },
+        { label: MODULE_NAMES.projectHub, icon: FolderKanban, path: "/project/1" },
+        { label: "Teams", icon: Users, path: "/manager/dashboard?view=teams" },
+        { label: "Analytics", icon: BarChart3, path: "/manager/dashboard?view=analytics" }
+      ];
+    }
+
+    if (isQcRole(normalizedRole)) {
+      return [
+        { label: MODULE_NAMES.validationCenter, icon: ShieldCheck, path: "/qc/dashboard" },
+        { label: "Under Review", icon: ClipboardCheck, path: "/qc/dashboard?status=under_review" },
+        { label: "Overdue", icon: FileClock, path: "/qc/dashboard?status=overdue" },
+        { label: "Approved", icon: FileCheck2, path: "/qc/dashboard?status=approved" },
+        { label: "Notifications", icon: Bell, path: "/qc/dashboard?panel=notifications" }
+      ];
+    }
+
+    return [
+      { label: "Client Command Center", icon: Home, path: getRoleHomeRoute(role) },
+      { label: "Approved Deliverables", icon: FileCheck2, path: "/client/dashboard?view=approved" },
+      { label: "Project Summaries", icon: FolderKanban, path: "/client/dashboard?view=projects" }
+    ];
+  })();
 
   function handleNavigate(path) {
     navigate(path);
@@ -111,7 +170,7 @@ function Navbar() {
             text-slate-900
             leading-none
           ">
-            QCore
+            {BRAND.name}
           </h2>
 
           <p className="
@@ -123,7 +182,7 @@ function Navbar() {
             mt-1
             sm:block
           ">
-            Quality Control Management Platform
+            {BRAND.platformDescription}
           </p>
 
           {companyName && (
@@ -305,7 +364,7 @@ function Navbar() {
           <aside className="absolute right-0 top-0 flex h-full w-[min(88vw,360px)] max-w-full flex-col bg-white p-5 shadow-2xl">
             <div className="flex items-start justify-between gap-4 border-b border-slate-100 pb-4">
               <div className="min-w-0">
-                <p className="text-xl font-bold text-slate-950">QCore</p>
+                <p className="text-xl font-bold text-slate-950">{BRAND.name}</p>
                 <p className="mt-1 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{roleLabel || "Field User"}</p>
               </div>
               <button

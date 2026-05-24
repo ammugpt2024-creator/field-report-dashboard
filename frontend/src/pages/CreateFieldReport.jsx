@@ -261,7 +261,7 @@ function CreateFieldReport() {
 
     {
       id: "concrete",
-      label: "Concrete Testing",
+      label: "Concrete Quality",
       icon: Beaker
     },
 

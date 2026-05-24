@@ -28,14 +28,14 @@ const generateConcretePDF = async ({
 
   doc.setFont("helvetica", "bold");
 
-  doc.text("CONCRETE TEST LOG REPORT", 14, 18);
+  doc.text("FIELD OPERATIONS RECORD", 14, 18);
 
   doc.setFontSize(11);
 
   doc.setFont("helvetica", "normal");
 
   doc.text(
-    "Concrete Placement Inspection & QA/QC",
+    "Field Operations & Quality Verification",
     14,
     28
   );
@@ -111,7 +111,7 @@ const generateConcretePDF = async ({
   );
 
   doc.text(
-    `Technician: ${form.technicianName}`,
+    `Field Engineer: ${form.technicianName}`,
     170,
     78
   );
@@ -363,7 +363,7 @@ const generateConcretePDF = async ({
   doc.setFontSize(10);
 
   doc.text(
-    "Technician Signature",
+    "Field Engineer Signature",
     28,
     currentY
   );

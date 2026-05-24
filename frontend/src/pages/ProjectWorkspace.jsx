@@ -15,6 +15,7 @@ import {
   Building2,
   Activity
 } from "lucide-react";
+import { MODULE_NAMES } from "../config/branding";
 
 function ProjectWorkspace() {
 
@@ -65,17 +66,17 @@ function ProjectWorkspace() {
 
     /*
     ==========================================
-    FIELD REPORTS
+    FIELD OPERATIONS
     ==========================================
     */
 
     {
       id: "field-reports",
 
-      title: "Field Reports",
+      title: MODULE_NAMES.fieldOps,
 
       description:
-        "Daily inspections, manpower logs, weather conditions, safety observations, QA/QC checks, equipment tracking, and field documentation.",
+        "Site operations, field assignments, evidence capture, and inspection workflows for daily operational execution.",
 
       icon: FileText,
 
@@ -87,7 +88,7 @@ function ProjectWorkspace() {
       actions: [
 
         {
-          label: "Create Field Report",
+          label: "Create Site Operations Record",
 
           onClick: () =>
             navigate(
@@ -98,7 +99,7 @@ function ProjectWorkspace() {
         },
 
         {
-          label: "View Field Reports",
+          label: `View ${MODULE_NAMES.fieldOps}`,
 
           onClick: () =>
             navigate(
@@ -117,17 +118,17 @@ function ProjectWorkspace() {
 
     /*
     ==========================================
-    LAB REPORTS
+    LAB INTELLIGENCE
     ==========================================
     */
 
     {
       id: "lab-reports",
 
-      title: "Lab Reports",
+      title: MODULE_NAMES.labIntelligence,
 
       description:
-        "Concrete cylinders, density tests, asphalt testing, aggregate testing, soil compaction, and laboratory QA/QC documentation.",
+        "Laboratory intelligence records, material verification, test results, and compliance evidence for project teams.",
 
       icon: Beaker,
 
@@ -139,7 +140,7 @@ function ProjectWorkspace() {
       actions: [
 
         {
-          label: "Create Lab Report",
+          label: "Create Lab Intelligence Record",
 
           onClick: () =>
             navigate(
@@ -150,7 +151,7 @@ function ProjectWorkspace() {
         },
 
         {
-          label: "View Lab Reports",
+          label: `View ${MODULE_NAMES.labIntelligence}`,
 
           onClick: () =>
             navigate(
@@ -169,17 +170,17 @@ function ProjectWorkspace() {
 
     /*
     ==========================================
-    CONCRETE TEST LOGS
+    FIELD OPERATIONS QUALITY
     ==========================================
     */
 
     {
       id: "concrete-tests",
 
-      title: "Concrete Test Logs",
+      title: MODULE_NAMES.materialAssurance,
 
       description:
-        "Concrete slump tests, air content, unit weight, temperature checks, yield calculations, and onsite QA/QC concrete placement testing.",
+        "Field operations quality records, verification data, placement metrics, validation status, and digital deliverables.",
 
       icon: FlaskConical,
 
@@ -191,7 +192,7 @@ function ProjectWorkspace() {
       actions: [
 
         {
-          label: "Create Concrete Test",
+          label: "Create Field Operations Record",
 
           onClick: () =>
             navigate(
@@ -202,7 +203,7 @@ function ProjectWorkspace() {
         },
 
         {
-          label: "View Concrete Tests",
+          label: `View ${MODULE_NAMES.materialAssurance}`,
 
           onClick: () =>
             navigate(
@@ -228,10 +229,10 @@ function ProjectWorkspace() {
     {
       id: "inspections",
 
-      title: "Inspections",
+      title: MODULE_NAMES.inspectionWorkflows,
 
       description:
-        "Inspection reports, punch lists, corrective actions, approvals, safety audits, and construction quality verification.",
+        "Inspection workflows, quality incidents, resolution tracking, approvals, safety audits, and asset verification.",
 
       icon: ClipboardCheck,
 
@@ -243,7 +244,7 @@ function ProjectWorkspace() {
       actions: [
 
         {
-          label: "Create Inspection",
+          label: "Create Inspection Workflow",
 
           onClick: () =>
             navigate(
@@ -254,7 +255,7 @@ function ProjectWorkspace() {
         },
 
         {
-          label: "View Inspections",
+          label: `View ${MODULE_NAMES.inspectionWorkflows}`,
 
           onClick: () =>
             navigate(
@@ -369,7 +370,9 @@ function ProjectWorkspace() {
               rounded-3xl
               px-8
               py-6
-              min-w-[280px]
+              w-full
+              max-w-full
+              sm:w-auto
               shadow-xl
             ">
 
@@ -405,7 +408,7 @@ function ProjectWorkspace() {
               </div>
 
               <p className="text-blue-100 text-sm">
-                Project Manager
+                Operations Manager
               </p>
 
               <p className="font-semibold mt-1">
@@ -471,14 +474,14 @@ function ProjectWorkspace() {
             text-slate-900
             mb-3
           ">
-            Project Modules
+            {MODULE_NAMES.projectHub}
           </h2>
 
           <p className="
             text-slate-600
             text-lg
           ">
-            Manage field reports, inspections, QA/QC documentation, and testing workflows
+            Manage field operations, validation workflows, evidence records, and digital deliverables
           </p>
 
         </div>
@@ -656,7 +659,7 @@ function ProjectWorkspace() {
                         {module.stats.reports}
                       </span>
 
-                      {" "}Reports
+                      {" "}Records
 
                     </p>
 

@@ -7,8 +7,8 @@ import {
 } from "recharts";
 
 const data = [
-  { name: "Field Reports", value: 56 },
-  { name: "Lab Reports", value: 34 },
+  { name: "Field Operations", value: 56 },
+  { name: "Concrete Quality Reports", value: 34 },
   { name: "Issues", value: 7 }
 ];
 
@@ -25,7 +25,7 @@ function PieChartCard() {
     <div className="chart-card">
 
       <h3>
-        Reports Overview
+        Operations Reports Overview
       </h3>
 
       <ResponsiveContainer

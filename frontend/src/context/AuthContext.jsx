@@ -12,11 +12,12 @@ import { supabase } from "../services/supabase";
 const AuthContext = createContext();
 
 const ROLE_LABELS = {
-  technician: "Technician",
-  qc: "QC",
-  qc_approver: "QC Approver",
-  qc_manager: "QC Manager",
-  admin: "Admin",
+  technician: "Field Engineer",
+  qc: "Quality Reviewer",
+  qc_approver: "Quality Reviewer",
+  qc_manager: "Operations Manager",
+  admin: "Organization Admin",
+  client: "Client Viewer",
   viewer: "Viewer"
 };
 
@@ -104,9 +105,7 @@ export function AuthProvider({ children }) {
 
         const currentSession = data?.session || null;
         setSession(currentSession);
-        loadProfile(currentSession).catch((err) => {
-          console.log("Profile Load Error:", err);
-        });
+        await loadProfile(currentSession);
       } catch (err) {
         console.log("Auth Init Error:", err);
       } finally {

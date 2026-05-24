@@ -5,11 +5,15 @@ import {
 } from "react-router-dom";
 
 import { useAuth } from "./context/AuthContext";
+import { getRoleHomeRoute } from "./utils/navigation";
 
 import MainLayout from "./layouts/MainLayout";
 
 import Login from "./pages/Login";
-import Dashboard from "./pages/Dashboard";
+import AdminDashboard from "./pages/AdminDashboard";
+import ClientDashboard from "./pages/ClientDashboard";
+import ManagerDashboard from "./pages/ManagerDashboard";
+import TechnicianDashboard from "./pages/TechnicianDashboard";
 import ProjectWorkspace from "./pages/ProjectWorkspace";
 import FieldReports from "./pages/FieldReports";
 import LabReports from "./pages/LabReports";
@@ -22,6 +26,7 @@ function App() {
 
   const {
     session,
+    role,
     loading
   } = useAuth();
 
@@ -42,6 +47,10 @@ function App() {
     return <Login />;
   }
 
+  function RoleHome() {
+    return <Navigate to={getRoleHomeRoute(role)} replace />;
+  }
+
   return (
 
     <MainLayout>
@@ -50,7 +59,32 @@ function App() {
 
         <Route
           path="/"
-          element={<Dashboard />}
+          element={<RoleHome />}
+        />
+
+        <Route
+          path="/technician/dashboard"
+          element={<TechnicianDashboard />}
+        />
+
+        <Route
+          path="/qc/dashboard"
+          element={<QCReviewDashboard />}
+        />
+
+        <Route
+          path="/manager/dashboard"
+          element={<ManagerDashboard />}
+        />
+
+        <Route
+          path="/admin/dashboard"
+          element={<AdminDashboard />}
+        />
+
+        <Route
+          path="/client/dashboard"
+          element={<ClientDashboard />}
         />
 
         <Route

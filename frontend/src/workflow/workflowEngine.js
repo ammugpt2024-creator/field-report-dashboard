@@ -81,13 +81,13 @@ export const ACTIONS = {
   },
   [ACTION_IDS.SUBMIT_TO_QC]: {
     id: ACTION_IDS.SUBMIT_TO_QC,
-    label: 'Submit To QC',
+    label: 'Submit For Validation',
     icon: Send,
     intent: 'primary'
   },
   [ACTION_IDS.RESUBMIT_TO_QC]: {
     id: ACTION_IDS.RESUBMIT_TO_QC,
-    label: 'Resubmit To QC',
+    label: 'Resubmit For Validation',
     icon: Send,
     intent: 'primary'
   },
@@ -247,7 +247,7 @@ export function getStatusBadgeConfig(status) {
       return { label: 'Ready To Submit', tone: 'slate', icon: FileText };
     case REPORT_STATUS.SUBMITTED_FOR_QC:
     case 'SUBMITTED':
-      return { label: 'Submitted For QC', tone: 'blue', icon: Send };
+      return { label: 'Under Validation', tone: 'blue', icon: Send };
     case REPORT_STATUS.RESUBMITTED:
       return { label: 'Resubmitted', tone: 'blue', icon: Send };
     case REPORT_STATUS.UNDER_REVIEW:
@@ -256,9 +256,9 @@ export function getStatusBadgeConfig(status) {
     case REPORT_STATUS.FINALIZED:
       return { label: 'Approved', tone: 'emerald', icon: CheckCircle2 };
     case REPORT_STATUS.REJECTED:
-      return { label: 'Rejected', tone: 'red', icon: XCircle };
+      return { label: 'Requires Action', tone: 'red', icon: XCircle };
     case REPORT_STATUS.REVISION_REQUIRED:
-      return { label: 'Revision Required', tone: 'amber', icon: RotateCcw };
+      return { label: 'Requires Action', tone: 'amber', icon: RotateCcw };
     default:
       return { label: normalized, tone: 'slate', icon: PencilLine };
   }

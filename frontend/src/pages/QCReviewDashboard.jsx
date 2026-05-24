@@ -1,16 +1,26 @@
-import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useEffect, useMemo, useState } from 'react';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import {
+  AlertTriangle,
+  Bell,
+  CheckCircle,
+  Clock,
+  Filter,
+  Search,
+  TimerReset,
+  XCircle
+} from 'lucide-react';
 import { supabase } from '../services/supabase';
 import { useAuth } from '../context/AuthContext';
-import { ChevronLeft, Search, Clock, CheckCircle, XCircle, Eye } from 'lucide-react';
-import { isQcRole } from '../utils/permissions';
+import { isQcRole, ROLES } from '../utils/permissions';
 import StatusBadge from '../components/StatusBadge';
 import ReportActions from '../components/ReportActions';
 import {
+  ACTION_IDS,
   REPORT_STATUS,
-  normalizeReportStatus,
-  ACTION_IDS
+  normalizeReportStatus
 } from '../workflow/workflowEngine';
+import { MODULE_NAMES } from '../config/branding';
 
 const QUEUE_STATUSES = [
   REPORT_STATUS.SUBMITTED_FOR_QC,
@@ -22,105 +32,283 @@ const QUEUE_STATUSES = [
   REPORT_STATUS.REVISION_REQUIRED
 ];
 
+const REVIEWABLE_STATUSES = [
+  REPORT_STATUS.SUBMITTED_FOR_QC,
+  REPORT_STATUS.RESUBMITTED,
+  REPORT_STATUS.UNDER_REVIEW
+];
+
+const FILTERS = [
+  { key: 'pending', label: 'Under Validation' },
+  { key: 'under_review', label: 'Under Review' },
+  { key: 'approved', label: 'Approved' },
+  { key: 'revision_required', label: 'Requires Action' },
+  { key: 'rejected', label: 'Rejected' },
+  { key: 'overdue', label: 'Overdue' },
+  { key: 'all', label: 'All' }
+];
+
+function hoursBetween(start, end = new Date()) {
+  if (!start) return 0;
+  const started = new Date(start);
+  if (Number.isNaN(started.getTime())) return 0;
+  return Math.max(0, (end.getTime() - started.getTime()) / 36e5);
+}
+
+function formatAging(hours) {
+  if (hours < 1) return `${Math.max(1, Math.round(hours * 60))}m`;
+  if (hours < 24) return `${Math.round(hours)}h`;
+  return `${Math.floor(hours / 24)}d ${Math.round(hours % 24)}h`;
+}
+
+function agingTone(hours) {
+  if (hours >= 12) return 'border-rose-200 bg-rose-50 text-rose-800';
+  if (hours >= 4) return 'border-amber-200 bg-amber-50 text-amber-800';
+  return 'border-emerald-200 bg-emerald-50 text-emerald-800';
+}
+
+function normalizeDate(value) {
+  return value ? new Date(value).toISOString().slice(0, 10) : '';
+}
+
+function getPriority(report, agingHours) {
+  if (report.priority) return String(report.priority).toUpperCase();
+  if (agingHours >= 12) return 'HIGH';
+  if (agingHours >= 4) return 'MEDIUM';
+  return 'NORMAL';
+}
+
+function isClosedStatus(status) {
+  return [
+    REPORT_STATUS.APPROVED,
+    REPORT_STATUS.FINALIZED,
+    REPORT_STATUS.REJECTED,
+    REPORT_STATUS.REVISION_REQUIRED
+  ].includes(status);
+}
+
+function priorityRank(priority) {
+  return { HIGH: 3, MEDIUM: 2, NORMAL: 1, LOW: 0 }[String(priority || '').toUpperCase()] ?? 1;
+}
+
+function getSubmittedAt(report) {
+  return report.submitted_at || report.updated_at || report.created_at;
+}
+
 function QCReviewDashboard() {
   const { projectId } = useParams();
   const navigate = useNavigate();
-  const { role } = useAuth();
+  const [searchParams] = useSearchParams();
+  const { role, session, profile } = useAuth();
   const [reports, setReports] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [statusFilter, setStatusFilter] = useState('pending');
   const [search, setSearch] = useState('');
-  const [activeTab, setActiveTab] = useState('pending');
+  const [projectFilter, setProjectFilter] = useState('all');
+  const [technicianFilter, setTechnicianFilter] = useState('all');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+
+  const normalizedRole = String(role || '').toLowerCase();
+  const isManagerView = [ROLES.QC_MANAGER, ROLES.ADMIN, 'project_manager', 'manager'].includes(normalizedRole);
+  const canViewQueue = isQcRole(role) || isManagerView;
+
+  useEffect(() => {
+    const requestedStatus = searchParams.get('status');
+    if (requestedStatus && FILTERS.some((filter) => filter.key === requestedStatus)) {
+      setStatusFilter(requestedStatus);
+    }
+  }, [searchParams]);
 
   useEffect(() => {
     async function loadReports() {
       setLoading(true);
       setError('');
       try {
-        const { data, error: fetchError } = await supabase
+        let query = supabase
           .from('concrete_test_logs')
           .select('*')
-          .eq('project_id', Number(projectId))
-          .in('status', QUEUE_STATUSES)
-          .order('updated_at', { ascending: false });
+          .in('status', QUEUE_STATUSES);
 
+        if (projectId) {
+          query = query.eq('project_id', Number(projectId));
+        }
+
+        if (!isManagerView && session?.user?.id) {
+          query = query.or(`qc_assigned_to.eq.${session.user.id},qc_assigned_to.is.null`);
+        }
+
+        const { data, error: fetchError } = await query.order('submitted_at', { ascending: true, nullsFirst: false });
         if (fetchError) throw fetchError;
         setReports(data || []);
       } catch (err) {
-        console.error('QC review dashboard failed', err);
-        setError(err.message || 'Unable to load QC review queue.');
+        console.error('Review queue failed', err);
+        setError(err.message || 'Unable to load the review queue.');
       } finally {
         setLoading(false);
       }
     }
 
-    if (isQcRole(role)) {
+    if (canViewQueue) {
       loadReports();
     } else {
       setLoading(false);
-      setError('You are not authorized to view the QC review dashboard.');
+      setError('You are not authorized to view the review queue.');
     }
-  }, [projectId, role]);
+  }, [canViewQueue, isManagerView, projectId, role, session?.user?.id]);
 
-  const filteredReports = reports.filter((report) => {
+  const enrichedReports = useMemo(() => {
+    return reports
+      .map((report) => {
+        const normalizedStatus = normalizeReportStatus(report.status);
+        const submittedAt = getSubmittedAt(report);
+        const completedAt = report.approved_at || report.rejected_at || report.reviewed_at || report.updated_at;
+        const closed = isClosedStatus(normalizedStatus);
+        const agingHours = closed ? hoursBetween(submittedAt, new Date(completedAt)) : hoursBetween(submittedAt);
+        const priority = closed ? String(report.priority || 'NORMAL').toUpperCase() : getPriority(report, agingHours);
+        const overdue = !closed && REVIEWABLE_STATUSES.includes(normalizedStatus) && agingHours >= 12;
+
+        return {
+          ...report,
+          normalizedStatus,
+          submittedAt,
+          completedAt,
+          closed,
+          agingHours,
+          priority,
+          overdue
+        };
+      })
+      .sort((a, b) => {
+        if (a.overdue !== b.overdue) return a.overdue ? -1 : 1;
+        if (REVIEWABLE_STATUSES.includes(a.normalizedStatus) && REVIEWABLE_STATUSES.includes(b.normalizedStatus)) {
+          const submittedDiff = new Date(a.submittedAt || 0).getTime() - new Date(b.submittedAt || 0).getTime();
+          if (submittedDiff !== 0) return submittedDiff;
+        }
+        return priorityRank(b.priority) - priorityRank(a.priority);
+      });
+  }, [reports]);
+
+  const kpis = useMemo(() => {
+    const approvedReports = enrichedReports.filter((report) =>
+      [REPORT_STATUS.APPROVED, REPORT_STATUS.FINALIZED].includes(report.normalizedStatus)
+    );
+    const revisionRequiredReports = enrichedReports.filter((report) =>
+      report.normalizedStatus === REPORT_STATUS.REVISION_REQUIRED
+    );
+    const rejectedReports = enrichedReports.filter((report) =>
+      report.normalizedStatus === REPORT_STATUS.REJECTED
+    );
+    const completedReviews = enrichedReports.filter((report) => report.submitted_at && (report.approved_at || report.rejected_at));
+    const avgHours = completedReviews.length
+      ? completedReviews.reduce((total, report) => total + hoursBetween(report.submitted_at, new Date(report.approved_at || report.rejected_at)), 0) / completedReviews.length
+      : 0;
+
+    return [
+      {
+        label: 'Under Validation',
+        value: enrichedReports.filter((report) => [REPORT_STATUS.SUBMITTED_FOR_QC, REPORT_STATUS.RESUBMITTED].includes(report.normalizedStatus)).length,
+        icon: Bell,
+        tone: 'bg-blue-50 text-blue-900'
+      },
+      {
+        label: 'Under Review',
+        value: enrichedReports.filter((report) => report.normalizedStatus === REPORT_STATUS.UNDER_REVIEW).length,
+        icon: Clock,
+        tone: 'bg-amber-50 text-amber-900'
+      },
+      {
+        label: 'Overdue Validations',
+        value: enrichedReports.filter((report) => report.overdue).length,
+        icon: AlertTriangle,
+        tone: 'bg-rose-50 text-rose-900'
+      },
+      {
+        label: 'Approved',
+        value: approvedReports.length,
+        icon: CheckCircle,
+        tone: 'bg-emerald-50 text-emerald-900'
+      },
+      {
+        label: 'Requires Action',
+        value: revisionRequiredReports.length,
+        icon: TimerReset,
+        tone: 'bg-amber-50 text-amber-900'
+      },
+      {
+        label: 'Rejected',
+        value: rejectedReports.length,
+        icon: XCircle,
+        tone: 'bg-rose-50 text-rose-900'
+      },
+      {
+        label: 'Avg Validation Time',
+        value: avgHours ? formatAging(avgHours) : '—',
+        icon: TimerReset,
+        tone: 'bg-indigo-50 text-indigo-900'
+      }
+    ];
+  }, [enrichedReports]);
+
+  const projects = useMemo(() => {
+    return Array.from(new Set(enrichedReports.map((report) => report.project_name || report.project_number).filter(Boolean))).sort();
+  }, [enrichedReports]);
+
+  const technicians = useMemo(() => {
+    return Array.from(new Set(enrichedReports.map((report) => report.submitted_by_name || report.technician_name || report.data_logger).filter(Boolean))).sort();
+  }, [enrichedReports]);
+
+  const filteredReports = enrichedReports.filter((report) => {
     const term = search.trim().toLowerCase();
-    if (!term) return true;
-    return [report.project_name, report.project_number, report.dfr_number, report.status]
+    const technician = report.submitted_by_name || report.technician_name || report.data_logger || '';
+    const project = report.project_name || report.project_number || '';
+    const submittedDate = normalizeDate(report.submittedAt);
+
+    const matchesText = !term || [report.dfr_number, project, technician, report.status, report.priority]
       .filter(Boolean)
-      .some((value) => value.toLowerCase().includes(term));
+      .some((value) => String(value).toLowerCase().includes(term));
+
+    const matchesStatus =
+      statusFilter === 'all' ||
+      (statusFilter === 'pending' && [REPORT_STATUS.SUBMITTED_FOR_QC, REPORT_STATUS.RESUBMITTED].includes(report.normalizedStatus)) ||
+      (statusFilter === 'under_review' && report.normalizedStatus === REPORT_STATUS.UNDER_REVIEW) ||
+      (statusFilter === 'approved' && [REPORT_STATUS.APPROVED, REPORT_STATUS.FINALIZED].includes(report.normalizedStatus)) ||
+      (statusFilter === 'revision_required' && report.normalizedStatus === REPORT_STATUS.REVISION_REQUIRED) ||
+      (statusFilter === 'rejected' && report.normalizedStatus === REPORT_STATUS.REJECTED) ||
+      (statusFilter === 'overdue' && report.overdue);
+
+    const matchesProject = projectFilter === 'all' || project === projectFilter;
+    const matchesTechnician = technicianFilter === 'all' || technician === technicianFilter;
+    const matchesDateFrom = !dateFrom || submittedDate >= dateFrom;
+    const matchesDateTo = !dateTo || submittedDate <= dateTo;
+
+    return matchesText && matchesStatus && matchesProject && matchesTechnician && matchesDateFrom && matchesDateTo;
   });
 
-  const tabReports = reports.filter((report) => {
-    const status = normalizeReportStatus(report.status);
-    if (activeTab === 'pending') {
-      return [REPORT_STATUS.SUBMITTED_FOR_QC, REPORT_STATUS.RESUBMITTED].includes(status);
-    } else if (activeTab === 'under_review') {
-      return status === REPORT_STATUS.UNDER_REVIEW;
-    } else if (activeTab === 'approved') {
-      return [REPORT_STATUS.APPROVED, REPORT_STATUS.FINALIZED].includes(status);
-    } else if (activeTab === 'rejected') {
-      return [REPORT_STATUS.REJECTED, REPORT_STATUS.REVISION_REQUIRED].includes(status);
-    } else if (activeTab === 'aging') {
-      const submittedAt = new Date(report.submitted_at || report.updated_at || report.created_at);
-      return [REPORT_STATUS.SUBMITTED_FOR_QC, REPORT_STATUS.RESUBMITTED, REPORT_STATUS.UNDER_REVIEW].includes(status) &&
-        Date.now() - submittedAt.getTime() > 24 * 60 * 60 * 1000;
-    }
-    return true;
-  });
-
-  const filteredTabReports = tabReports.filter((report) => {
-    const term = search.trim().toLowerCase();
-    if (!term) return true;
-    return [report.project_name, report.project_number, report.dfr_number, report.status]
-      .filter(Boolean)
-      .some((value) => value.toLowerCase().includes(term));
-  });
-
-  const pendingCount = reports.filter((r) => [REPORT_STATUS.SUBMITTED_FOR_QC, REPORT_STATUS.RESUBMITTED].includes(normalizeReportStatus(r.status))).length;
-  const underReviewCount = reports.filter((r) => normalizeReportStatus(r.status) === REPORT_STATUS.UNDER_REVIEW).length;
-  const approvedTodayCount = reports.filter((r) => {
-    const status = normalizeReportStatus(r.status);
-    const approvedDate = r.approved_at ? new Date(r.approved_at).toDateString() : '';
-    return [REPORT_STATUS.APPROVED, REPORT_STATUS.FINALIZED].includes(status) && approvedDate === new Date().toDateString();
-  }).length;
-  const rejectedCount = reports.filter((r) => [REPORT_STATUS.REJECTED, REPORT_STATUS.REVISION_REQUIRED].includes(normalizeReportStatus(r.status))).length;
-  const agingCount = reports.filter((r) => {
-    const status = normalizeReportStatus(r.status);
-    const submittedAt = new Date(r.submitted_at || r.updated_at || r.created_at);
-    return [REPORT_STATUS.SUBMITTED_FOR_QC, REPORT_STATUS.RESUBMITTED, REPORT_STATUS.UNDER_REVIEW].includes(status) &&
-      Date.now() - submittedAt.getTime() > 24 * 60 * 60 * 1000;
-  }).length;
+  const notifications = enrichedReports
+    .filter((report) => report.overdue || [REPORT_STATUS.SUBMITTED_FOR_QC, REPORT_STATUS.RESUBMITTED].includes(report.normalizedStatus))
+    .slice(0, 4);
 
   const getQueueActions = (report) => {
-    const reportStatus = normalizeReportStatus(report.status);
-    if ([REPORT_STATUS.SUBMITTED_FOR_QC, REPORT_STATUS.RESUBMITTED, REPORT_STATUS.UNDER_REVIEW].includes(reportStatus)) {
-      return [ACTION_IDS.REVIEW];
+    if (REVIEWABLE_STATUSES.includes(report.normalizedStatus)) {
+      return [
+        ACTION_IDS.REVIEW,
+        ACTION_IDS.PDF_SUBMITTED,
+        ACTION_IDS.APPROVE,
+        ACTION_IDS.REQUEST_REVISION,
+        ACTION_IDS.REJECT
+      ];
     }
-    return [ACTION_IDS.OPEN_REPORT];
+    if ([REPORT_STATUS.APPROVED, REPORT_STATUS.FINALIZED].includes(report.normalizedStatus)) {
+      return [ACTION_IDS.OPEN_REPORT, ACTION_IDS.DOWNLOAD_FINAL];
+    }
+    return [ACTION_IDS.OPEN_REPORT, ACTION_IDS.PDF_SUBMITTED];
   };
 
   const handleReportAction = (actionId, report) => {
-    const viewRoute = `/project/${projectId}/field-reports/concrete-test-log/${report.id}`;
+    const reportProjectId = report.project_id || projectId || 1;
+    const viewRoute = `/project/${reportProjectId}/field-reports/concrete-test-log/${report.id}`;
     const reviewRoute = `/qc/review/${report.id}`;
 
     switch (actionId) {
@@ -134,224 +322,282 @@ function QCReviewDashboard() {
         navigate(viewRoute);
         break;
       default:
-        console.log('Action not handled in dashboard:', actionId);
+        break;
     }
   };
 
+  const renderQueueActions = (report, isMobile = false) => (
+    <ReportActions
+      role={role}
+      status={report.status}
+      pdfUrl={report.final_pdf_url || report.pdf_url}
+      onAction={(id) => handleReportAction(id, report)}
+      allowedActions={getQueueActions(report)}
+      isMobile={isMobile}
+    />
+  );
+
+  const defaultProjectId = projectId || enrichedReports.find((report) => report.project_id)?.project_id || 1;
+
   return (
-    <div className="min-h-screen w-full max-w-full overflow-x-hidden bg-slate-100 px-4 py-5 sm:px-6">
-      <div className="mx-auto w-full max-w-7xl space-y-5 sm:space-y-6">
-        <div className="rounded-3xl bg-white p-5 shadow-sm sm:p-8">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+    <div className="min-h-screen w-full max-w-full overflow-x-hidden bg-slate-100 px-4 py-5 sm:px-6 lg:p-8">
+      <div className="mx-auto w-full max-w-[1500px] space-y-5 sm:space-y-6">
+        <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-8">
+          <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
             <div className="min-w-0">
-              <button
-                onClick={() => navigate(-1)}
-                className="mb-4 inline-flex items-center gap-2 text-sm font-semibold text-slate-600 hover:text-slate-900"
-              >
-                <ChevronLeft className="w-5 h-5" /> Back
-              </button>
-              <h1 className="text-2xl font-semibold text-slate-950 sm:text-3xl">QC Review Dashboard</h1>
-              <p className="mt-2 text-sm text-slate-600">
-                Review concrete log submissions, approve reports, and manage revisions.
+              <p className="text-xs font-bold uppercase tracking-[0.32em] text-slate-400">{MODULE_NAMES.validationCenter}</p>
+              <h1 className="mt-3 break-words text-3xl font-semibold text-slate-950 sm:text-4xl">Validation Inbox</h1>
+              <p className="mt-2 max-w-3xl text-sm text-slate-600 sm:text-base">
+                Field operations records assigned to {profile?.full_name || profile?.email || 'the validation team'}, sorted by SLA risk and oldest submissions first.
               </p>
             </div>
-            <div className="flex w-full flex-wrap items-center gap-3 lg:w-auto">
-              <div className="inline-flex min-h-11 w-full items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm text-slate-700 lg:w-auto">
-                <Search className="h-4 w-4" />
+            <div className="grid w-full grid-cols-1 gap-3 sm:grid-cols-2 xl:w-auto">
+              <div className="inline-flex min-h-11 w-full items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm text-slate-700 xl:w-80">
+                <Search className="h-4 w-4 shrink-0" />
                 <input
                   type="search"
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Search DFR, project, status"
-                  className="w-full bg-transparent text-sm outline-none lg:w-64"
+                  placeholder="Search DFR, project, field engineer"
+                  className="min-w-0 flex-1 bg-transparent outline-none"
                 />
               </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setStatusFilter('pending');
+                  setSearch('');
+                  setProjectFilter('all');
+                  setTechnicianFilter('all');
+                  setDateFrom('');
+                  setDateTo('');
+                }}
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+              >
+                <Filter className="h-4 w-4" />
+                Reset Filters
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate(`/project/${defaultProjectId}`)}
+                className="inline-flex min-h-11 items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+              >
+                {MODULE_NAMES.projectHub}
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate(`/project/${defaultProjectId}/field-reports/concrete-test-log/create`)}
+                className="inline-flex min-h-11 items-center justify-center rounded-2xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-slate-800"
+              >
+                Create Field Operations Record
+              </button>
             </div>
           </div>
-        </div>
+        </section>
 
         {error && (
-          <div className="rounded-3xl bg-rose-50 p-6 text-sm font-semibold text-rose-800 shadow-sm">
+          <div className="rounded-3xl border border-rose-200 bg-rose-50 p-5 text-sm font-semibold text-rose-800 shadow-sm">
             {error}
           </div>
         )}
 
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
-          {[
-            ['pending', 'Pending Review', pendingCount, 'bg-amber-50 text-amber-900'],
-            ['under_review', 'Under Review', underReviewCount, 'bg-sky-50 text-sky-900'],
-            ['approved', 'Approved Today', approvedTodayCount, 'bg-emerald-50 text-emerald-900'],
-            ['rejected', 'Rejected Reports', rejectedCount, 'bg-rose-50 text-rose-900'],
-            ['aging', 'Aging Reports', agingCount, 'bg-slate-100 text-slate-900']
-          ].map(([key, label, count, className]) => (
-            <button
-              key={key}
-              type="button"
-              onClick={() => setActiveTab(key)}
-              className={`rounded-3xl border p-5 text-left shadow-sm transition ${
-                activeTab === key ? 'border-slate-900 bg-white' : `border-transparent ${className}`
-              }`}
-            >
-              <p className="text-sm font-semibold">{label}</p>
-              <p className="mt-3 text-3xl font-semibold">{count}</p>
-            </button>
-          ))}
-        </div>
-
-        <div className="rounded-3xl bg-white p-4 shadow-sm sm:p-6">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-2 lg:flex lg:w-auto lg:flex-wrap">
-              <button
-                onClick={() => setActiveTab('pending')}
-                className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl px-4 py-2 text-sm font-semibold transition lg:justify-start ${
-                  activeTab === 'pending'
-                    ? 'bg-amber-100 text-amber-800'
-                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                }`}
-              >
-                <Clock className="h-4 w-4" />
-                Pending
-                <span className="ml-1 rounded-full bg-white px-2 py-0.5 text-xs">
-                  {pendingCount}
-                </span>
-              </button>
-              <button
-                onClick={() => setActiveTab('under_review')}
-                className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl px-4 py-2 text-sm font-semibold transition lg:justify-start ${
-                  activeTab === 'under_review'
-                    ? 'bg-sky-100 text-sky-800'
-                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                }`}
-              >
-                <Eye className="h-4 w-4" />
-                Under Review
-                <span className="ml-1 rounded-full bg-white px-2 py-0.5 text-xs">
-                  {underReviewCount}
-                </span>
-              </button>
-              <button
-                onClick={() => setActiveTab('approved')}
-                className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl px-4 py-2 text-sm font-semibold transition lg:justify-start ${
-                  activeTab === 'approved'
-                    ? 'bg-emerald-100 text-emerald-800'
-                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                }`}
-              >
-                <CheckCircle className="h-4 w-4" />
-                Approved
-                <span className="ml-1 rounded-full bg-white px-2 py-0.5 text-xs">
-                  {reports.filter((r) => [REPORT_STATUS.APPROVED, REPORT_STATUS.FINALIZED].includes(normalizeReportStatus(r.status))).length}
-                </span>
-              </button>
-              <button
-                onClick={() => setActiveTab('rejected')}
-                className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl px-4 py-2 text-sm font-semibold transition lg:justify-start ${
-                  activeTab === 'rejected'
-                    ? 'bg-rose-100 text-rose-800'
-                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                }`}
-              >
-                <XCircle className="h-4 w-4" />
-                Rejected
-                <span className="ml-1 rounded-full bg-white px-2 py-0.5 text-xs">
-                  {rejectedCount}
-                </span>
-              </button>
+        <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-7">
+          {kpis.map(({ label, value, icon: Icon, tone }) => (
+            <div key={label} className={`rounded-3xl p-5 shadow-sm ${tone}`}>
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm font-bold">{label}</p>
+                <Icon className="h-5 w-5" />
+              </div>
+              <p className="mt-4 text-3xl font-semibold">{value}</p>
             </div>
-            <span className="rounded-2xl bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-700">
-              {reports.length} total
-            </span>
-          </div>
+          ))}
+        </section>
 
-          <div className="mt-6 hidden lg:block">
-            <table className="min-w-full table-auto text-sm text-left">
-              <thead className="bg-slate-50 text-slate-700">
-                <tr>
-                  <th className="px-4 py-3">DFR</th>
-                  <th className="px-4 py-3">Project</th>
-                  <th className="px-4 py-3">Sample Date</th>
-                  <th className="px-4 py-3 text-center">Status</th>
-                  <th className="px-4 py-3 text-right pr-12">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-200">
-                {loading ? (
+        <section className="grid grid-cols-1 gap-5 xl:grid-cols-[1fr_360px]">
+          <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
+            <div className="grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-[150px_minmax(180px,1fr)_minmax(160px,1fr)_160px_160px]">
+              <select
+                value={statusFilter}
+                onChange={(event) => setStatusFilter(event.target.value)}
+                className="h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700"
+              >
+                {FILTERS.map((filter) => (
+                  <option key={filter.key} value={filter.key}>{filter.label}</option>
+                ))}
+              </select>
+              <select
+                value={projectFilter}
+                onChange={(event) => setProjectFilter(event.target.value)}
+                className="h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700"
+              >
+                <option value="all">All Project Operations</option>
+                {projects.map((project) => (
+                  <option key={project} value={project}>{project}</option>
+                ))}
+              </select>
+              <select
+                value={technicianFilter}
+                onChange={(event) => setTechnicianFilter(event.target.value)}
+                className="h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700"
+              >
+                <option value="all">All Field Engineers</option>
+                {technicians.map((technician) => (
+                  <option key={technician} value={technician}>{technician}</option>
+                ))}
+              </select>
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={(event) => setDateFrom(event.target.value)}
+                className="h-11 w-full rounded-2xl border border-slate-200 px-4 text-sm font-semibold text-slate-700"
+                aria-label="Submitted from"
+              />
+              <input
+                type="date"
+                value={dateTo}
+                onChange={(event) => setDateTo(event.target.value)}
+                className="h-11 w-full rounded-2xl border border-slate-200 px-4 text-sm font-semibold text-slate-700"
+                aria-label="Submitted to"
+              />
+            </div>
+
+            <div className="mt-6 hidden lg:block">
+              <table className="w-full table-fixed text-left text-sm">
+                <colgroup>
+                  <col className="w-[13%]" />
+                  <col className="w-[15%]" />
+                  <col className="w-[11%]" />
+                  <col className="w-[14%]" />
+                  <col className="w-[8%]" />
+                  <col className="w-[8%]" />
+                  <col className="w-[13%]" />
+                  <col className="w-[18%]" />
+                </colgroup>
+                <thead className="bg-slate-50 text-xs font-bold uppercase tracking-[0.12em] text-slate-500">
                   <tr>
-                    <td className="px-4 py-8 text-slate-500" colSpan={6}>
-                      Loading QC queue...
-                    </td>
+                    <th className="px-4 py-3">DFR #</th>
+                    <th className="px-4 py-3">Project</th>
+                    <th className="px-4 py-3">Field Engineer</th>
+                    <th className="px-4 py-3">Submitted</th>
+                    <th className="px-4 py-3">Priority</th>
+                    <th className="px-4 py-3">SLA</th>
+                    <th className="px-4 py-3">Status</th>
+                    <th className="px-4 py-3 text-right">Actions</th>
                   </tr>
-                ) : filteredTabReports.length > 0 ? (
-                  filteredTabReports.map((report) => (
-                    <tr key={report.id} className="hover:bg-slate-50">
-                      <td className="px-4 py-4 font-semibold text-slate-900">{report.dfr_number || '—'}</td>
-                      <td className="px-4 py-4 text-slate-700">{report.project_name || report.project_number || '—'}</td>
-                      <td className="px-4 py-4 text-slate-700">{report.date_sampled || '—'}</td>
-                      <td className="px-4 py-4 text-center">
-                        <StatusBadge status={report.status} />
-                      </td>
-                      <td className="px-4 py-4">
-                        <div className="flex justify-end">
-                          <ReportActions 
-                            role={role}
-                            status={report.status}
-                            pdfUrl={report.final_pdf_url || report.pdf_url}
-                            onAction={(id) => handleReportAction(id, report)}
-                            allowedActions={getQueueActions(report)}
-                          />
-                        </div>
-                      </td>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {loading ? (
+                    <tr>
+                      <td className="px-4 py-10 text-slate-500" colSpan={8}>Loading review queue...</td>
                     </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td className="px-4 py-8 text-slate-500" colSpan={6}>
-                      No {activeTab} reports found.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+                  ) : filteredReports.length > 0 ? (
+                    filteredReports.map((report) => (
+                      <tr key={report.id} className={report.overdue ? 'bg-rose-50/40' : 'hover:bg-slate-50'}>
+                        <td className="break-words px-4 py-4 font-bold text-slate-950">{report.dfr_number || '—'}</td>
+                        <td className="break-words px-4 py-4 text-slate-700">{report.project_name || report.project_number || '—'}</td>
+                        <td className="break-words px-4 py-4 text-slate-700">{report.submitted_by_name || report.technician_name || report.data_logger || '—'}</td>
+                        <td className="px-4 py-4 text-slate-700">{report.submittedAt ? new Date(report.submittedAt).toLocaleString() : '—'}</td>
+                        <td className="px-4 py-4">
+                          <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700">{report.priority}</span>
+                        </td>
+                        <td className="px-4 py-4">
+                          <span className={`rounded-full border px-3 py-1 text-xs font-bold ${report.closed ? 'border-slate-200 bg-slate-50 text-slate-700' : agingTone(report.agingHours)}`}>
+                            {formatAging(report.agingHours)}
+                          </span>
+                        </td>
+                        <td className="px-4 py-4"><StatusBadge status={report.status} /></td>
+                        <td className="px-4 py-4">
+                          <div className="flex justify-end">{renderQueueActions(report)}</div>
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td className="px-4 py-10 text-slate-500" colSpan={8}>No reports match the current queue filters.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="mt-6 space-y-4 lg:hidden">
+              {loading ? (
+                <p className="rounded-3xl bg-slate-50 p-8 text-center font-semibold text-slate-500">Loading review queue...</p>
+              ) : filteredReports.length > 0 ? (
+                filteredReports.map((report) => (
+                  <article key={report.id} className={`rounded-3xl border p-5 shadow-sm ${report.overdue ? 'border-rose-200 bg-rose-50' : 'border-slate-200 bg-white'}`}>
+                    <div className="flex flex-col gap-3">
+                      <div className="min-w-0">
+                        <p className="break-words text-lg font-bold text-slate-950">{report.dfr_number || 'No DFR #'}</p>
+                        <p className="mt-1 text-sm font-semibold text-slate-600">{report.project_name || report.project_number || '—'}</p>
+                      </div>
+                      <StatusBadge status={report.status} />
+                    </div>
+                    <div className="my-4 grid grid-cols-1 gap-3 rounded-2xl bg-white/70 p-4 text-sm sm:grid-cols-2">
+                      <div>
+                        <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Field Engineer</p>
+                        <p className="mt-1 font-semibold text-slate-800">{report.submitted_by_name || report.technician_name || report.data_logger || '—'}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Submitted</p>
+                        <p className="mt-1 font-semibold text-slate-800">{report.submittedAt ? new Date(report.submittedAt).toLocaleString() : '—'}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Priority</p>
+                        <p className="mt-1 font-semibold text-slate-800">{report.priority}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{report.closed ? 'Review Time' : 'SLA Aging'}</p>
+                        <span className={`mt-1 inline-flex rounded-full border px-3 py-1 text-xs font-bold ${report.closed ? 'border-slate-200 bg-slate-50 text-slate-700' : agingTone(report.agingHours)}`}>
+                          {formatAging(report.agingHours)}
+                        </span>
+                      </div>
+                    </div>
+                    {renderQueueActions(report, true)}
+                  </article>
+                ))
+              ) : (
+                <p className="rounded-3xl bg-slate-50 p-8 text-center font-semibold text-slate-500">No reports match the current queue filters.</p>
+              )}
+            </div>
           </div>
 
-          <div className="mt-6 space-y-4 lg:hidden">
-            {loading ? (
-              <p className="p-8 text-center text-slate-500 font-medium">Loading QC queue...</p>
-            ) : filteredTabReports.length > 0 ? (
-              filteredTabReports.map((report) => (
-                <div key={report.id} className="w-full rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                  <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="min-w-0">
-                      <p className="break-words text-base font-bold text-slate-900 sm:text-lg">{report.dfr_number || 'No DFR #'}</p>
-                      <p className="text-sm text-slate-500 font-medium">{report.project_name || 'No Project Name'}</p>
-                    </div>
-                    <StatusBadge status={report.status} />
-                  </div>
-                  <div className="mb-5 grid grid-cols-1 gap-4 border-y border-slate-50 py-4 text-sm sm:grid-cols-2">
-                    <div>
-                      <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Sample Date</p>
-                      <p className="mt-1 font-semibold text-slate-700">{report.date_sampled || '—'}</p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Last Updated</p>
-                      <p className="mt-1 font-semibold text-slate-700">{new Date(report.updated_at).toLocaleDateString()}</p>
-                    </div>
-                  </div>
-                  <ReportActions 
-                    role={role}
-                    status={report.status}
-                    pdfUrl={report.final_pdf_url || report.pdf_url}
-                    onAction={(id) => handleReportAction(id, report)}
-                    isMobile={true}
-                    allowedActions={getQueueActions(report)}
-                  />
-                </div>
-              ))
-            ) : (
-              <p className="p-8 text-center text-slate-500 font-medium">No {activeTab} reports found.</p>
+          <aside className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-400">Notification Center</p>
+                <h2 className="mt-2 text-xl font-semibold text-slate-950">Queue Signals</h2>
+              </div>
+              <Bell className="h-5 w-5 text-slate-500" />
+            </div>
+            <div className="mt-5 space-y-3">
+              {notifications.length > 0 ? (
+                notifications.map((report) => (
+                  <button
+                    key={report.id}
+                    type="button"
+                    onClick={() => navigate(`/qc/review/${report.id}`)}
+                    className={`w-full rounded-2xl border p-4 text-left transition hover:shadow-sm ${report.overdue ? 'border-rose-200 bg-rose-50' : 'border-blue-100 bg-blue-50'}`}
+                  >
+                    <p className="text-sm font-bold text-slate-950">{report.overdue ? 'Overdue validation' : 'New submission'}</p>
+                    <p className="mt-1 break-words text-sm text-slate-700">{report.dfr_number || 'No DFR #'} · {formatAging(report.agingHours)}</p>
+                  </button>
+                ))
+              ) : (
+                <p className="rounded-2xl bg-slate-50 p-4 text-sm font-semibold text-slate-500">No active alerts.</p>
+              )}
+            </div>
+
+            {isManagerView && (
+              <div className="mt-6 rounded-2xl bg-slate-950 p-4 text-white">
+                <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-400">Manager Oversight</p>
+                <p className="mt-2 text-sm text-slate-200">
+                  This queue is showing all quality reviewer workloads, overdue items, and bottlenecks across project operations.
+                </p>
+              </div>
             )}
-          </div>
-        </div>
+          </aside>
+        </section>
       </div>
     </div>
   );
