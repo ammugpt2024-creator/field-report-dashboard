@@ -9,9 +9,18 @@ export default function SignatureModal({
   onClose,
   disabled,
   onClear,
-  onConfirm
+  onConfirm,
+  autoConfirmOnSave = false,
+  signatureActionLabel = 'Save Signature'
 }) {
   if (!open) return null;
+
+  const handleSignatureSave = (nextValue) => {
+    onSave(nextValue);
+    if (autoConfirmOnSave && nextValue) {
+      onConfirm?.(nextValue);
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">
@@ -33,32 +42,38 @@ export default function SignatureModal({
           <SignaturePad
             label="Draw your signature"
             value={value}
-            onSave={onSave}
+            onSave={handleSignatureSave}
             disabled={disabled}
+            saveLabel={signatureActionLabel}
+            typedSaveLabel={signatureActionLabel}
           />
         </div>
 
         <div className="flex flex-wrap items-center justify-end gap-3 border-t border-slate-200 bg-slate-50 px-6 py-4">
-          <button
-            onClick={onClear}
-            disabled={disabled}
-            className="rounded-2xl bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-900 hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            Clear
-          </button>
+          {!autoConfirmOnSave && (
+            <button
+              onClick={onClear}
+              disabled={disabled}
+              className="rounded-2xl bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-900 hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Clear
+            </button>
+          )}
           <button
             onClick={onClose}
             className="rounded-2xl bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-900 hover:bg-slate-200"
           >
             Cancel
           </button>
-          <button
-            onClick={onConfirm}
-            disabled={disabled}
-            className="rounded-2xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            Confirm Signature
-          </button>
+          {!autoConfirmOnSave && (
+            <button
+              onClick={onConfirm}
+              disabled={disabled}
+              className="rounded-2xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Confirm Signature
+            </button>
+          )}
         </div>
       </div>
     </div>

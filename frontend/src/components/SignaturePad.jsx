@@ -1,54 +1,167 @@
 import { useRef, useState, useEffect } from 'react';
 
-export default function SignaturePad({ label, value, onSave, disabled = false }) {
+export default function SignaturePad({
+  label,
+  value,
+  onSave,
+  disabled = false,
+  saveLabel = 'Save Signature',
+  typedSaveLabel = 'Save Typed Signature'
+}) {
   const canvasRef = useRef(null);
+  const isDrawingRef = useRef(false);
+  const pointerEventsSupportedRef = useRef(false);
   const [isDirty, setIsDirty] = useState(false);
   const [mode, setMode] = useState('draw');
   const [typedSignature, setTypedSignature] = useState('');
+  const [allowTypedSignature, setAllowTypedSignature] = useState(true);
+
+  useEffect(() => {
+    pointerEventsSupportedRef.current = 'PointerEvent' in window;
+    const mediaQuery = window.matchMedia('(pointer: fine)');
+    const updateModeAvailability = () => {
+      setAllowTypedSignature(mediaQuery.matches);
+      if (!mediaQuery.matches) setMode('draw');
+    };
+
+    updateModeAvailability();
+    if (mediaQuery.addEventListener) {
+      mediaQuery.addEventListener('change', updateModeAvailability);
+      return () => mediaQuery.removeEventListener('change', updateModeAvailability);
+    }
+
+    mediaQuery.addListener?.(updateModeAvailability);
+    return () => mediaQuery.removeListener?.(updateModeAvailability);
+  }, []);
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    if (!canvas || value || mode !== 'draw') return;
     const context = canvas.getContext('2d');
+    context.fillStyle = '#ffffff';
+    context.fillRect(0, 0, canvas.width, canvas.height);
     context.strokeStyle = '#0f172a';
-    context.lineWidth = 2;
+    context.lineWidth = 3;
     context.lineCap = 'round';
-  }, []);
+    context.lineJoin = 'round';
+  }, [mode, value]);
 
-  const startDrawing = (event) => {
-    if (disabled) return;
+  const getCanvasPoint = (clientX, clientY) => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
-    const context = canvas.getContext('2d');
     const rect = canvas.getBoundingClientRect();
-    context.beginPath();
-    context.moveTo(event.clientX - rect.left, event.clientY - rect.top);
-    canvas.isDrawing = true;
+    return {
+      x: ((clientX - rect.left) / rect.width) * canvas.width,
+      y: ((clientY - rect.top) / rect.height) * canvas.height
+    };
   };
 
-  const draw = (event) => {
-    if (disabled) return;
+  const configureCanvasStroke = (context) => {
+    context.strokeStyle = '#0f172a';
+    context.fillStyle = '#0f172a';
+    context.lineWidth = 3;
+    context.lineCap = 'round';
+    context.lineJoin = 'round';
+  };
+
+  const beginStroke = (clientX, clientY) => {
+    if (disabled || value) return;
     const canvas = canvasRef.current;
-    if (!canvas || !canvas.isDrawing) return;
+    if (!canvas) return;
     const context = canvas.getContext('2d');
-    const rect = canvas.getBoundingClientRect();
-    context.lineTo(event.clientX - rect.left, event.clientY - rect.top);
-    context.stroke();
+    configureCanvasStroke(context);
+    const point = getCanvasPoint(clientX, clientY);
+    context.beginPath();
+    context.moveTo(point.x, point.y);
+    context.arc(point.x, point.y, 0.5, 0, Math.PI * 2);
+    context.fill();
+    context.beginPath();
+    context.moveTo(point.x, point.y);
+    isDrawingRef.current = true;
     setIsDirty(true);
   };
 
-  const stopDrawing = () => {
+  const continueStroke = (clientX, clientY) => {
+    if (disabled || value || !isDrawingRef.current) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
-    canvas.isDrawing = false;
+    const context = canvas.getContext('2d');
+    configureCanvasStroke(context);
+    const point = getCanvasPoint(clientX, clientY);
+    context.lineTo(point.x, point.y);
+    context.stroke();
+  };
+
+  const endStroke = () => {
+    isDrawingRef.current = false;
+  };
+
+  const startPointerDrawing = (event) => {
+    if (!pointerEventsSupportedRef.current) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    event.preventDefault();
+    beginStroke(event.clientX, event.clientY);
+    try {
+      canvas.setPointerCapture?.(event.pointerId);
+    } catch {
+      // Some browser/device combinations do not allow pointer capture on synthetic pointer streams.
+    }
+  };
+
+  const pointerDraw = (event) => {
+    if (!pointerEventsSupportedRef.current) return;
+    event.preventDefault();
+    continueStroke(event.clientX, event.clientY);
+  };
+
+  const stopPointerDrawing = (event) => {
+    if (!pointerEventsSupportedRef.current) return;
+    const canvas = canvasRef.current;
+    endStroke();
+    try {
+      if (event?.pointerId) canvas?.releasePointerCapture?.(event.pointerId);
+    } catch {
+      // Pointer capture may not have been established on every browser.
+    }
+  };
+
+  const startMouseDrawing = (event) => {
+    if (pointerEventsSupportedRef.current) return;
+    event.preventDefault();
+    beginStroke(event.clientX, event.clientY);
+  };
+
+  const mouseDraw = (event) => {
+    if (pointerEventsSupportedRef.current) return;
+    event.preventDefault();
+    continueStroke(event.clientX, event.clientY);
+  };
+
+  const startTouchDrawing = (event) => {
+    if (pointerEventsSupportedRef.current) return;
+    const touch = event.touches[0];
+    if (!touch) return;
+    event.preventDefault();
+    beginStroke(touch.clientX, touch.clientY);
+  };
+
+  const touchDraw = (event) => {
+    if (pointerEventsSupportedRef.current) return;
+    const touch = event.touches[0];
+    if (!touch) return;
+    event.preventDefault();
+    continueStroke(touch.clientX, touch.clientY);
   };
 
   const clearCanvas = () => {
     const canvas = canvasRef.current;
     if (canvas) {
       const context = canvas.getContext('2d');
+      context.fillStyle = '#ffffff';
       context.clearRect(0, 0, canvas.width, canvas.height);
+      context.fillRect(0, 0, canvas.width, canvas.height);
     }
+    endStroke();
     setIsDirty(false);
     setTypedSignature('');
     onSave('');
@@ -91,11 +204,15 @@ export default function SignaturePad({ label, value, onSave, disabled = false })
       <div className="mb-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="text-2xl font-semibold text-slate-900">{label}</h2>
-          <p className="text-sm text-slate-500">Draw or type your signature to include it in the final report.</p>
+          <p className="text-sm text-slate-500">
+            {allowTypedSignature
+              ? 'Draw or type your signature to include it in the submitted QA/QC report.'
+              : 'Draw your signature with your finger or stylus to include it in the submitted QA/QC report.'}
+          </p>
         </div>
         {!value && (
           <div className="inline-flex rounded-2xl bg-slate-100 p-1">
-            {['draw', 'type'].map((option) => (
+            {['draw', ...(allowTypedSignature ? ['type'] : [])].map((option) => (
               <button
                 key={option}
                 type="button"
@@ -135,33 +252,45 @@ export default function SignaturePad({ label, value, onSave, disabled = false })
             ref={canvasRef}
             width={700}
             height={200}
-            className="w-full rounded-2xl bg-white"
-            onMouseDown={startDrawing}
-            onMouseMove={draw}
-            onMouseUp={stopDrawing}
-            onMouseLeave={stopDrawing}
+            className="w-full touch-none rounded-2xl bg-white"
+            onPointerDown={startPointerDrawing}
+            onPointerMove={pointerDraw}
+            onPointerUp={stopPointerDrawing}
+            onPointerCancel={stopPointerDrawing}
+            onPointerLeave={stopPointerDrawing}
+            onMouseDown={startMouseDrawing}
+            onMouseMove={mouseDraw}
+            onMouseUp={endStroke}
+            onMouseLeave={endStroke}
+            onTouchStart={startTouchDrawing}
+            onTouchMove={touchDraw}
+            onTouchEnd={endStroke}
+            onTouchCancel={endStroke}
           />
         )}
       </div>
       <div className="mt-4 flex flex-wrap gap-3">
         {mode === 'type' && !value ? (
           <button
+            type="button"
             onClick={saveTypedSignature}
             disabled={disabled || !typedSignature.trim()}
             className="rounded-2xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            Save Typed Signature
+            {typedSaveLabel}
           </button>
         ) : (
           <button
+            type="button"
             onClick={saveSignature}
             disabled={disabled || !isDirty || Boolean(value)}
             className="rounded-2xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            Save Signature
+            {saveLabel}
           </button>
         )}
         <button
+          type="button"
           onClick={clearCanvas}
           disabled={disabled}
           className="rounded-2xl bg-slate-100 px-5 py-3 text-sm font-semibold text-slate-800 hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-50"

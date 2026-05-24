@@ -13,7 +13,9 @@ const AuthContext = createContext();
 
 const ROLE_LABELS = {
   technician: "Technician",
+  qc: "QC",
   qc_approver: "QC Approver",
+  qc_manager: "QC Manager",
   admin: "Admin",
   viewer: "Viewer"
 };

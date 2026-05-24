@@ -99,6 +99,11 @@ function App() {
         />
 
         <Route
+          path="/qc/review/:reportId"
+          element={<ConcreteTestLogDetails />}
+        />
+
+        <Route
           path="*"
           element={<Navigate to="/" replace />}
         />

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { ChevronDown, ChevronUp, Paperclip, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronUp, Paperclip, Trash2, Check, X } from 'lucide-react';
 import AttachmentUploader from './AttachmentUploader';
 
 export default function RecordsTable({
@@ -28,6 +28,10 @@ export default function RecordsTable({
     setExpandedRows((prev) => ({ ...prev, [rowId]: !prev[rowId] }));
   };
 
+  const handleStatusChange = (rowId, status) => {
+    onRowChange(rowId, 'status', status);
+  };
+
   return (
     <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -48,14 +52,44 @@ export default function RecordsTable({
       <div className="space-y-4">
         {rows.map((row, index) => (
           <div key={row.id} className="overflow-hidden rounded-3xl border border-slate-200 bg-slate-50">
-            <div className="grid gap-3 border-b border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 sm:grid-cols-[1.3fr_1fr_1fr_1fr_1fr_0.8fr] sm:items-center">
-              {summaryFields.map((field) => (
-                <div key={`${row.id}-${field.name}`} className="min-w-0">
-                  <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{field.label}</p>
-                  <p className="mt-1 font-semibold text-slate-900">{row[field.name] || '—'}</p>
-                </div>
-              ))}
-              <div className="flex items-center gap-2 justify-end">
+            <div className="border-b border-slate-200 bg-white px-4 py-3">
+              <div className="flex flex-col gap-4 sm:grid sm:grid-cols-[1.3fr_1fr_1fr_1fr_1fr] sm:items-center sm:gap-3">
+                {summaryFields.map((field) => (
+                  <div key={`${row.id}-${field.name}`} className="min-w-0">
+                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{field.label}</p>
+                    <p className="mt-1 font-semibold text-slate-900">{row[field.name] || '—'}</p>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-4 flex flex-wrap items-center gap-2 sm:mt-0 sm:justify-end">
+                {!disabled && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => handleStatusChange(row.id, 'passed')}
+                      className={`inline-flex items-center gap-2 rounded-2xl px-3 py-2 text-xs font-semibold transition-colors ${
+                        row.status === 'passed'
+                          ? 'bg-emerald-600 text-white'
+                          : 'border border-emerald-600 bg-white text-emerald-600 hover:bg-emerald-50'
+                      }`}
+                    >
+                      <Check className="h-3.5 w-3.5" />
+                      Pass
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleStatusChange(row.id, 'failed')}
+                      className={`inline-flex items-center gap-2 rounded-2xl px-3 py-2 text-xs font-semibold transition-colors ${
+                        row.status === 'failed'
+                          ? 'bg-rose-600 text-white'
+                          : 'border border-rose-600 bg-white text-rose-600 hover:bg-rose-50'
+                      }`}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                      Fail
+                    </button>
+                  </>
+                )}
                 <button
                   type="button"
                   onClick={() => toggleRow(row.id)}

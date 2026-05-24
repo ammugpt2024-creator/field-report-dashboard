@@ -4,6 +4,11 @@ const PDF_BUCKET = 'report-pdfs';
 const ATTACHMENT_BUCKET = 'report-attachments';
 const SIGNATURE_BUCKET = 'signatures';
 
+export function getSignatureStoragePath(projectId, reportId, type) {
+  const safeType = type === 'qc' ? 'qc-signature' : 'technician-signature';
+  return `project-${projectId}/report-${reportId}/${safeType}.png`;
+}
+
 function dataUrlToBlob(dataUrl) {
   const [meta, base64] = dataUrl.split(',');
   const contentType = meta.match(/data:(.*);base64/)?.[1] || 'image/png';
@@ -53,8 +58,7 @@ export async function uploadRowAttachments(projectId, reportId, rowId, files) {
 
 export async function uploadSignature(projectId, reportId, signatureDataUrl, type) {
   const blob = dataUrlToBlob(signatureDataUrl);
-  const safeType = type === 'qc' ? 'qc-signature' : 'technician-signature';
-  const path = `project-${projectId}/report-${reportId}/${safeType}.png`;
+  const path = getSignatureStoragePath(projectId, reportId, type);
   const { error } = await supabase.storage.from(SIGNATURE_BUCKET).upload(path, blob, {
     contentType: blob.type,
     upsert: true
@@ -62,6 +66,12 @@ export async function uploadSignature(projectId, reportId, signatureDataUrl, typ
   if (error) {
     throw error;
   }
+
+  const { data: signedData, error: signedError } = await supabase.storage
+    .from(SIGNATURE_BUCKET)
+    .createSignedUrl(path, 60 * 60 * 24 * 30);
+  if (!signedError && signedData?.signedUrl) return signedData.signedUrl;
+
   const { data } = supabase.storage.from(SIGNATURE_BUCKET).getPublicUrl(path);
   return data.publicUrl;
 }

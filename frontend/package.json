@@ -16,6 +16,8 @@
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.8",
     "lucide-react": "^0.446.0",
+    "mammoth": "^1.12.0",
+    "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^5.7.284",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",

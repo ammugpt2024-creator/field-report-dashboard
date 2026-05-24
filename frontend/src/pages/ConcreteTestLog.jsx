@@ -5,6 +5,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import {
   Download,
+  FolderKanban,
   Image,
   Loader2,
   Paperclip,
@@ -16,6 +17,7 @@ import {
   UploadCloud
 } from 'lucide-react';
 import { supabase } from '../services/supabase';
+import { useAuth } from '../context/AuthContext';
 import {
   attachmentTypes,
   createDefaultObject,
@@ -30,7 +32,16 @@ import {
 import { workflow_validation } from '../configs/concreteTestLogValidation';
 import { scanConcreteTicket } from '../services/ticketScanner';
 import { getDailyWeatherSummary } from '../services/weatherService';
-import SignaturePad from '../components/SignaturePad';
+import { addReviewHistory } from '../services/auditService';
+import { buildQcReviewEmail, queueAndSendNotification } from '../services/notificationService';
+import DigitalSignaturePad from '../components/SignaturePad';
+import StatusBadge from '../components/StatusBadge';
+import {
+  REPORT_STATUS,
+  getStatusBadgeConfig,
+  normalizeReportStatus
+} from '../workflow/workflowEngine';
+import ActionButton from '../components/ActionButton';
 
 const ATTACHMENT_BUCKET = 'concrete-test-attachments';
 const PDF_BUCKET = 'report-pdfs';
@@ -38,6 +49,63 @@ const SIGNATURE_BUCKET = 'signatures';
 const COMPANY_NAME = 'Dulles Engineering, Inc.';
 const COMPANY_LOGO_URL = 'https://img1.wsimg.com/isteam/ip/5d283b38-0950-4c46-838b-44766d9a75d2/DULLES%20ENGINEERING_new%20logo.png/%3A/rs%3Dh%3A78%2Ccg%3Atrue%2Cm/qt%3Dq%3A95';
 const COMPANY_LOGO_STORAGE_PATH = 'company-assets/dulles-engineering-logo.png';
+const RANGE_COMPATIBLE_DB_COLUMNS = new Set([
+  'air_content',
+  'unit_weight',
+  'spread',
+  'slump',
+  'concrete_temp',
+  'j_ring',
+  'speed_of_stress',
+  'test_number',
+  'cubic_yards',
+  'actual_minutes',
+  'water_added_gal',
+  'air_temp_f',
+  'concrete_temp_f',
+  'slump_in',
+  'air_content_percent',
+  'unit_weight_lbs_ft3',
+  'j_ring_in',
+  'spread_in',
+  'lab_cylinders',
+  'field_cylinders'
+]);
+const PROJECT_COMPLETION_FIELDS = [
+  'project_number',
+  'project_name',
+  'general_contractor',
+  'gc_representative',
+  'project_location',
+  'technician_name',
+  'weather',
+  'batch_plant'
+];
+const SPECIFICATION_COMPLETION_FIELDS = specificationFields
+  .filter((field) => !['comments'].includes(field.key))
+  .map((field) => field.key);
+const DELIVERY_RECORD_COMPLETION_FIELDS = [
+  'test_number',
+  'ticket_number',
+  'truck_number',
+  'cubic_yards',
+  'time_batched',
+  'arrival_time',
+  'time_tested',
+  'finish_unload',
+  'actual_minutes',
+  'water_added_gal',
+  'air_temp_f',
+  'concrete_temp_f',
+  'slump_in',
+  'air_content_percent',
+  'unit_weight_lbs_ft3',
+  'j_ring_in',
+  'spread_in',
+  'set_number',
+  'lab_cylinders',
+  'field_cylinders'
+];
 
 function toNullableNumber(value) {
   if (value === '' || value === null || value === undefined) return null;
@@ -49,13 +117,18 @@ function toNullableText(value) {
   return value === '' || value === undefined ? null : value;
 }
 
-function normalizeFieldValue(value, valueType) {
-  return valueType === 'number' ? toNullableNumber(value) : toNullableText(value);
+function hasEnteredValue(value) {
+  return value !== null && value !== undefined && String(value).trim() !== '';
+}
+
+function normalizeFieldValue(value, field) {
+  if (field.valueType === 'number') return toNullableNumber(value);
+  return toNullableText(value);
 }
 
 function buildPayloadFromFields(fields, values) {
   return fields.reduce((payload, field) => {
-    payload[field.dbColumn] = normalizeFieldValue(values[field.key], field.valueType);
+    payload[field.dbColumn] = normalizeFieldValue(values[field.key], field);
     return payload;
   }, {});
 }
@@ -67,70 +140,22 @@ function mapPayloadToFields(fields, payload = {}) {
   }, {});
 }
 
-const REPORT_STATUS = {
-  DRAFT: 'DRAFT',
-  IN_PROGRESS: 'IN_PROGRESS',
-  SUBMITTED_FOR_REVIEW: 'SUBMITTED_FOR_REVIEW',
-  UNDER_QA_REVIEW: 'UNDER_QA_REVIEW',
-  REJECTED: 'REJECTED',
-  APPROVED: 'APPROVED',
-  FINALIZED: 'FINALIZED'
-};
-
-const REPORT_STATUS_LABELS = {
-  DRAFT: 'Draft',
-  IN_PROGRESS: 'In Progress',
-  SUBMITTED_FOR_REVIEW: 'Submitted For QA Review',
-  UNDER_QA_REVIEW: 'Under QA Review',
-  REJECTED: 'Rejected',
-  APPROVED: 'Approved',
-  FINALIZED: 'Approved'
-};
-
-const REPORT_STATUS_TONES = {
-  DRAFT: 'slate',
-  IN_PROGRESS: 'amber',
-  SUBMITTED_FOR_REVIEW: 'blue',
-  UNDER_QA_REVIEW: 'blue',
-  REJECTED: 'red',
-  APPROVED: 'emerald',
-  FINALIZED: 'emerald'
-};
-
-function normalizeReportStatus(value) {
-  if (!value) return REPORT_STATUS.DRAFT;
-  const normalized = String(value).toUpperCase().trim();
-  if (Object.values(REPORT_STATUS).includes(normalized)) return normalized;
-  if (normalized === 'SUBMITTED' || normalized === 'PENDING_QC_APPROVAL') return REPORT_STATUS.SUBMITTED_FOR_REVIEW;
-  if (normalized === 'QC_REVIEW') return REPORT_STATUS.UNDER_QA_REVIEW;
-  if (normalized === 'APPROVED') return REPORT_STATUS.APPROVED;
-  if (normalized === 'QC_APPROVED' || normalized === 'FINALIZED') return REPORT_STATUS.APPROVED;
-  if (normalized === 'QC_REJECTED' || normalized === 'CHANGES_REQUESTED' || normalized === 'REJECTED') return REPORT_STATUS.REJECTED;
-  return REPORT_STATUS.DRAFT;
-}
-
 function getStatusLabel(value) {
-  return REPORT_STATUS_LABELS[normalizeReportStatus(value)] || REPORT_STATUS_LABELS.DRAFT;
+  return getStatusBadgeConfig(value).label;
 }
 
 function getStatusTone(value) {
-  return REPORT_STATUS_TONES[normalizeReportStatus(value)] || REPORT_STATUS_TONES.DRAFT;
+  return getStatusBadgeConfig(value).tone;
 }
 
 function isStatusLocked(value) {
   const normalized = normalizeReportStatus(value);
-  return [
-    REPORT_STATUS.SUBMITTED_FOR_REVIEW,
-    REPORT_STATUS.UNDER_QA_REVIEW,
-    REPORT_STATUS.APPROVED,
-    REPORT_STATUS.FINALIZED
-  ].includes(normalized);
+  return ![REPORT_STATUS.DRAFT, REPORT_STATUS.REVISION_REQUIRED].includes(normalized);
 }
 
 function getAutoSaveStatus(currentStatus) {
   const normalized = normalizeReportStatus(currentStatus);
-  if (normalized === REPORT_STATUS.DRAFT || normalized === REPORT_STATUS.REJECTED) return REPORT_STATUS.IN_PROGRESS;
-  if (normalized === REPORT_STATUS.IN_PROGRESS) return REPORT_STATUS.IN_PROGRESS;
+  if (normalized === REPORT_STATUS.DRAFT || normalized === REPORT_STATUS.REVISION_REQUIRED) return normalized;
   return normalized;
 }
 
@@ -142,13 +167,74 @@ function getDfrSessionKey(projectId) {
   return `concrete-test-log:${projectId}:dfrNumber`;
 }
 
-function generateDfrNumber(projectNumber, projectId) {
-  const dateStamp = new Date().toISOString().slice(0, 10).replaceAll('-', '');
+async function fetchNextDfrSequence(projectId) {
+  try {
+    const { count, error } = await supabase
+      .from('concrete_test_logs')
+      .select('*', { count: 'exact', head: true })
+      .eq('project_id', Number(projectId));
+    
+    if (error) throw error;
+    return (count || 0) + 1;
+  } catch (err) {
+    console.error('Failed to fetch DFR sequence:', err);
+    return Math.floor(Math.random() * 1000); // Fallback to random if DB fails
+  }
+}
+
+async function dfrNumberExists(candidate, projectId, currentReportId = null) {
+  if (!candidate) return true;
+
+  try {
+    const { data: logMatches, error: logError } = await supabase
+      .from('concrete_test_logs')
+      .select('id')
+      .eq('project_id', Number(projectId))
+      .eq('dfr_number', candidate)
+      .limit(1);
+
+    if (logError) throw logError;
+    if ((logMatches || []).some((item) => String(item.id) !== String(currentReportId || ''))) return true;
+
+    const { data: specMatches, error: specError } = await supabase
+      .from('concrete_specifications')
+      .select('log_id')
+      .eq('dfr_number', candidate)
+      .limit(1);
+
+    if (specError) throw specError;
+    return (specMatches || []).some((item) => String(item.log_id) !== String(currentReportId || ''));
+  } catch (err) {
+    console.error('DFR uniqueness check failed:', err);
+    return false;
+  }
+}
+
+async function generateDfrNumber(projectNumber, projectId) {
   const projectCode = String(projectNumber || projectId || 'PROJECT')
     .replace(/[^a-zA-Z0-9]/g, '')
-    .toUpperCase();
-  const uniqueSuffix = crypto.randomUUID().slice(0, 8).toUpperCase();
-  return `DFR-${projectCode}-${dateStamp}-${uniqueSuffix}`;
+    .toUpperCase()
+    .slice(0, 6) || 'PRJ';
+  
+  const sequence = await fetchNextDfrSequence(projectId);
+  for (let offset = 0; offset < 500; offset += 1) {
+    const paddedSequence = String(sequence + offset).padStart(3, '0');
+    const candidate = `DFR-${projectCode}-${paddedSequence}`;
+    const exists = await dfrNumberExists(candidate, projectId);
+    if (!exists) return candidate;
+  }
+
+  return `DFR-${projectCode}-${Date.now().toString(36).slice(-4).toUpperCase()}`;
+}
+
+async function getUsableDfrNumber(existingValue, projectNumber, projectId, currentReportId = null) {
+  const existing = String(existingValue || '').trim();
+  const looksUsable = existing && existing.length <= 18 && /^DFR-[A-Z0-9]+-[A-Z0-9]+$/i.test(existing) && !existing.includes('[object');
+  if (looksUsable) {
+    const exists = await dfrNumberExists(existing, projectId, currentReportId);
+    if (!exists) return existing;
+  }
+  return generateDfrNumber(projectNumber, projectId);
 }
 
 function toSafeStorageName(value) {
@@ -186,6 +272,24 @@ function getMissingColumnName(error) {
   );
 }
 
+function hasInvalidNumericInputError(error) {
+  const message = error?.message?.toLowerCase() || '';
+  return message.includes('invalid input syntax for type numeric');
+}
+
+function sanitizeRangeCompatiblePayload(payload) {
+  return Object.entries(payload).reduce((nextPayload, [key, value]) => {
+    if (RANGE_COMPATIBLE_DB_COLUMNS.has(key) && value !== null && value !== undefined && value !== '') {
+      const numericValue = Number(value);
+      nextPayload[key] = Number.isNaN(numericValue) ? null : value;
+      return nextPayload;
+    }
+
+    nextPayload[key] = value;
+    return nextPayload;
+  }, {});
+}
+
 function isStorageBucketError(error) {
   const message = error?.message?.toLowerCase() || '';
   return message.includes('bucket not found') || message.includes('bucket') || error?.statusCode === '404';
@@ -210,10 +314,21 @@ function omitPayloadColumn(payload, columnName) {
 
 async function runMutationWithColumnFallback(payload, mutation) {
   let nextPayload = { ...payload };
+  let retriedInvalidNumericPayload = false;
 
   for (let attempt = 0; attempt < 20; attempt += 1) {
     const response = await mutation(nextPayload);
     const missingColumn = getMissingColumnName(response.error);
+
+    if (!missingColumn && hasInvalidNumericInputError(response.error) && !retriedInvalidNumericPayload) {
+      const sanitizedPayload = sanitizeRangeCompatiblePayload(nextPayload);
+      const changed = Object.keys(sanitizedPayload).some((key) => sanitizedPayload[key] !== nextPayload[key]);
+      if (changed) {
+        retriedInvalidNumericPayload = true;
+        nextPayload = sanitizedPayload;
+        continue;
+      }
+    }
 
     if (!missingColumn) return response;
     if (!(missingColumn in nextPayload)) return response;
@@ -249,27 +364,10 @@ function getSpecificationRules(field) {
   const rules = {};
   const isRequired = workflow_validation.specifications.required.includes(field.key);
   if (isRequired) rules.required = `${field.label} is required.`;
-  if (field.validation) {
-    rules.validate = (value) => {
-      return getFieldValidationMessage(field, value) || true;
-    };
-  }
   return rules;
 }
 
-function getFieldValidationMessage(field, value) {
-  if (value === '' || value === undefined || value === null || !field.validation) return '';
-
-  const numberValue = Number(value);
-  if (field.valueType === 'number' && Number.isNaN(numberValue)) {
-    return `${field.label} must be numeric.`;
-  }
-
-  const { min, max, message } = field.validation;
-  if (field.valueType === 'number' && (numberValue < min || numberValue > max)) {
-    return message || `${field.label} must be between ${min} and ${max}.`;
-  }
-
+function getFieldValidationMessage() {
   return '';
 }
 
@@ -314,18 +412,16 @@ function focusFirstInvalidField() {
 
 function getStepCompletion(stepId, projectInfo, specifications, records, attachments) {
   if (stepId === 'project') {
-    return workflow_validation.project.required.every((key) => Boolean(projectInfo[key]));
+    return PROJECT_COMPLETION_FIELDS.every((key) => hasEnteredValue(projectInfo[key]));
   }
 
   if (stepId === 'specifications') {
-    return workflow_validation.specifications.required.every((key) => Boolean(specifications[key]));
+    return SPECIFICATION_COMPLETION_FIELDS.every((key) => hasEnteredValue(specifications[key]));
   }
 
   if (stepId === 'records') {
     if (records.length < workflow_validation.records.minRecords) return false;
-    return records.every((record) =>
-      workflow_validation.records.requiredFields.every((fieldKey) => Boolean(record[fieldKey]))
-    );
+    return records.every((record) => DELIVERY_RECORD_COMPLETION_FIELDS.every((fieldKey) => hasEnteredValue(record[fieldKey])));
   }
 
   if (stepId === 'attachments') {
@@ -429,36 +525,34 @@ async function validateStep(stepId, {
   return true;
 }
 
-function getRecordStatus(record, specifications = {}) {
-  const requiredFields = ['ticket_number', 'truck_number', 'time_batched', 'time_tested'];
-  if (requiredFields.some((field) => !record[field])) {
+function getRecordStatus(record, reportStatus = REPORT_STATUS.DRAFT) {
+  const selectedStatus = String(record.row_status || '').toLowerCase();
+  if (selectedStatus === 'passed') {
+    return { label: 'PASS', tone: 'emerald', severity: 1, messages: [] };
+  }
+  if (selectedStatus === 'failed') {
+    return { label: 'FAIL', tone: 'red', severity: 2, messages: [] };
+  }
+  if (selectedStatus === 'retest') {
+    return { label: 'RETEST', tone: 'amber', severity: 1, messages: ['Retest record created for updated values.'] };
+  }
+
+  const hasAnyRecordData = deliveryRecordFields.some((field) => field.key !== 'test_number' && Boolean(record[field.key]));
+  if (!hasAnyRecordData) {
     return { label: 'Pending', tone: 'slate', severity: 0 };
   }
 
-  const failures = [];
-  const warnings = [];
-  const validationFailures = Object.values(getRecordValidationErrors(record)).filter((message) => !message.includes('is required'));
-  const slump_in = toNullableNumber(record.slump_in);
-  const slump_inSpec = toNullableNumber(specifications.slump_in);
-  const concrete_temp_f = toNullableNumber(record.concrete_temp_f);
-  const air_content_percent = toNullableNumber(record.air_content_percent);
-  const airSpec = toNullableNumber(specifications.air_content_percent);
-  const actual_minutes = toNullableNumber(record.actual_minutes);
-
-  failures.push(...validationFailures);
-  if (slump_in !== null && slump_in <= 0) failures.push('Slump invalid');
-  if (concrete_temp_f !== null && concrete_temp_f > 120) failures.push('Concrete temperature high');
-  if (air_content_percent !== null && (air_content_percent < 0 || air_content_percent > 15)) failures.push('Air content outside range');
-  if (slump_inSpec !== null && slump_in !== null && slump_in > slump_inSpec) {
-    warnings.push(`Slump above specification: ${slump_in} in entered / ${slump_inSpec} in target`);
+  const normalizedStatus = normalizeReportStatus(reportStatus);
+  if ([REPORT_STATUS.DRAFT, REPORT_STATUS.REVISION_REQUIRED].includes(normalizedStatus)) {
+    return { label: 'Ready for Review', tone: 'amber', severity: 1, messages: [] };
   }
-  if (airSpec !== null && air_content_percent !== null && Math.abs(air_content_percent - airSpec) > 2) {
-    warnings.push(`Air content variance: ${air_content_percent}% entered / ${airSpec}% target (±2% tolerance)`);
+  if ([REPORT_STATUS.SUBMITTED_FOR_QC, REPORT_STATUS.UNDER_REVIEW, REPORT_STATUS.RESUBMITTED].includes(normalizedStatus)) {
+    return { label: 'QC Review', tone: 'amber', severity: 1, messages: [] };
   }
-  if (actual_minutes !== null && actual_minutes > 90) warnings.push('Discharge time over 90 minutes');
+  if ([REPORT_STATUS.REJECTED, REPORT_STATUS.REVISION_REQUIRED].includes(normalizedStatus)) {
+    return { label: 'Revision Required', tone: 'red', severity: 2, messages: [] };
+  }
 
-  if (failures.length > 0) return { label: 'Failed', tone: 'red', severity: 3, messages: failures };
-  if (warnings.length > 0) return { label: 'Needs Review', tone: 'amber', severity: 2, messages: warnings };
   return { label: 'Passed', tone: 'emerald', severity: 1, messages: [] };
 }
 
@@ -490,6 +584,65 @@ const PDF_STYLE = {
 
 function pdfValue(value, fallback = '-') {
   return value === null || value === undefined || value === '' ? fallback : String(value);
+}
+
+const DELIVERY_REVIEW_COLUMNS = [
+  { key: 'test_number', label: 'Test #' },
+  { key: 'ticket_number', label: 'Ticket #' },
+  { key: 'truck_number', label: 'Truck #' },
+  { key: 'cubic_yards', label: 'CY' },
+  { key: 'time_batched', label: 'Batch' },
+  { key: 'arrival_time', label: 'Arrival' },
+  { key: 'time_tested', label: 'Tested' },
+  { key: 'finish_unload', label: 'Finish' },
+  { key: 'actual_minutes', label: 'Min' },
+  { key: 'water_added_gal', label: 'Water' },
+  { key: 'status', label: 'Status' },
+  { key: 'air_temp_f', label: 'Air °F' },
+  { key: 'concrete_temp_f', label: 'Conc °F' },
+  { key: 'slump_in', label: 'Slump' },
+  { key: 'air_content_percent', label: 'Air %' },
+  { key: 'unit_weight_lbs_ft3', label: 'Unit Wt' },
+  { key: 'spread_in', label: 'Spread' },
+  { key: 'j_ring_in', label: 'J-Ring' },
+  { key: 'set_number', label: 'Set #' },
+  { key: 'lab_cylinders', label: 'Lab' },
+  { key: 'field_cylinders', label: 'Field' },
+  { key: 'comments', label: 'Comments' }
+];
+
+function getDeliveryReviewRows(records, reportStatus = REPORT_STATUS.DRAFT) {
+  return records.map((record, index) => {
+    const recordStatus = getRecordStatus(record, reportStatus);
+    return {
+      id: record.id || `${record.test_number || index + 1}-${index}`,
+      status: recordStatus,
+      values: {
+        test_number: pdfValue(record.test_number, String(index + 1)),
+        ticket_number: pdfValue(record.ticket_number),
+        truck_number: pdfValue(record.truck_number),
+        cubic_yards: pdfValue(record.cubic_yards, '0'),
+        time_batched: pdfValue(record.time_batched),
+        arrival_time: pdfValue(record.arrival_time),
+        time_tested: pdfValue(record.time_tested),
+        finish_unload: pdfValue(record.finish_unload),
+        actual_minutes: pdfValue(record.actual_minutes),
+        water_added_gal: pdfValue(record.water_added_gal, '0'),
+        status: recordStatus.label,
+        air_temp_f: pdfValue(record.air_temp_f),
+        concrete_temp_f: pdfValue(record.concrete_temp_f),
+        slump_in: pdfValue(record.slump_in),
+        air_content_percent: pdfValue(record.air_content_percent),
+        unit_weight_lbs_ft3: pdfValue(record.unit_weight_lbs_ft3),
+        spread_in: pdfValue(record.spread_in),
+        j_ring_in: pdfValue(record.j_ring_in),
+        set_number: pdfValue(record.set_number),
+        lab_cylinders: pdfValue(record.lab_cylinders, '0'),
+        field_cylinders: pdfValue(record.field_cylinders, '0'),
+        comments: pdfValue(record.comments)
+      }
+    };
+  });
 }
 
 function formatPdfTimestamp(value = new Date()) {
@@ -667,6 +820,117 @@ function getAttachmentRecordLabel(attachment, deliveryRecords = []) {
   return `Record #${recordIndex + 1}${record.truck_number ? ` · Truck ${record.truck_number}` : ''}${record.ticket_number ? ` · Ticket ${record.ticket_number}` : ''}`;
 }
 
+function isPdfAttachment(attachment) {
+  return attachment.type === 'application/pdf' || /\.pdf$/i.test(attachment.name || '');
+}
+
+function isTextAttachment(attachment) {
+  return attachment.type?.startsWith('text/') || /\.(txt|csv|log|md)$/i.test(attachment.name || '');
+}
+
+function isDocxAttachment(attachment) {
+  return (
+    attachment.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+    /\.docx$/i.test(attachment.name || '')
+  );
+}
+
+async function getAttachmentArrayBuffer(attachment, accessUrl) {
+  if (attachment.file) return attachment.file.arrayBuffer();
+  if (!accessUrl) return null;
+  const response = await fetch(accessUrl);
+  if (!response.ok) return null;
+  return response.arrayBuffer();
+}
+
+async function getAttachmentText(attachment, accessUrl) {
+  if (attachment.file) return attachment.file.text();
+  if (!accessUrl) return '';
+  const response = await fetch(accessUrl);
+  if (!response.ok) return '';
+  return response.text();
+}
+
+function parseTimeToMinutes(value) {
+  if (!value || typeof value !== 'string' || !value.includes(':')) return null;
+  const match = value.trim().match(/^(\d{1,2}):(\d{2})(?:\s*([AP]M))?$/i);
+  if (!match) return null;
+  let hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return null;
+  const meridiem = match[3]?.toUpperCase();
+  if (meridiem === 'AM' && hours === 12) hours = 0;
+  if (meridiem === 'PM' && hours < 12) hours += 12;
+  return hours * 60 + minutes;
+}
+
+function calculateActualMinutes(timeBatched, finishUnload) {
+  const batchedMinutes = parseTimeToMinutes(timeBatched);
+  const finishMinutes = parseTimeToMinutes(finishUnload);
+  if (batchedMinutes === null || finishMinutes === null) return '';
+  const sameDayDifference = finishMinutes - batchedMinutes;
+  return String(sameDayDifference >= 0 ? sameDayDifference : sameDayDifference + 24 * 60);
+}
+
+function toProjectPrefix(projectName) {
+  const initials = String(projectName || '')
+    .trim()
+    .split(/\s+/)
+    .map((word) => word.replace(/[^a-z0-9]/gi, '').charAt(0))
+    .join('')
+    .toUpperCase();
+  return initials || 'PRJ';
+}
+
+function generateSetNumber(projectName, recordIndex) {
+  const prefix = toProjectPrefix(projectName);
+  const sequence = String(recordIndex + 1).padStart(2, '0');
+  return `${prefix}-${sequence}`;
+}
+
+function generateSetNumberWithOffset(projectName, recordIndex, sequenceOffset = 0) {
+  const prefix = toProjectPrefix(projectName);
+  const sequence = String(sequenceOffset + recordIndex + 1).padStart(2, '0');
+  return `${prefix}-${sequence}`;
+}
+
+async function fetchProjectSetNumberOffset(projectId, currentReportId = null) {
+  try {
+    const { data: logs, error: logsError } = await supabase
+      .from('concrete_test_logs')
+      .select('id')
+      .eq('project_id', Number(projectId));
+
+    if (logsError) throw logsError;
+    const logIds = (logs || [])
+      .map((item) => item.id)
+      .filter((id) => String(id) !== String(currentReportId || ''));
+    if (logIds.length === 0) return 0;
+
+    const { count, error: recordsError } = await supabase
+      .from('concrete_delivery_testing_records')
+      .select('*', { count: 'exact', head: true })
+      .in('log_id', logIds);
+
+    if (recordsError) throw recordsError;
+    return count || 0;
+  } catch (err) {
+    console.error('Failed to fetch set number sequence:', err);
+    return 0;
+  }
+}
+
+function enrichDeliveryRecords(records, projectInfo, sequenceOffset = 0) {
+  return records.map((record, index) => {
+    const calculatedMinutes = calculateActualMinutes(record.time_batched, record.finish_unload);
+    return {
+      ...record,
+      actual_minutes: calculatedMinutes || record.actual_minutes || '',
+      set_number: record.set_number || generateSetNumberWithOffset(projectInfo.project_name, index, sequenceOffset)
+    };
+  });
+}
+
 function setPdfText(doc, color = PDF_STYLE.navy, size = 10, style = 'normal') {
   doc.setTextColor(...color);
   doc.setFont('helvetica', style);
@@ -681,11 +945,14 @@ function ensurePdfSpace(doc, cursor, neededHeight, margins) {
 }
 
 function drawStatusBadge(doc, label, tone, x, y, width = 70) {
+  const badgeLabel = String(label).toUpperCase();
   const colors = getRecordStatusColors(tone);
-  doc.setFillColor(...colors.fill);
-  doc.roundedRect(x, y, width, 18, 7, 7, 'F');
   setPdfText(doc, colors.text, 8, 'bold');
-  doc.text(String(label).toUpperCase(), x + width / 2, y + 12, { align: 'center' });
+  const fittedWidth = Math.max(width, doc.getTextWidth(badgeLabel) + 16);
+  const fittedX = x - Math.max(0, fittedWidth - width);
+  doc.setFillColor(...colors.fill);
+  doc.roundedRect(fittedX, y, fittedWidth, 18, 7, 7, 'F');
+  doc.text(badgeLabel, fittedX + fittedWidth / 2, y + 12, { align: 'center' });
 }
 
 function drawSectionTitle(doc, title, cursor, margins) {
@@ -787,7 +1054,7 @@ function renderProjectInfo(doc, context, cursor, margins) {
     { label: 'Technician Name', value: context.projectInfo.technician_name },
     { label: 'Weather', value: context.weather },
     { label: 'Batch Plant', value: context.batchPlant },
-    { label: 'Mix Design', value: context.mixDesign },
+    { label: 'Mix No.', value: context.mixDesign },
     { label: 'DFR Number', value: context.dfrNumber }
   ], cursor, margins, 2);
 }
@@ -823,16 +1090,16 @@ function renderSpecifications(doc, context, cursor, margins) {
         pdfValue(specs.j_ring_in)
       ],
       [
-        'Strength Requirement',
+        'Specified Strength (PSI)',
         pdfValue(context.strengthRequirement),
         'Mix Number',
         pdfValue(specs.mix_number)
       ],
       [
-        'Report Time',
-        pdfValue(specs.report_time),
         'Inspector Comments',
-        pdfValue(specs.comments)
+        pdfValue(specs.comments),
+        '',
+        ''
       ]
     ],
     styles: {
@@ -896,12 +1163,10 @@ function renderDeliveryRecords(doc, context, cursor, margins) {
       'Set #',
       'Lab',
       'Field',
-      'Placement',
-      'Mix',
       'Comments'
     ]],
     body: context.deliveryRecords.map((record, index) => {
-      const recordStatus = getRecordStatus(record, context.specifications);
+      const recordStatus = getRecordStatus(record, context.status);
       return [
         pdfValue(record.test_number, String(index + 1)),
         pdfValue(record.ticket_number),
@@ -924,8 +1189,6 @@ function renderDeliveryRecords(doc, context, cursor, margins) {
         pdfValue(record.set_number),
         pdfValue(record.lab_cylinders, '0'),
         pdfValue(record.field_cylinders, '0'),
-        pdfValue(record.placement_location),
-        pdfValue(record.mix_design),
         pdfValue(record.comments)
       ];
     }),
@@ -1032,53 +1295,248 @@ function renderSummary(doc, context, cursor, margins) {
   return { ...cursor, y: y + 60 };
 }
 
-async function renderAttachments(doc, context, cursor, margins) {
-  if (!context.attachments.length) return cursor;
-  cursor = drawSectionTitle(doc, 'Attachments', cursor, margins);
+async function renderPdfAttachmentPages(doc, attachment, accessUrl, cursor, margins) {
+  const arrayBuffer = await getAttachmentArrayBuffer(attachment, accessUrl);
+  if (!arrayBuffer) return cursor;
+
+  const pdfjs = await import('pdfjs-dist');
+  pdfjs.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.mjs`;
+  const pdfDocument = await pdfjs.getDocument({ data: arrayBuffer }).promise;
   const pageWidth = doc.internal.pageSize.getWidth();
-  const cardWidth = pageWidth - margins.left - margins.right;
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const contentWidth = pageWidth - margins.left - margins.right;
+  const maxImageHeight = pageHeight - margins.top - margins.bottom - 24;
 
-  for (const attachment of context.attachments) {
-    const isImage = attachment.type?.startsWith('image/');
-    const cardHeight = isImage ? 122 : 70;
-    cursor = ensurePdfSpace(doc, cursor, cardHeight + 10, margins);
-    doc.setFillColor(...PDF_STYLE.lightSlate);
-    doc.roundedRect(margins.left, cursor.y, cardWidth, cardHeight, 8, 8, 'F');
+  for (let pageIndex = 1; pageIndex <= pdfDocument.numPages; pageIndex += 1) {
+    const page = await pdfDocument.getPage(pageIndex);
+    const viewport = page.getViewport({ scale: 1.6 });
+    const canvas = document.createElement('canvas');
+    const context2d = canvas.getContext('2d');
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    await page.render({ canvasContext: context2d, viewport }).promise;
 
+    const imageData = canvas.toDataURL('image/jpeg', 0.92);
+    const imageRatio = canvas.width / canvas.height;
+    let renderWidth = contentWidth;
+    let renderHeight = renderWidth / imageRatio;
+    if (renderHeight > maxImageHeight) {
+      renderHeight = maxImageHeight;
+      renderWidth = renderHeight * imageRatio;
+    }
+
+    cursor = ensurePdfSpace(doc, cursor, renderHeight + 24, margins);
+    setPdfText(doc, PDF_STYLE.slate, 7, 'bold');
+    doc.text(
+      `${pdfValue(attachment.name)}${pdfDocument.numPages > 1 ? ` · Page ${pageIndex} of ${pdfDocument.numPages}` : ''}`,
+      margins.left,
+      cursor.y + 8
+    );
+    addPdfImageSafely(doc, imageData, margins.left + (contentWidth - renderWidth) / 2, cursor.y + 14, renderWidth, renderHeight);
+    cursor = { ...cursor, y: cursor.y + renderHeight + 26 };
+  }
+
+  return cursor;
+}
+
+async function renderImageAttachment(doc, attachment, imageUrl, cursor, margins) {
+  const imageData = await urlToDataUrl(imageUrl);
+  if (!imageData) return cursor;
+
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const contentWidth = pageWidth - margins.left - margins.right;
+  const maxImageHeight = pageHeight - margins.top - margins.bottom - 24;
+  const image = await new Promise((resolve) => {
+    const nextImage = new window.Image();
+    nextImage.onload = () => resolve(nextImage);
+    nextImage.onerror = () => resolve(null);
+    nextImage.src = imageData;
+  });
+
+  const imageRatio = image?.width && image?.height ? image.width / image.height : 1.35;
+  let renderWidth = contentWidth;
+  let renderHeight = renderWidth / imageRatio;
+  if (renderHeight > maxImageHeight) {
+    renderHeight = maxImageHeight;
+    renderWidth = renderHeight * imageRatio;
+  }
+
+  cursor = ensurePdfSpace(doc, cursor, renderHeight + 24, margins);
+  setPdfText(doc, PDF_STYLE.slate, 7, 'bold');
+  doc.text(pdfValue(attachment.name), margins.left, cursor.y + 8);
+  addPdfImageSafely(doc, imageData, margins.left + (contentWidth - renderWidth) / 2, cursor.y + 14, renderWidth, renderHeight);
+  return { ...cursor, y: cursor.y + renderHeight + 26 };
+}
+
+async function renderTextAttachment(doc, attachment, accessUrl, cursor, margins) {
+  const text = await getAttachmentText(attachment, accessUrl);
+  if (!text) return cursor;
+  return renderAttachmentTextBlock(doc, attachment.name, text, cursor, margins);
+}
+
+function renderCanvasSlices(doc, title, canvas, cursor, margins) {
+  const contentWidth = doc.internal.pageSize.getWidth() - margins.left - margins.right;
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const maxImageHeight = pageHeight - margins.top - margins.bottom - 24;
+  const sourceSliceHeight = Math.max(1, Math.floor(maxImageHeight * canvas.width / contentWidth));
+  let sourceY = 0;
+  let pageIndex = 1;
+
+  while (sourceY < canvas.height) {
+    const sliceHeight = Math.min(sourceSliceHeight, canvas.height - sourceY);
+    const sliceCanvas = document.createElement('canvas');
+    sliceCanvas.width = canvas.width;
+    sliceCanvas.height = sliceHeight;
+    const sliceContext = sliceCanvas.getContext('2d');
+    sliceContext.drawImage(canvas, 0, sourceY, canvas.width, sliceHeight, 0, 0, canvas.width, sliceHeight);
+
+    const imageData = sliceCanvas.toDataURL('image/png');
+    const renderHeight = contentWidth * (sliceHeight / canvas.width);
+    cursor = ensurePdfSpace(doc, cursor, renderHeight + 24, margins);
+    setPdfText(doc, PDF_STYLE.slate, 7, 'bold');
+    doc.text(`${pdfValue(title)}${canvas.height > sourceSliceHeight ? ` · Page ${pageIndex}` : ''}`, margins.left, cursor.y + 8);
+    addPdfImageSafely(doc, imageData, margins.left, cursor.y + 14, contentWidth, renderHeight);
+    cursor = { ...cursor, y: cursor.y + renderHeight + 26 };
+    sourceY += sliceHeight;
+    pageIndex += 1;
+  }
+
+  return cursor;
+}
+
+async function renderHtmlAttachment(doc, title, html, cursor, margins) {
+  const html2canvas = (await import('html2canvas')).default;
+  const container = document.createElement('div');
+  container.style.position = 'fixed';
+  container.style.left = '-10000px';
+  container.style.top = '0';
+  container.style.width = '794px';
+  container.style.boxSizing = 'border-box';
+  container.style.padding = '48px';
+  container.style.background = '#ffffff';
+  container.style.color = '#0f172a';
+  container.style.fontFamily = 'Arial, Helvetica, sans-serif';
+  container.style.fontSize = '14px';
+  container.style.lineHeight = '1.45';
+  container.innerHTML = `
+    <style>
+      .embedded-doc h1,.embedded-doc h2,.embedded-doc h3 { margin: 0 0 12px; color: #0f172a; }
+      .embedded-doc p { margin: 0 0 10px; }
+      .embedded-doc table { width: 100%; border-collapse: collapse; margin: 12px 0; }
+      .embedded-doc td,.embedded-doc th { border: 1px solid #cbd5e1; padding: 6px; vertical-align: top; }
+      .embedded-doc ul,.embedded-doc ol { margin: 0 0 10px 22px; padding: 0; }
+      .embedded-doc img { max-width: 100%; height: auto; }
+    </style>
+    <div class="embedded-doc">${html}</div>
+  `;
+  document.body.appendChild(container);
+  try {
+    const canvas = await html2canvas(container, {
+      backgroundColor: '#ffffff',
+      scale: 2,
+      useCORS: true
+    });
+    return renderCanvasSlices(doc, title, canvas, cursor, margins);
+  } finally {
+    document.body.removeChild(container);
+  }
+}
+
+function renderAttachmentTextBlock(doc, title, text, cursor, margins) {
+  if (!text) return cursor;
+
+  const contentWidth = doc.internal.pageSize.getWidth() - margins.left - margins.right;
+  cursor = ensurePdfSpace(doc, cursor, 40, margins);
+  setPdfText(doc, PDF_STYLE.slate, 7, 'bold');
+  doc.text(pdfValue(title), margins.left, cursor.y + 8);
+  setPdfText(doc, PDF_STYLE.navy, 8, 'normal');
+  const lines = doc.splitTextToSize(text, contentWidth);
+  for (const line of lines) {
+    cursor = ensurePdfSpace(doc, cursor, 12, margins);
+    doc.text(line, margins.left, cursor.y + 18);
+    cursor = { ...cursor, y: cursor.y + 10 };
+  }
+  return { ...cursor, y: cursor.y + 12 };
+}
+
+async function renderDocxAttachment(doc, attachment, accessUrl, cursor, margins) {
+  const arrayBuffer = await getAttachmentArrayBuffer(attachment, accessUrl);
+  if (!arrayBuffer) return cursor;
+  const mammoth = await import('mammoth/mammoth.browser');
+  const result = await mammoth.convertToHtml({ arrayBuffer });
+  return renderHtmlAttachment(doc, attachment.name, result.value, cursor, margins);
+}
+
+async function renderAttachments(doc, context, cursor, margins) {
+  const inlineAttachments = context.attachments.filter((attachment) => !isPdfAttachment(attachment));
+  if (!inlineAttachments.length) return cursor;
+  cursor = drawSectionTitle(doc, 'Attachments', cursor, margins);
+
+  for (const attachment of inlineAttachments) {
     const freshAccessUrl = attachment.storagePath
       ? await getStorageAccessUrl(ATTACHMENT_BUCKET, attachment.storagePath)
       : attachment.url;
     const imageUrl = attachment.previewUrl?.startsWith('blob:') ? attachment.previewUrl : freshAccessUrl || attachment.previewUrl || attachment.url;
-    const imageData = isImage ? await urlToDataUrl(imageUrl) : null;
-    const imageWidth = isImage ? 110 : 42;
-    const imageHeight = isImage ? 92 : 42;
-    const imageRendered = addPdfImageSafely(doc, imageData, margins.left + 10, cursor.y + 10, imageWidth, imageHeight);
-    if (!imageRendered) {
-      doc.setFillColor(...PDF_STYLE.white);
-      doc.roundedRect(margins.left + 10, cursor.y + 10, imageWidth, imageHeight, 6, 6, 'F');
-      setPdfText(doc, PDF_STYLE.slate, 7, 'bold');
-      doc.text(isImage ? 'IMAGE' : 'FILE', margins.left + 10 + imageWidth / 2, cursor.y + 10 + imageHeight / 2 + 3, { align: 'center' });
-    }
 
-    const textX = margins.left + imageWidth + 24;
-    const textWidth = cardWidth - imageWidth - 36;
-    setPdfText(doc, PDF_STYLE.navy, 10, 'bold');
-    doc.text(doc.splitTextToSize(pdfValue(attachment.name), textWidth).slice(0, 2), textX, cursor.y + 22);
-    setPdfText(doc, PDF_STYLE.slate, 8, 'bold');
-    doc.text(`Type: ${pdfValue(attachment.category)}   Size: ${attachment.size ? `${Math.round(attachment.size / 1024)} KB` : '-'}`, textX, cursor.y + 48);
-    setPdfText(doc, PDF_STYLE.slate, 7, 'bold');
-    doc.text(getAttachmentRecordLabel(attachment, context.deliveryRecords), textX, cursor.y + 62);
-    setPdfText(doc, PDF_STYLE.blue, 7, 'normal');
-    const accessUrl = freshAccessUrl || getAttachmentAccessText(attachment);
-    if (accessUrl?.startsWith('http')) {
-      doc.textWithLink('Access: Click here', textX, cursor.y + (isImage ? 78 : 64), { url: accessUrl });
-    } else {
-      doc.text('Stored with submitted report', textX, cursor.y + (isImage ? 78 : 64));
+    try {
+      if (isPdfAttachment(attachment)) {
+        cursor = await renderPdfAttachmentPages(doc, attachment, freshAccessUrl || attachment.previewUrl || attachment.url, cursor, margins);
+      } else if (attachment.type?.startsWith('image/')) {
+        cursor = await renderImageAttachment(doc, attachment, imageUrl, cursor, margins);
+      } else if (isDocxAttachment(attachment)) {
+        cursor = await renderDocxAttachment(doc, attachment, freshAccessUrl || attachment.previewUrl || attachment.url, cursor, margins);
+      } else if (isTextAttachment(attachment)) {
+        cursor = await renderTextAttachment(doc, attachment, freshAccessUrl || attachment.previewUrl || attachment.url, cursor, margins);
+      } else {
+        cursor = ensurePdfSpace(doc, cursor, 34, margins);
+        setPdfText(doc, PDF_STYLE.slate, 8, 'bold');
+        doc.text(`${pdfValue(attachment.name)} could not be rendered inline.`, margins.left, cursor.y + 14);
+        cursor = { ...cursor, y: cursor.y + 24 };
+      }
+    } catch (error) {
+      console.warn('Attachment could not be embedded in PDF', attachment.name, error);
+      cursor = ensurePdfSpace(doc, cursor, 34, margins);
+      setPdfText(doc, PDF_STYLE.slate, 8, 'bold');
+      doc.text(`${pdfValue(attachment.name)} could not be rendered inline.`, margins.left, cursor.y + 14);
+      cursor = { ...cursor, y: cursor.y + 24 };
     }
-    cursor = { ...cursor, y: cursor.y + cardHeight + 10 };
   }
 
   return cursor;
+}
+
+async function mergePdfAttachments(basePdfBlob, attachments) {
+  const pdfAttachments = attachments.filter(isPdfAttachment);
+  if (!pdfAttachments.length) return basePdfBlob;
+
+  const { PDFDocument } = await import('pdf-lib');
+  const mergedDocument = await PDFDocument.load(await basePdfBlob.arrayBuffer());
+
+  for (const attachment of pdfAttachments) {
+    const freshAccessUrl = attachment.storagePath
+      ? await getStorageAccessUrl(ATTACHMENT_BUCKET, attachment.storagePath)
+      : attachment.url;
+    const attachmentBuffer = await getAttachmentArrayBuffer(
+      attachment,
+      freshAccessUrl || attachment.previewUrl || attachment.url
+    );
+    if (!attachmentBuffer) continue;
+
+    try {
+      const attachmentDocument = await PDFDocument.load(attachmentBuffer);
+      const pages = await mergedDocument.copyPages(
+        attachmentDocument,
+        attachmentDocument.getPageIndices()
+      );
+      pages.forEach((page) => mergedDocument.addPage(page));
+    } catch (error) {
+      console.warn('PDF attachment could not be merged as original pages', attachment.name, error);
+    }
+  }
+
+  const mergedBytes = await mergedDocument.save();
+  return new Blob([mergedBytes], { type: 'application/pdf' });
 }
 
 async function renderSignatures(doc, cursor, margins, context) {
@@ -1087,12 +1545,16 @@ async function renderSignatures(doc, cursor, margins, context) {
   const width = (pageWidth - margins.left - margins.right - 20) / 3;
   const labels = ['Technician Signature', 'QA Reviewer Signature', 'Date Approved'];
   const technicianSignature = await urlToDataUrl(context.technicianSignatureUrl);
+  const qcSignature = await urlToDataUrl(context.qcSignatureUrl);
   labels.forEach((label, index) => {
     const x = margins.left + index * (width + 10);
     doc.setDrawColor(...PDF_STYLE.border);
     doc.line(x, cursor.y + 36, x + width, cursor.y + 36);
     if (label === 'Technician Signature' && technicianSignature) {
       addPdfImageSafely(doc, technicianSignature, x, cursor.y + 2, width, 30);
+    }
+    if (label === 'QA Reviewer Signature' && qcSignature) {
+      addPdfImageSafely(doc, qcSignature, x, cursor.y + 2, width, 30);
     }
     setPdfText(doc, PDF_STYLE.slate, 8, 'bold');
     doc.text(label.toUpperCase(), x, cursor.y + 50);
@@ -1155,10 +1617,10 @@ function Field({ label, value, onChange, register, name, rules, type = 'text', s
         {label}
       </span>
       <input
-        type={type}
-        step={step}
-        min={min}
-        max={max}
+        type={type === 'number' ? 'text' : type}
+        step={type === 'number' ? undefined : step}
+        min={type === 'number' ? undefined : min}
+        max={type === 'number' ? undefined : max}
         readOnly={readOnly}
         value={register ? undefined : value}
         {...(register ? register(name, rules) : { onChange: (event) => onChange(event.target.value) })}
@@ -1193,9 +1655,37 @@ function TextAreaField({ label, value, onChange, register, name, error, readOnly
   );
 }
 
+function RecordStatusField({ value, onChange, readOnly = false }) {
+  const options = [
+    { value: '', label: 'SELECT RESULT' },
+    { value: 'passed', label: 'PASS' },
+    { value: 'failed', label: 'FAIL' },
+    { value: 'retest', label: 'RETEST' }
+  ];
+
+  return (
+    <label className="block min-w-0">
+      <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
+        Record Result
+      </span>
+      <select
+        value={value || ''}
+        onChange={(event) => onChange(event.target.value)}
+        disabled={readOnly}
+        className="h-11 w-full rounded-2xl border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-900 outline-none transition focus:border-blue-700 focus:ring-4 focus:ring-blue-100 disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-600"
+      >
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>{option.label}</option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
 function ConcreteTestLog() {
   const { projectId, reportId: routeReportId } = useParams();
   const navigate = useNavigate();
+  const { session, profile, role } = useAuth();
 
   const {
     register,
@@ -1228,6 +1718,7 @@ function ConcreteTestLog() {
   const [revisionNo, setRevisionNo] = useState(1);
   const [approvalBy, setApprovalBy] = useState('');
   const [approvedAt, setApprovedAt] = useState('');
+  const [qcSignatureUrl, setQcSignatureUrl] = useState('');
   const [hasNonFormChanges, setHasNonFormChanges] = useState(false);
   const [errors, setErrors] = useState([]);
   const [attachmentPreview, setAttachmentPreview] = useState(null);
@@ -1245,6 +1736,7 @@ function ConcreteTestLog() {
   const removedDeliveryRecordIdsRef = useRef([]);
   const pdfGenerationInProgressRef = useRef(false);
   const weatherLookupAttemptedRef = useRef(false);
+  const setNumberSequenceOffsetRef = useRef(0);
 
   const isLocked = isStatusLocked(status);
   const hasUnsavedChanges = isDirty || hasNonFormChanges;
@@ -1252,6 +1744,7 @@ function ConcreteTestLog() {
   const visibleSpecificationFields = specificationFields.filter((field) => field.type !== 'textarea');
   const specificationCommentsField = specificationFields.find((field) => field.key === 'comments');
   const currentSpecifications = getValues();
+  const deliveryReviewRows = getDeliveryReviewRows(deliveryRecords, status);
 
   const summary = useMemo(() => {
     const totalCubicYards = deliveryRecords.reduce(
@@ -1267,13 +1760,13 @@ function ConcreteTestLog() {
       0
     );
     const failedTests = deliveryRecords.filter((record) => {
-      return getRecordStatus(record, getValues()).label === 'Failed';
+      return ['FAIL', 'Needs Correction'].includes(getRecordStatus(record, status).label);
     }).length;
     const passedTests = deliveryRecords.filter((record) => {
-      return getRecordStatus(record, getValues()).label === 'Passed';
+      return getRecordStatus(record, status).label === 'PASS';
     }).length;
     const pendingReview = deliveryRecords.filter((record) => {
-      return ['Pending', 'Needs Review'].includes(getRecordStatus(record, getValues()).label);
+      return ['Pending', 'Needs Review', 'Ready for Review', 'QA Review', 'RETEST'].includes(getRecordStatus(record, status).label);
     }).length;
     const completionPercent = deliveryRecords.length
       ? Math.round(((passedTests + failedTests) / deliveryRecords.length) * 100)
@@ -1289,21 +1782,25 @@ function ConcreteTestLog() {
       pendingReview,
       completionPercent
     };
-  }, [deliveryRecords, getValues]);
+  }, [deliveryRecords, status]);
 
-  const stepCompletion = useMemo(() => {
-    const specifications = currentSpecifications;
-    return {
-      project: getStepCompletion('project', projectInfo, specifications, deliveryRecords, attachments),
-      specifications: getStepCompletion('specifications', projectInfo, specifications, deliveryRecords, attachments),
-      records: getStepCompletion('records', projectInfo, specifications, deliveryRecords, attachments),
-      attachments: getStepCompletion('attachments', projectInfo, specifications, deliveryRecords, attachments),
-      summary: getStepCompletion('summary', projectInfo, specifications, deliveryRecords, attachments),
-      pdf: getStepCompletion('pdf', projectInfo, specifications, deliveryRecords, attachments)
-    };
-  }, [projectInfo, currentSpecifications, deliveryRecords, attachments]);
+  const stepCompletion = {
+    project: getStepCompletion('project', projectInfo, currentSpecifications, deliveryRecords, attachments),
+    specifications: getStepCompletion('specifications', projectInfo, currentSpecifications, deliveryRecords, attachments),
+    records: getStepCompletion('records', projectInfo, currentSpecifications, deliveryRecords, attachments),
+    attachments: getStepCompletion('attachments', projectInfo, currentSpecifications, deliveryRecords, attachments),
+    summary: getStepCompletion('summary', projectInfo, currentSpecifications, deliveryRecords, attachments)
+  };
 
   const workflowComplete = stepCompletion.summary;
+  const normalizedStatus = normalizeReportStatus(status);
+  const isAwaitingQaReview = [
+    REPORT_STATUS.SUBMITTED_FOR_QC,
+    REPORT_STATUS.UNDER_REVIEW,
+    REPORT_STATUS.RESUBMITTED
+  ].includes(normalizedStatus);
+  const reviewBadgeTone = summary.failedTests > 0 ? 'red' : isAwaitingQaReview ? 'amber' : workflowComplete ? 'emerald' : 'amber';
+  const reviewBadgeLabel = summary.failedTests > 0 ? 'Not Ready' : isAwaitingQaReview ? 'Pending Review' : workflowComplete ? 'Ready' : 'Needs Data';
   const hasWorkflowProgress =
     Object.values(projectInfo).some(Boolean) ||
     Object.values(currentSpecifications).some(Boolean) ||
@@ -1312,22 +1809,26 @@ function ConcreteTestLog() {
 
   const workflowStatus = getStatusLabel(status);
 
-  const stepState = useMemo(
-    () =>
-      stepIds.reduce((state, stepId, index) => {
-        const isComplete = stepCompletion[stepId];
-        state[stepId] = {
-          status: index === activeStepIndex ? 'active' : isComplete ? 'completed' : 'invalid',
-          unlocked: true
-        };
-        return state;
-      }, {}),
-    [activeStepIndex, stepCompletion, stepIds]
-  );
+  const stepState = stepIds.reduce((state, stepId, index) => {
+    const isComplete = stepCompletion[stepId];
+    const isReviewStep = stepId === 'summary';
+    const reviewUnlocked =
+      stepCompletion.project &&
+      stepCompletion.specifications &&
+      stepCompletion.records &&
+      stepCompletion.attachments;
+    const unlocked = !isReviewStep || reviewUnlocked;
+    state[stepId] = {
+      status: index === activeStepIndex ? 'active' : isComplete ? 'completed' : unlocked ? 'invalid' : 'locked',
+      unlocked
+    };
+    return state;
+  }, {});
 
   const completedSteps = workflowSections.filter((step) => step.id !== 'pdf' && stepCompletion[step.id]);
   const pendingSteps = workflowSections.filter((step) => step.id !== 'pdf' && !stepCompletion[step.id]);
-  const canSubmit = workflowComplete && !saving && !isLocked;
+  const reviewStepComplete = activeStepId === 'summary' && workflowComplete;
+  const canSubmit = reviewStepComplete && !saving && !isLocked;
   const canGeneratePdf = !saving && (!isLocked || status === REPORT_STATUS.APPROVED || status === REPORT_STATUS.FINALIZED);
 
   useEffect(() => {
@@ -1379,10 +1880,12 @@ function ConcreteTestLog() {
             return projectFields;
           }, {});
 
+          setNumberSequenceOffsetRef.current = await fetchProjectSetNumberOffset(projectId, reportIdRef.current || routeReportId || null);
+
 	        setProjectInfo(nextProjectInfo);
 
           const existingDfrNumber = window.sessionStorage.getItem(getDfrSessionKey(projectId));
-          const dfrNumber = getValues('dfr_number') || existingDfrNumber || generateDfrNumber(nextProjectInfo.project_number, projectId);
+          const dfrNumber = await getUsableDfrNumber(getValues('dfr_number') || existingDfrNumber, nextProjectInfo.project_number, projectId, reportIdRef.current);
           window.sessionStorage.setItem(getDfrSessionKey(projectId), dfrNumber);
           reset(
             {
@@ -1393,21 +1896,24 @@ function ConcreteTestLog() {
           );
           setValue('dfr_number', dfrNumber, { shouldDirty: false, shouldTouch: false, shouldValidate: false });
 
-          if (!reportIdRef.current) {
-            const { data: latestDraft } = await supabase
-              .from('concrete_test_logs')
-              .select('id,status')
-              .eq('project_id', Number(projectId))
-              .order('id', { ascending: false })
-              .limit(1)
-              .maybeSingle();
+          // ONLY auto-load from database if we have a reportId but no data yet,
+          // OR if we are explicitly on an edit/details route.
+          // DO NOT auto-load abandoned drafts from the database when on the "create" route.
+          if (!reportIdRef.current && routeReportId) {
+            reportIdRef.current = routeReportId;
+            setReportId(routeReportId);
+          }
 
-            if (latestDraft?.id) {
-              reportIdRef.current = latestDraft.id;
-              setReportId(latestDraft.id);
-              setStatus(normalizeReportStatus(latestDraft.status));
-              window.sessionStorage.setItem(getReportSessionKey(projectId), String(latestDraft.id));
-            }
+          if (!reportIdRef.current) {
+            console.log('Starting fresh concrete test log.');
+            setDeliveryRecords(enrichDeliveryRecords([createDeliveryRecord(0)], nextProjectInfo, setNumberSequenceOffsetRef.current));
+            setAttachments([]);
+            setRevisionNo(1);
+            setStatus(REPORT_STATUS.DRAFT);
+            reset(createDefaultSpecifications());
+            setValue('dfr_number', dfrNumber);
+            setLoading(false);
+            return;
           }
 
           if (reportIdRef.current) {
@@ -1419,14 +1925,29 @@ function ConcreteTestLog() {
 
             if (!reportError && savedReport) {
               const normalizedStatus = normalizeReportStatus(savedReport.status);
+              
+              // If we auto-loaded this from sessionStorage but it's already submitted/approved,
+              // and we're NOT on an explicit edit route, then clear it and start fresh.
+              if (!routeReportId && !['DRAFT', 'REVISION_REQUIRED'].includes(normalizedStatus)) {
+                console.log('Clearing finished report from session storage:', reportIdRef.current);
+                window.sessionStorage.removeItem(getReportSessionKey(projectId));
+                window.sessionStorage.removeItem(getDfrSessionKey(projectId));
+                setReportId(null);
+                reportIdRef.current = null;
+                // Re-run initialization to start fresh
+                initializeConcreteLog();
+                return;
+              }
+
               setStatus(normalizedStatus);
               setRevisionNo(savedReport.revision_no || 1);
-              if (savedReport?.approved_by) setApprovalBy(savedReport.approved_by);
+              if (savedReport?.reviewed_by_name || savedReport?.approved_by) setApprovalBy(savedReport.reviewed_by_name || savedReport.approved_by);
               if (savedReport?.approved_at) setApprovedAt(savedReport.approved_at);
+              if (savedReport?.qc_signature_url) setQcSignatureUrl(savedReport.qc_signature_url);
               const loadedProjectInfo = mapPayloadToFields(projectInfoFields, savedReport);
               setProjectInfo((previous) => ({ ...previous, ...loadedProjectInfo }));
 
-              const reportDfr = savedReport.dfr_number || dfrNumber;
+              const reportDfr = await getUsableDfrNumber(savedReport.dfr_number || dfrNumber, loadedProjectInfo.project_number || nextProjectInfo.project_number, projectId, reportIdRef.current);
               window.sessionStorage.setItem(getDfrSessionKey(projectId), reportDfr);
               let resetValues = {
                 ...getValues(),
@@ -1509,12 +2030,37 @@ function ConcreteTestLog() {
 
   useEffect(() => {
     if (!loading && !getValues('dfr_number') && projectInfo.project_number) {
-      const existingDfrNumber = window.sessionStorage.getItem(getDfrSessionKey(projectId));
-      const dfrNumber = existingDfrNumber || generateDfrNumber(projectInfo.project_number, projectId);
-      window.sessionStorage.setItem(getDfrSessionKey(projectId), dfrNumber);
-      setValue('dfr_number', dfrNumber, { shouldDirty: false, shouldTouch: false, shouldValidate: false });
+      let cancelled = false;
+      async function populateDfrNumber() {
+        const existingDfrNumber = window.sessionStorage.getItem(getDfrSessionKey(projectId));
+        const dfrNumber = await getUsableDfrNumber(existingDfrNumber, projectInfo.project_number, projectId, reportIdRef.current);
+        if (cancelled) return;
+        window.sessionStorage.setItem(getDfrSessionKey(projectId), dfrNumber);
+        setValue('dfr_number', dfrNumber, { shouldDirty: false, shouldTouch: false, shouldValidate: false });
+      }
+      populateDfrNumber().catch((err) => {
+        console.error('Unable to populate DFR number', err);
+      });
+      return () => {
+        cancelled = true;
+      };
     }
   }, [loading, projectId, projectInfo, getValues, setValue]);
+
+  useEffect(() => {
+    if (loading) return;
+    const enrichTimer = window.setTimeout(() => {
+      setDeliveryRecords((previous) => {
+        const enriched = enrichDeliveryRecords(previous, projectInfo, setNumberSequenceOffsetRef.current);
+        const changed = enriched.some((record, index) => (
+          record.set_number !== previous[index]?.set_number ||
+          record.actual_minutes !== previous[index]?.actual_minutes
+        ));
+        return changed ? enriched : previous;
+      });
+    }, 0);
+    return () => window.clearTimeout(enrichTimer);
+  }, [loading, projectId, projectInfo]);
 
   const populateWeatherFromLocation = useCallback(async ({ force = false } = {}) => {
     if (isLocked) return;
@@ -1559,35 +2105,49 @@ function ConcreteTestLog() {
 
   function updateDeliveryRecord(recordId, fieldName, value) {
     setHasNonFormChanges(true);
-    const field = deliveryRecordFields.find((item) => item.key === fieldName);
-    const required = workflow_validation.records.requiredFields.includes(fieldName);
-    const errorMessage =
-      required && (value === '' || value === undefined || value === null)
-        ? `${field?.label || fieldName} is required.`
-        : getFieldValidationMessage(field || {}, value);
-
-    setRecordFieldErrors((previous) => {
-      const nextRecordErrors = { ...(previous[recordId] || {}) };
-      if (errorMessage) {
-        nextRecordErrors[fieldName] = errorMessage;
-      } else {
-        delete nextRecordErrors[fieldName];
+    setRecordFieldErrors((previous) => ({ ...previous, [recordId]: {} }));
+    setDeliveryRecords((previous) => {
+      if (fieldName === 'row_status' && value === 'retest') {
+        const sourceIndex = previous.findIndex((record) => record.id === recordId);
+        const sourceRecord = previous[sourceIndex];
+        if (sourceIndex >= 0 && sourceRecord && !sourceRecord.retestRecordId) {
+          const retestId = crypto.randomUUID();
+          const retestRecord = {
+            ...sourceRecord,
+            id: retestId,
+            set_number: '',
+            row_status: '',
+            comments: sourceRecord.comments ? `Retest: ${sourceRecord.comments}` : 'Retest record'
+          };
+          const updatedSource = { ...sourceRecord, row_status: value, retestRecordId: retestId };
+          return renumberRecords([
+            ...previous.slice(0, sourceIndex),
+            updatedSource,
+            retestRecord,
+            ...previous.slice(sourceIndex + 1)
+          ]);
+        }
       }
 
-      return {
-        ...previous,
-        [recordId]: nextRecordErrors
-      };
+      const updatedRecords = previous.map((record) => {
+        if (record.id !== recordId) return record;
+        const nextRecord = { ...record, [fieldName]: value };
+        if (['time_batched', 'finish_unload'].includes(fieldName)) {
+          nextRecord.actual_minutes = calculateActualMinutes(nextRecord.time_batched, nextRecord.finish_unload);
+        }
+        return nextRecord;
+      });
+      return enrichDeliveryRecords(updatedRecords, projectInfo, setNumberSequenceOffsetRef.current);
     });
-
-    setDeliveryRecords((previous) =>
-      previous.map((record) => (record.id === recordId ? { ...record, [fieldName]: value } : record))
-    );
   }
 
   async function goToStep(stepId) {
     const nextIndex = stepIds.indexOf(stepId);
     if (nextIndex < 0 || nextIndex === activeStepIndex) return;
+    if (!stepState[stepId]?.unlocked) {
+      setErrors(['Complete Project Information, Concrete Specifications, and Delivery Records before reviewing the report.']);
+      return;
+    }
 
     setActiveStepIndex(nextIndex);
     setErrors([]);
@@ -1612,6 +2172,11 @@ function ConcreteTestLog() {
       clearErrors
     });
     if (!isValid) return;
+    const nextStepId = stepIds[activeStepIndex + 1];
+    if (nextStepId && !stepState[nextStepId]?.unlocked) {
+      setErrors(['Complete Project Information, Concrete Specifications, and Delivery Records before reviewing the report.']);
+      return;
+    }
 
     try {
       await saveReportData('draft', { silent: false });
@@ -1638,7 +2203,15 @@ function ConcreteTestLog() {
   }
 
   function renumberRecords(records) {
-    return records.map((record, index) => ({ ...record, test_number: String(index + 1) }));
+    return enrichDeliveryRecords(
+      records.map((record, index) => ({
+        ...record,
+        test_number: String(index + 1),
+        set_number: record.set_number || generateSetNumberWithOffset(projectInfo.project_name, index, setNumberSequenceOffsetRef.current)
+      })),
+      projectInfo,
+      setNumberSequenceOffsetRef.current
+    );
   }
 
   function addRecord() {
@@ -1655,7 +2228,10 @@ function ConcreteTestLog() {
         ...previous,
         {
           ...record,
-          id: crypto.randomUUID()
+          id: crypto.randomUUID(),
+          set_number: '',
+          row_status: '',
+          retestRecordId: ''
         }
       ]);
     });
@@ -1775,10 +2351,12 @@ function ConcreteTestLog() {
     ...buildPayloadFromFields(specificationFields, getValues())
   }), [getValues]);
 
-  const buildDeliveryPayload = useCallback((logId, record) => ({
-    log_id: logId,
-    ...buildPayloadFromFields(deliveryRecordFields, record)
-  }), []);
+  const buildDeliveryPayload = useCallback((logId, record) => {
+    return {
+      log_id: logId,
+      ...buildPayloadFromFields(deliveryRecordFields, record)
+    };
+  }, []);
 
   const insertConcreteLog = useCallback(async (payload) => {
     return runMutationWithColumnFallback(payload, (nextPayload) =>
@@ -1942,9 +2520,9 @@ function ConcreteTestLog() {
   const saveReportData = useCallback(
     async (nextStatus = REPORT_STATUS.DRAFT, { silent = false } = {}) => {
       const desiredStatus = nextStatus === REPORT_STATUS.DRAFT ? getAutoSaveStatus(status) : normalizeReportStatus(nextStatus);
-      const nextRevision = status === REPORT_STATUS.REJECTED && desiredStatus !== REPORT_STATUS.REJECTED ? revisionNo + 1 : revisionNo;
+      const nextRevision = status === REPORT_STATUS.REVISION_REQUIRED && desiredStatus !== REPORT_STATUS.REVISION_REQUIRED ? revisionNo + 1 : revisionNo;
       console.log('Current reportId:', reportIdRef.current, 'Desired status:', desiredStatus, 'Revision:', nextRevision);
-      if (isLocked && desiredStatus !== REPORT_STATUS.APPROVED && desiredStatus !== REPORT_STATUS.FINALIZED) {
+      if (isLocked && ![REPORT_STATUS.APPROVED, REPORT_STATUS.FINALIZED, REPORT_STATUS.SUBMITTED_FOR_QC, REPORT_STATUS.UNDER_REVIEW, REPORT_STATUS.RESUBMITTED].includes(desiredStatus)) {
         return reportIdRef.current;
       }
       setSaving(true);
@@ -2048,19 +2626,27 @@ function ConcreteTestLog() {
     }
 
     try {
-      const logId = await saveReportData(REPORT_STATUS.IN_PROGRESS);
+      const submittingStatus = normalizeReportStatus(status) === REPORT_STATUS.REVISION_REQUIRED
+        ? REPORT_STATUS.RESUBMITTED
+        : REPORT_STATUS.SUBMITTED_FOR_QC;
+      const logId = await saveReportData(REPORT_STATUS.GENERATED);
       const { signatureUrl, signaturePath } = await uploadTechnicianSignature(logId);
       setPdfGenerationStatus('Generating QA review PDF...');
-      const { pdfBlob, pdfFileName } = await createEngineeringPdfDocument(REPORT_STATUS.SUBMITTED_FOR_REVIEW, {
+      const { pdfBlob, pdfFileName } = await createEngineeringPdfDocument(submittingStatus, {
         technicianSignatureUrl: signatureUrl
       });
-      const { pdfAccessUrl } = await uploadGeneratedPdf(logId, pdfBlob, REPORT_STATUS.SUBMITTED_FOR_REVIEW);
+      const { pdfAccessUrl } = await uploadGeneratedPdf(logId, pdfBlob, submittingStatus);
+      const submittedAt = new Date().toISOString();
       await runMutationWithColumnFallback(
         {
+          status: submittingStatus,
+          is_locked: true,
           technician_signature_url: signatureUrl,
           technician_signature_storage_path: signaturePath,
-          submitted_at: new Date().toISOString(),
-          submitted_by: projectInfo.technician_name
+          submitted_at: submittedAt,
+          submitted_by: session?.user?.id || null,
+          submitted_by_name: profile?.full_name || projectInfo.technician_name,
+          submitted_by_email: profile?.email || session?.user?.email || null
         },
         (nextPayload) =>
           supabase
@@ -2068,14 +2654,55 @@ function ConcreteTestLog() {
             .update(nextPayload)
             .eq('id', logId)
       );
-      await saveReportData(REPORT_STATUS.SUBMITTED_FOR_REVIEW);
+      await addReviewHistory({
+        reportId: logId,
+        action: submittingStatus,
+        remarks: 'Report submitted successfully to QA/QC review.',
+        performedBy: session?.user?.id || null,
+        performedByName: profile?.full_name || projectInfo.technician_name,
+        performedByRole: role
+      });
+      const reviewUrl = `${window.location.origin}/qc/review/${logId}`;
+      const { data: qcProfiles } = await supabase
+        .from('profiles')
+        .select('*')
+        .in('role', ['qc', 'qc_approver', 'qc_manager', 'admin']);
+      const qcRecipients = Array.from(new Set((qcProfiles || [])
+        .map((item) => item.email)
+        .filter(Boolean)));
+      const qcEmail = buildQcReviewEmail({
+        report: {
+          ...projectInfo,
+          dfr_number: getValues('dfr_number'),
+          status: submittingStatus,
+          submitted_at: submittedAt,
+          data_logger: profile?.full_name || projectInfo.technician_name
+        },
+        reviewUrl,
+        pdfUrl: pdfAccessUrl
+      });
+      await queueAndSendNotification({
+        reportId: logId,
+        recipientEmail: qcRecipients[0],
+        subject: qcEmail.subject,
+        html: qcEmail.html,
+        notificationType: 'qc_review_required',
+        pdfBlob,
+        pdfFileName
+      });
       setGeneratedPdf((previous) => {
         if (previous?.url?.startsWith('blob:')) URL.revokeObjectURL(previous.url);
         return { url: pdfAccessUrl, name: pdfFileName, generatedAt: new Date() };
       });
-      setPdfGenerationStatus('QA review PDF saved.');
+      setPdfGenerationStatus('Report submitted successfully to QA/QC review.');
+      
+      // Clear session storage for this project so the next "New Report" is fresh
+      window.sessionStorage.removeItem(getReportSessionKey(projectId));
+      window.sessionStorage.removeItem(getDfrSessionKey(projectId));
+      
       reset(getValues());
       setHasNonFormChanges(false);
+      setStatus(submittingStatus);
       setShowSubmitConfirmation(false);
       navigate(`/project/${projectId}/field-reports/concrete-test-log`);
     } catch (error) {
@@ -2138,6 +2765,7 @@ function ConcreteTestLog() {
       projectName: projectInfo.project_name,
       technicianName: projectInfo.technician_name,
       technicianSignatureUrl: overrides.technicianSignatureUrl || '',
+      qcSignatureUrl: overrides.qcSignatureUrl || qcSignatureUrl,
       reviewerName: projectInfo.qc_rep || 'QA Reviewer',
       approvalBy: approvalBy || projectInfo.qc_rep || 'QA Reviewer',
       approvedAt: approvedAt ? new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'short', day: '2-digit' }).format(new Date(approvedAt)) : '',
@@ -2146,7 +2774,7 @@ function ConcreteTestLog() {
       generatedAt,
       weather: projectInfo.weather || 'Not recorded',
       batchPlant: projectInfo.batch_plant || 'Not recorded',
-      mixDesign: specifications.mix_number || deliveryRecords.find((record) => record.mix_design)?.mix_design || 'Not recorded',
+      mixDesign: specifications.mix_number || 'Not recorded',
       strengthRequirement: specifications.strength_spec ? `${specifications.strength_spec}` : 'Not recorded',
       companyName: COMPANY_NAME,
       revision: revisionNo || 1,
@@ -2160,14 +2788,14 @@ function ConcreteTestLog() {
       cursor = renderSpecifications(doc, pdfContext, cursor, margins);
       cursor = renderDeliveryRecords(doc, pdfContext, cursor, margins);
       cursor = await renderAttachments(doc, pdfContext, cursor, margins);
-      if (isFinalApproved || normalizedTargetStatus === REPORT_STATUS.SUBMITTED_FOR_REVIEW || normalizedTargetStatus === REPORT_STATUS.UNDER_QA_REVIEW) {
+      if (isFinalApproved || normalizedTargetStatus === REPORT_STATUS.SUBMITTED_FOR_QC || normalizedTargetStatus === REPORT_STATUS.UNDER_REVIEW || normalizedTargetStatus === REPORT_STATUS.RESUBMITTED) {
         cursor = renderSummary(doc, pdfContext, cursor, margins);
         await renderSignatures(doc, cursor, margins, pdfContext);
         if (isFinalApproved) drawApprovalSeal(doc);
       }
       renderFooter(doc, pdfContext, margins);
 
-    const pdfBlob = doc.output('blob');
+    const pdfBlob = await mergePdfAttachments(doc.output('blob'), attachments);
     const pdfFileName = `${pdfContext.dfrNumber || 'concrete-test-log'}.pdf`;
     return { pdfBlob, pdfFileName };
   }
@@ -2217,7 +2845,7 @@ function ConcreteTestLog() {
     setPdfGenerationStatus('Preparing PDF...');
     try {
       const previewOnly = ![REPORT_STATUS.APPROVED, REPORT_STATUS.FINALIZED].includes(status);
-      const logId = reportIdRef.current || (await saveReportData(REPORT_STATUS.IN_PROGRESS));
+      const logId = reportIdRef.current || (await saveReportData(REPORT_STATUS.DRAFT));
       const { pdfBlob, pdfFileName } = await createEngineeringPdfDocument(status);
       const localPdfUrl = triggerPdfDownload(pdfBlob, pdfFileName);
       setPdfGenerationStatus(previewOnly ? 'Preview generated. Download has started.' : 'Final approved PDF generated.');
@@ -2226,12 +2854,14 @@ function ConcreteTestLog() {
         return { url: localPdfUrl, name: pdfFileName, generatedAt: new Date() };
       });
 
-      if (previewOnly) {
-        return;
-      }
-
       try {
         const { pdfAccessUrl } = await uploadGeneratedPdf(logId, pdfBlob, status);
+        setGeneratedPdf((previous) => {
+          if (previous?.url?.startsWith('blob:')) URL.revokeObjectURL(previous.url);
+          return { url: pdfAccessUrl, name: pdfFileName, generatedAt: new Date() };
+        });
+        setPdfGenerationStatus(previewOnly ? 'PDF downloaded and saved to Supabase.' : 'Final approved PDF generated and saved.');
+        if (previewOnly) return;
         setStatus(REPORT_STATUS.FINALIZED);
         window.open(pdfAccessUrl, '_blank', 'noopener,noreferrer');
       } catch (error) {
@@ -2268,7 +2898,15 @@ function ConcreteTestLog() {
             </h1>
           </div>
           <div className="flex flex-wrap items-center gap-3 text-sm text-slate-600">
-            <span className="rounded-full bg-slate-100 px-3 py-1 font-semibold text-slate-900">{workflowStatus}</span>
+            <button
+              type="button"
+              onClick={() => navigate(`/project/${projectId}`)}
+              className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-800 shadow-sm hover:bg-slate-50"
+            >
+              <FolderKanban className="h-4 w-4" />
+              Project Workspace
+            </button>
+            <StatusBadge status={status} />
             <span>Autosave: {saving ? 'Saving...' : hasUnsavedChanges ? 'Pending' : formatTimestamp(lastSavedAt)}</span>
             <span>{summary.totalRecords} records</span>
           </div>
@@ -2276,6 +2914,19 @@ function ConcreteTestLog() {
       </div>
 
       <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6">
+        {projectInfo.rejection_reason && (status === REPORT_STATUS.REVISION_REQUIRED || status === REPORT_STATUS.REJECTED) && (
+          <div className="mb-6 rounded-3xl border border-rose-200 bg-rose-50 p-6 shadow-sm">
+            <div className="flex items-start gap-3">
+              <AlertCircle className="mt-0.5 h-5 w-5 text-rose-600" />
+              <div>
+                <h3 className="text-base font-bold text-rose-900">Revision Required</h3>
+                <p className="mt-1 text-sm text-rose-700">{projectInfo.rejection_reason}</p>
+                <p className="mt-3 text-xs font-semibold uppercase tracking-wider text-rose-500">Please address these comments and resubmit.</p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {errors.length > 0 && (
           <div className="rounded-3xl bg-red-50 px-4 py-4 text-sm font-semibold text-red-800">
             {errors.map((error) => (
@@ -2302,6 +2953,8 @@ function ConcreteTestLog() {
                         ? 'bg-blue-600 text-white shadow-sm shadow-blue-200/40'
                         : isComplete
                         ? 'bg-emerald-600 text-white'
+                        : !unlocked
+                        ? 'cursor-not-allowed bg-slate-100 text-slate-400 opacity-70'
                         : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                     }`}
                   >
@@ -2342,20 +2995,10 @@ function ConcreteTestLog() {
                           disabled={isLocked}
                           className="mt-2 h-10 w-full rounded-2xl border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-950 outline-none focus:border-blue-700 focus:ring-4 focus:ring-blue-100 disabled:bg-slate-100"
                         />
-                        {field.key === 'weather' && (
-                          <div className="mt-2 flex flex-wrap items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() => populateWeatherFromLocation({ force: true })}
-                              disabled={isLocked || weatherLookupStatus === 'Fetching daily high/low...'}
-                              className="inline-flex h-8 items-center gap-2 rounded-full border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:border-blue-200 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-60"
-                            >
-                              {weatherLookupStatus === 'Fetching daily high/low...' && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                              Auto-fill high/low
-                            </button>
-                            {weatherLookupStatus && (
-                              <span className="text-xs font-semibold text-slate-500">{weatherLookupStatus}</span>
-                            )}
+                        {field.key === 'weather' && weatherLookupStatus === 'Fetching daily high/low...' && (
+                          <div className="mt-2 inline-flex items-center gap-2 text-xs font-semibold text-slate-500">
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            Loading daily high/low...
                           </div>
                         )}
                       </>
@@ -2439,24 +3082,13 @@ function ConcreteTestLog() {
                 <div className="flex flex-wrap items-center gap-3 text-sm text-slate-600">
                   <span>{deliveryRecords.length} entries</span>
                   <span>{summary.totalCubicYards.toFixed(1)} yd³</span>
-                  <span>{summary.passedTests} passed</span>
+                  <span>{summary.pendingReview > 0 ? `${summary.pendingReview} review` : `${summary.passedTests} passed`}</span>
                 </div>
-              </div>
-              <div className="mb-4 flex flex-wrap items-center gap-3">
-                <button
-                  type="button"
-                  onClick={addRecord}
-                  disabled={isLocked}
-                  className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
-                >
-                  <Plus className="h-4 w-4" />
-                  Add Record
-                </button>
               </div>
               <div className="space-y-4">
                 {deliveryRecords.map((record, recordIndex) => {
                   const collapsed = collapsedRecords[record.id];
-                  const recordStatus = getRecordStatus(record, currentSpecifications);
+                  const recordStatus = getRecordStatus(record, status);
                   return (
                     <article key={record.id} className="rounded-3xl bg-slate-50 shadow-sm">
                       <div className="flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
@@ -2507,7 +3139,14 @@ function ConcreteTestLog() {
                                 {deliveryRecordFields
                                   .filter((field) => field.section === group.key)
                                   .map((field) =>
-                                    field.type === 'textarea' ? (
+                                    field.type === 'select' ? (
+                                      <RecordStatusField
+                                        key={field.key}
+                                        value={record[field.key]}
+                                        readOnly={isLocked}
+                                        onChange={(value) => updateDeliveryRecord(record.id, field.key, value)}
+                                      />
+                                    ) : field.type === 'textarea' ? (
                                       <TextAreaField
                                         key={field.key}
                                         label={field.label}
@@ -2534,74 +3173,19 @@ function ConcreteTestLog() {
                               </div>
                             </div>
                           ))}
-                          <div className="rounded-3xl bg-white px-4 py-4 shadow-sm">
-                            <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                              <div>
-                                <div className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-500">Record Attachments</div>
-                                <p className="mt-1 text-xs font-medium text-slate-500">Files captured for this truck ticket only.</p>
-                              </div>
-                              <div className="flex flex-wrap gap-2">
-                                {attachmentTypes
-                                  .filter((type) => ['batch-ticket', 'test-photo', 'cylinder-photo', 'delivery-slip'].includes(type.key))
-                                  .map((type) => (
-                                    <label key={type.key} className="inline-flex cursor-pointer items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-800 hover:bg-slate-50">
-                                      <UploadCloud className="h-3.5 w-3.5" />
-                                      {type.label}
-                                      <input
-                                        type="file"
-                                        multiple
-                                        className="hidden"
-                                        accept={type.key.includes('photo') || type.key === 'batch-ticket' ? 'image/*,.pdf' : undefined}
-                                        onChange={(event) => {
-                                          handleAttachmentFiles(event.target.files, type.key, record.id);
-                                          event.target.value = '';
-                                        }}
-                                        disabled={isLocked}
-                                      />
-                                    </label>
-                                  ))}
-                              </div>
+                          {recordIndex === deliveryRecords.length - 1 && (
+                            <div className="flex justify-end">
+                              <button
+                                type="button"
+                                onClick={addRecord}
+                                disabled={isLocked}
+                                className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
+                              >
+                                <Plus className="h-4 w-4" />
+                                Add Record
+                              </button>
                             </div>
-                            {attachments.filter((attachment) => attachment.deliveryRecordId === record.id).length > 0 ? (
-                              <div className="grid gap-2 sm:grid-cols-2">
-                                {attachments
-                                  .filter((attachment) => attachment.deliveryRecordId === record.id)
-                                  .map((attachment) => (
-                                    <div key={attachment.id} className="flex items-center gap-3 rounded-2xl bg-slate-50 px-3 py-2">
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          if (attachment.previewUrl || attachment.type?.startsWith('image/')) setAttachmentPreview(attachment);
-                                          else if (attachment.url) window.open(attachment.url, '_blank', 'noopener,noreferrer');
-                                        }}
-                                        className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-white text-slate-500"
-                                      >
-                                        {attachment.previewUrl ? (
-                                          <img src={attachment.previewUrl} alt="" className="h-full w-full object-cover" />
-                                        ) : (
-                                          <Paperclip className="h-4 w-4" />
-                                        )}
-                                      </button>
-                                      <div className="min-w-0 flex-1">
-                                        <p className="truncate text-xs font-semibold text-slate-950">{attachment.name}</p>
-                                        <p className="mt-1 text-[10px] uppercase tracking-[0.16em] text-slate-500">{attachment.category}</p>
-                                      </div>
-                                      <button
-                                        type="button"
-                                        onClick={() => removeAttachment(attachment.id)}
-                                        disabled={isLocked}
-                                        className="rounded-full border border-slate-200 p-2 text-slate-700 hover:bg-slate-100 disabled:opacity-50"
-                                        aria-label={`Delete ${attachment.name}`}
-                                      >
-                                        <Trash2 className="h-3.5 w-3.5" />
-                                      </button>
-                                    </div>
-                                  ))}
-                              </div>
-                            ) : (
-                              <p className="rounded-2xl bg-slate-50 px-3 py-2 text-xs font-medium text-slate-500">No files attached to this record yet.</p>
-                            )}
-                          </div>
+                          )}
                         </div>
                       )}
                     </article>
@@ -2764,18 +3348,18 @@ function ConcreteTestLog() {
                   <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Review & submit</p>
                   <h2 className="mt-2 text-lg font-semibold text-slate-950">Inspection overview</h2>
                 </div>
-                <span className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] ${summary.failedTests > 0 ? badgeClass('red') : summary.pendingReview > 0 ? badgeClass('amber') : badgeClass('emerald')}`}>
-                  {summary.failedTests > 0 ? 'Not Ready' : summary.pendingReview > 0 ? 'Pending Review' : 'Ready'}
+                <span className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] ${badgeClass(reviewBadgeTone)}`}>
+                  {reviewBadgeLabel}
                 </span>
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
-                <div className="rounded-3xl bg-emerald-50 px-4 py-4 shadow-sm">
+                <div className="rounded-2xl bg-emerald-50 px-3 py-3 shadow-sm">
                   <p className="text-[11px] uppercase tracking-[0.3em] text-emerald-700">Completed Sections</p>
                   <p className="mt-2 text-sm font-semibold text-slate-950">
                     {completedSteps.length > 0 ? completedSteps.map((step) => step.label).join(', ') : 'No sections complete yet.'}
                   </p>
                 </div>
-                <div className={`rounded-3xl px-4 py-4 shadow-sm ${pendingSteps.length ? 'bg-amber-50 border border-amber-200' : 'bg-slate-50'}`}>
+                <div className={`rounded-2xl px-3 py-3 shadow-sm ${pendingSteps.length ? 'bg-amber-50 border border-amber-200' : 'bg-slate-50'}`}>
                   <p className="text-[11px] uppercase tracking-[0.3em] text-amber-700">Missing Sections</p>
                   <p className="mt-2 text-sm font-semibold text-slate-950">
                     {pendingSteps.length > 0 ? pendingSteps.map((step) => step.label).join(', ') : 'None'}
@@ -2789,27 +3373,110 @@ function ConcreteTestLog() {
                   ['Passed', summary.passedTests],
                   ['Failed', summary.failedTests]
                 ].map(([label, value]) => (
-                  <div key={label} className="rounded-3xl bg-slate-50 px-4 py-4 shadow-sm">
+                  <div key={label} className="rounded-2xl bg-slate-50 px-3 py-3 shadow-sm">
                     <p className="text-[11px] uppercase tracking-[0.3em] text-slate-500">{label}</p>
-                    <p className="mt-2 text-2xl font-semibold text-slate-950">{value}</p>
+                    <p className="mt-1 text-xl font-semibold text-slate-950">{value}</p>
                   </div>
                 ))}
               </div>
-              <div className="mt-6 flex justify-between">
+              <div className="mt-6 grid gap-4 lg:grid-cols-2">
+                <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+                  <div className="border-b border-slate-200 bg-slate-50 px-3 py-2">
+                    <p className="text-[10px] uppercase tracking-[0.24em] text-slate-500">PDF project preview</p>
+                    <h3 className="mt-0.5 text-sm font-semibold text-slate-950">Project Information</h3>
+                  </div>
+                  <dl className="grid sm:grid-cols-2">
+                    {projectInfoFields.map((field) => (
+                      <div key={field.key} className="border-b border-slate-100 px-3 py-2 last:border-b-0 sm:border-r sm:last:border-r-0">
+                        <dt className="text-[9px] font-semibold uppercase tracking-[0.16em] text-slate-500">{field.label}</dt>
+                        <dd className="mt-0.5 break-words text-xs font-semibold leading-5 text-slate-950">{pdfValue(projectInfo[field.key])}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                </div>
+                <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+                  <div className="border-b border-slate-200 bg-slate-50 px-3 py-2">
+                    <p className="text-[10px] uppercase tracking-[0.24em] text-slate-500">PDF specifications preview</p>
+                    <h3 className="mt-0.5 text-sm font-semibold text-slate-950">Inspection Requirements</h3>
+                  </div>
+                  <dl className="grid sm:grid-cols-2 xl:grid-cols-3">
+                    {specificationFields.map((field) => (
+                      <div
+                        key={field.key}
+                        className={`border-b border-slate-100 px-3 py-2 xl:border-r xl:[&:nth-child(3n)]:border-r-0 ${
+                          field.type === 'textarea' ? 'sm:col-span-2 xl:col-span-3' : ''
+                        } ${field.key === 'dfr_number' ? 'sm:col-span-2 xl:col-span-2' : ''}`}
+                      >
+                        <dt className="text-[9px] font-semibold uppercase tracking-[0.16em] text-slate-500">{field.label}</dt>
+                        <dd
+                          className={`mt-0.5 text-xs font-semibold leading-5 text-slate-950 ${
+                            field.key === 'dfr_number'
+                              ? 'overflow-hidden text-ellipsis whitespace-nowrap font-mono text-[11px] tracking-tight'
+                              : 'break-words'
+                          }`}
+                          title={pdfValue(currentSpecifications[field.key])}
+                        >
+                          {pdfValue(currentSpecifications[field.key])}
+                        </dd>
+                      </div>
+                    ))}
+                  </dl>
+                </div>
+              </div>
+              <div className="mt-6 rounded-3xl bg-slate-50 p-4 shadow-sm">
+                <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                  <div>
+                    <p className="text-[11px] uppercase tracking-[0.3em] text-slate-500">PDF delivery table preview</p>
+                    <h3 className="mt-1 text-base font-semibold text-slate-950">Concrete Delivery & Testing Records</h3>
+                  </div>
+                  <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-600 shadow-sm">
+                    {deliveryReviewRows.length} {deliveryReviewRows.length === 1 ? 'record' : 'records'}
+                  </span>
+                </div>
+                {deliveryReviewRows.length > 0 ? (
+                  <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white">
+                    <table className="min-w-[1320px] w-full border-collapse text-left text-[11px] text-slate-800">
+                      <thead className="bg-slate-950 text-white">
+                        <tr>
+                          {DELIVERY_REVIEW_COLUMNS.map((column) => (
+                            <th key={column.key} scope="col" className="whitespace-nowrap border-r border-slate-700 px-2 py-2 font-semibold last:border-r-0">
+                              {column.label}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {deliveryReviewRows.map((row, rowIndex) => (
+                          <tr key={row.id} className={rowIndex % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
+                            {DELIVERY_REVIEW_COLUMNS.map((column) => (
+                              <td key={`${row.id}-${column.key}`} className="max-w-[160px] border-r border-t border-slate-200 px-2 py-2 align-top font-medium last:border-r-0">
+                                {column.key === 'status' ? (
+                                  <span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em] ${badgeClass(row.status.tone)}`}>
+                                    {row.values[column.key]}
+                                  </span>
+                                ) : (
+                                  <span className="line-clamp-2 break-words">{row.values[column.key]}</span>
+                                )}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="rounded-2xl bg-white px-4 py-6 text-sm font-semibold text-slate-500">
+                    No delivery records entered.
+                  </div>
+                )}
+              </div>
+              <div className="mt-6 flex justify-start">
                 <button
                   type="button"
                   onClick={goToPreviousStep}
                   className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-900 hover:bg-slate-50"
                 >
                   Previous
-                </button>
-                <button
-                  type="button"
-                  onClick={goToNextStep}
-                  className="rounded-2xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:bg-slate-300 disabled:text-slate-500 disabled:cursor-not-allowed disabled:opacity-70"
-                  disabled={!workflowComplete || saving}
-                >
-                  Next: Generate PDF
                 </button>
               </div>
             </section>
@@ -2828,23 +3495,19 @@ function ConcreteTestLog() {
                 <p className="text-sm font-semibold text-slate-950">Final package</p>
                 <p className="mt-2 text-sm text-slate-600">Generate the official PDF once all sections are completed. The file maps directly to the configured field data.</p>
                 <div className="mt-4 flex flex-wrap gap-2">
-                  <button
-                    type="button"
+                  <ActionButton
+                    label={pdfGenerationStatus === 'Preparing PDF...' ? 'Generating...' : [REPORT_STATUS.APPROVED, REPORT_STATUS.FINALIZED].includes(status) ? 'Generate Final PDF' : 'Preview PDF'}
+                    icon={Download}
+                    intent="neutral"
                     onClick={handleGeneratePdfAction}
-                    onPointerDown={handleGeneratePdfAction}
                     disabled={!canGeneratePdf || saving}
-                    className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:bg-slate-300 disabled:text-slate-500 disabled:cursor-not-allowed disabled:opacity-70"
-                  >
-                    <Download className="h-4 w-4" />
-                    {pdfGenerationStatus === 'Preparing PDF...' ? 'Generating...' : [REPORT_STATUS.APPROVED, REPORT_STATUS.FINALIZED].includes(status) ? 'Generate Final PDF' : 'Preview PDF'}
-                  </button>
-                  <button
-                    type="button"
+                    loading={pdfGenerationStatus === 'Preparing PDF...'}
+                  />
+                  <ActionButton
+                    label="Make Corrections"
+                    intent="accent"
                     onClick={goToCorrectionReview}
-                    className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-900 hover:bg-slate-100"
-                  >
-                    Make Corrections
-                  </button>
+                  />
                 </div>
 	                {pdfGenerationStatus && (
 	                  <p className="mt-3 text-sm font-semibold text-slate-700">{pdfGenerationStatus}</p>
@@ -2852,16 +3515,14 @@ function ConcreteTestLog() {
 	                {generatedPdf && (
 	                  <div className="mt-4 rounded-2xl bg-white px-4 py-3 text-sm text-slate-700 shadow-sm">
 	                    <p className="font-semibold text-slate-950">PDF ready</p>
-	                    <a
-	                      href={generatedPdf.url}
-	                      download={generatedPdf.name}
-	                      target="_blank"
-	                      rel="noreferrer"
-	                      className="mt-2 inline-flex items-center gap-2 rounded-2xl bg-blue-700 px-4 py-2 font-semibold text-white hover:bg-blue-800"
-	                    >
-	                      <Download className="h-4 w-4" />
-	                      Download {generatedPdf.name}
-	                    </a>
+	                    <ActionButton
+                        label={`Download ${generatedPdf.name}`}
+                        icon={Download}
+                        intent="primary"
+                        href={generatedPdf.url}
+                        download={generatedPdf.name}
+                        className="mt-2"
+                      />
 	                  </div>
 	                )}
 	              </div>
@@ -2887,6 +3548,9 @@ function ConcreteTestLog() {
               <div>
                 <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Ready to submit for QA review</p>
                 <h2 className="mt-3 text-2xl font-semibold text-slate-950">Confirm submission details</h2>
+                <p className="mt-2 text-sm font-medium text-slate-600">
+                  The QA review PDF will be generated and saved automatically when this report is submitted.
+                </p>
               </div>
               <button
                 type="button"
@@ -2911,32 +3575,37 @@ function ConcreteTestLog() {
               </div>
             </div>
             <div className="mt-6">
-              <SignaturePad
+              <DigitalSignaturePad
                 label="Technician Digital Signature"
                 value={technicianSignature}
                 onSave={setTechnicianSignature}
                 disabled={saving}
+                saveLabel="Complete Signature"
+                typedSaveLabel="Complete Signature"
               />
               <p className="mt-3 text-xs font-medium text-slate-500">
                 Signature file: {toSafeStorageName(projectInfo.technician_name)}_technician_digital_signature_{toSafeStorageName(getValues('dfr_number'))}.png
               </p>
+              <p className={`mt-2 text-sm font-semibold ${technicianSignature ? 'text-emerald-700' : 'text-amber-700'}`}>
+                {technicianSignature
+                  ? 'Signature complete. Submit To QC is now available.'
+                  : 'Complete and save the technician signature to unlock Submit To QC.'}
+              </p>
             </div>
             <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:justify-end">
-              <button
-                type="button"
+              <ActionButton
+                label="Cancel"
+                intent="accent"
                 onClick={() => setShowSubmitConfirmation(false)}
-                className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-900 hover:bg-slate-50"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
+              />
+              <ActionButton
+                label="Submit To QC"
+                icon={Send}
+                intent="neutral"
                 onClick={confirmSubmitReport}
                 disabled={!technicianSignature || saving}
-                className="rounded-2xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:bg-slate-300 disabled:text-slate-500 disabled:cursor-not-allowed disabled:opacity-70"
-              >
-                Submit Report
-              </button>
+                loading={saving}
+              />
             </div>
           </div>
         </div>
@@ -2975,34 +3644,31 @@ function ConcreteTestLog() {
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
-            <button
-              type="button"
+            <ActionButton
+              label="Save Draft"
+              icon={Save}
+              intent="accent"
               onClick={saveDraft}
               disabled={saving || isLocked}
-              className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-900 hover:bg-slate-50 disabled:opacity-60"
-            >
-              <Save className="h-4 w-4" />
-              Save Draft
-            </button>
-            <button
-              type="button"
-              onClick={handleGeneratePdfAction}
-              onPointerDown={handleGeneratePdfAction}
-              disabled={!canGeneratePdf || saving}
-              className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-slate-100 disabled:bg-slate-200 disabled:text-slate-500 disabled:cursor-not-allowed disabled:opacity-70"
-            >
-              <Image className="h-4 w-4" />
-              {[REPORT_STATUS.APPROVED, REPORT_STATUS.FINALIZED].includes(status) ? 'Generate Final PDF' : 'Preview PDF'}
-            </button>
-            <button
-              type="button"
+              loading={saving}
+            />
+            {[REPORT_STATUS.APPROVED, REPORT_STATUS.FINALIZED].includes(status) && (
+              <ActionButton
+                label="Generate Final PDF"
+                icon={Image}
+                intent="accent"
+                onClick={handleGeneratePdfAction}
+                disabled={!canGeneratePdf || saving}
+              />
+            )}
+            <ActionButton
+              label="Submit To QC"
+              icon={Send}
+              intent="neutral"
               onClick={submitReport}
               disabled={!canSubmit || saving || isLocked}
-              className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:bg-slate-300 disabled:text-slate-500 disabled:cursor-not-allowed disabled:opacity-70"
-            >
-              <Send className="h-4 w-4" />
-              Submit For QA Review
-            </button>
+              loading={saving}
+            />
           </div>
         </div>
       </div>

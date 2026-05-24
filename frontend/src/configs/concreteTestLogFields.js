@@ -1,6 +1,5 @@
 import {
   ClipboardCheck,
-  Download,
   FileText,
   FlaskConical,
   UploadCloud
@@ -92,53 +91,48 @@ export const specificationFields = [
     key: 'air_content_percent',
     label: 'Air Content (%)',
     dbColumn: 'air_content',
-    type: 'number',
-    step: '0.1',
-    valueType: 'number',
+    type: 'text',
+    valueType: 'text',
     required: true,
-    validation: { min: 0, max: 15, message: 'Air Content must be between 0 and 15%.' }
+    validation: null
   },
 
   {
     key: 'unit_weight_lbs_ft3',
     label: 'Unit Weight (lbs/ft³)',
     dbColumn: 'unit_weight',
-    type: 'number',
-    step: '0.1',
-    valueType: 'number',
-    validation: { min: 80, max: 170, message: 'Unit Weight must be between 80 and 170 lbs/ft³.' }
+    type: 'text',
+    valueType: 'text',
+    validation: null
   },
 
   {
     key: 'spread_in',
     label: 'Spread (in)',
     dbColumn: 'spread',
-    type: 'number',
-    step: '0.25',
-    valueType: 'number',
-    validation: { min: 18, max: 32, message: 'Spread must be between 18 and 32 in for SCC/flowable concrete.' }
+    type: 'text',
+    valueType: 'text',
+    validation: null
   },
 
   {
     key: 'slump_in',
     label: 'Slump (in)',
     dbColumn: 'slump',
-    type: 'number',
-    step: '0.25',
-    valueType: 'number',
+    type: 'text',
+    valueType: 'text',
     required: true,
-    validation: { min: 0, max: 12, message: 'Slump must be between 0 and 12 in.' }
+    validation: null
   },
 
   {
     key: 'concrete_temp_f',
     label: 'Concrete Temp (°F)',
     dbColumn: 'concrete_temp',
-    type: 'number',
-    step: '1',
-    valueType: 'number',
+    type: 'text',
+    valueType: 'text',
     required: true,
-    validation: { min: 30, max: 120, message: 'Concrete Temp must be between 30 and 120 °F.' }
+    validation: null
   },
 
   {
@@ -154,28 +148,18 @@ export const specificationFields = [
     key: 'j_ring_in',
     label: 'J-Ring (in)',
     dbColumn: 'j_ring',
-    type: 'number',
-    step: '0.25',
-    valueType: 'number',
-    validation: { min: 0, max: 4, message: 'J-Ring must be between 0 and 4 in.' }
+    type: 'text',
+    valueType: 'text',
+    validation: null
   },
 
   {
     key: 'speed_of_stress_psi',
-    label: 'Speed Of Stress (PSI)',
+    label: 'Specified Strength (PSI)',
     dbColumn: 'speed_of_stress',
-    type: 'number',
-    step: '1',
-    valueType: 'number',
-    validation: { min: 20, max: 50, message: 'Speed Of Stress should be between 20 and 50 psi/sec.' }
-  },
-
-  {
-    key: 'report_time',
-    label: 'Report Time',
-    dbColumn: 'report_time',
-    type: 'time',
-    valueType: 'text'
+    type: 'text',
+    valueType: 'text',
+    validation: null
   },
 
   {
@@ -198,29 +182,28 @@ export const specificationFields = [
 ]
 
 export const deliveryRecordFields = [
-  { key: 'test_number', dbColumn: 'test_number', label: 'Test Number', type: 'text', valueType: 'number', readOnly: true, required: true, section: 'delivery_details', defaultValue: '' },
+  { key: 'test_number', dbColumn: 'test_number', label: 'Test Number', type: 'text', valueType: 'text', readOnly: true, required: true, section: 'delivery_details', defaultValue: '' },
   { key: 'ticket_number', dbColumn: 'ticket_number', label: 'Ticket Number', type: 'text', valueType: 'text', required: true, section: 'delivery_details', placeholder: 'Enter ticket number', defaultValue: '' },
   { key: 'truck_number', dbColumn: 'truck_number', label: 'Truck Number', type: 'text', valueType: 'text', required: true, section: 'delivery_details', placeholder: 'Enter truck number', defaultValue: '' },
-  { key: 'cubic_yards', dbColumn: 'cubic_yards', label: 'Cubic Yards', type: 'number', step: '0.1', unit: 'yd³', valueType: 'number', required: false, section: 'delivery_details', defaultValue: '', validation: { min: 0.1, max: 20, message: 'Cubic Yards must be between 0.1 and 20 yd³.' } },
-  { key: 'mix_design', dbColumn: 'mix_design', label: 'Mix Design', type: 'text', valueType: 'text', required: false, section: 'delivery_details', defaultValue: '' },
+  { key: 'cubic_yards', dbColumn: 'cubic_yards', label: 'Cubic Yards', type: 'text', unit: 'yd³', valueType: 'text', required: false, section: 'delivery_details', defaultValue: '', validation: null },
   { key: 'time_batched', dbColumn: 'time_batched', label: 'Time Batched', type: 'time', valueType: 'text', required: true, section: 'time_tracking', defaultValue: '' },
   { key: 'arrival_time', dbColumn: 'arrival_time', label: 'Arrival Time', type: 'time', valueType: 'text', required: false, section: 'time_tracking', defaultValue: '' },
   { key: 'time_tested', dbColumn: 'time_tested', label: 'Time Tested', type: 'time', valueType: 'text', required: true, section: 'time_tracking', defaultValue: '' },
   { key: 'finish_unload', dbColumn: 'finish_unload', label: 'Finish Unload', type: 'time', valueType: 'text', required: false, section: 'time_tracking', defaultValue: '' },
-  { key: 'actual_minutes', dbColumn: 'actual_minutes', label: 'Actual Minutes', type: 'number', step: '1', valueType: 'number', required: false, section: 'time_tracking', defaultValue: '', validation: { min: 0, max: 180, message: 'Actual Minutes must be between 0 and 180.' } },
-  { key: 'water_added_gal', dbColumn: 'water_added_gal', label: 'Water Added (gal)', type: 'number', step: '0.1', valueType: 'number', required: false, section: 'field_test_results', defaultValue: '', validation: { min: 0, max: 50, message: 'Water Added must be between 0 and 50 gal.' } },
-  { key: 'air_temp_f', dbColumn: 'air_temp_f', label: 'Air Temp (°F)', type: 'number', step: '1', valueType: 'number', required: false, section: 'field_test_results', defaultValue: '', validation: { min: -20, max: 120, message: 'Air Temp must be between -20 and 120 °F.' } },
-  { key: 'concrete_temp_f', dbColumn: 'concrete_temp_f', label: 'Concrete Temp (°F)', type: 'number', step: '1', valueType: 'number', required: false, section: 'field_test_results', defaultValue: '', validation: { min: 30, max: 120, message: 'Concrete Temp must be between 30 and 120 °F.' } },
-  { key: 'slump_in', dbColumn: 'slump_in', label: 'Slump (in)', type: 'number', step: '0.25', valueType: 'number', required: false, section: 'field_test_results', defaultValue: '', validation: { min: 0, max: 12, message: 'Slump must be between 0 and 12 in.' } },
-  { key: 'air_content_percent', dbColumn: 'air_content_percent', label: 'Air Content (%)', type: 'number', step: '0.1', valueType: 'number', required: false, section: 'field_test_results', defaultValue: '', validation: { min: 0, max: 15, message: 'Air Content must be between 0 and 15%.' } },
-  { key: 'unit_weight_lbs_ft3', dbColumn: 'unit_weight_lbs_ft3', label: 'Unit Weight (lbs/ft³)', type: 'number', step: '0.1', valueType: 'number', required: false, section: 'field_test_results', defaultValue: '', validation: { min: 80, max: 170, message: 'Unit Weight must be between 80 and 170 lbs/ft³.' } },
-  { key: 'j_ring_in', dbColumn: 'j_ring_in', label: 'J-Ring (in)', type: 'number', step: '0.25', valueType: 'number', required: false, section: 'field_test_results', defaultValue: '', validation: { min: 0, max: 4, message: 'J-Ring must be between 0 and 4 in.' } },
-  { key: 'spread_in', dbColumn: 'spread_in', label: 'Spread (in)', type: 'number', step: '0.25', valueType: 'number', required: false, section: 'field_test_results', defaultValue: '', validation: { min: 18, max: 32, message: 'Spread must be between 18 and 32 in for SCC/flowable concrete.' } },
-  { key: 'set_number', dbColumn: 'set_number', label: 'Set Number', type: 'text', valueType: 'text', required: false, section: 'cylinder_tracking', defaultValue: '' },
-  { key: 'lab_cylinders', dbColumn: 'lab_cylinders', label: 'Lab Cylinders', type: 'number', step: '1', valueType: 'number', required: false, section: 'cylinder_tracking', defaultValue: '', validation: { min: 0, max: 12, message: 'Lab Cylinders must be between 0 and 12.' } },
-  { key: 'field_cylinders', dbColumn: 'field_cylinders', label: 'Field Cylinders', type: 'number', step: '1', valueType: 'number', required: false, section: 'cylinder_tracking', defaultValue: '', validation: { min: 0, max: 12, message: 'Field Cylinders must be between 0 and 12.' } },
-  { key: 'placement_location', dbColumn: 'placement_location', label: 'Placement Location', type: 'text', valueType: 'text', required: false, section: 'placement_information', defaultValue: '' },
-  { key: 'comments', dbColumn: 'comments', label: 'Comments', type: 'textarea', valueType: 'text', required: false, section: 'inspector_notes', defaultValue: '' }
+  { key: 'actual_minutes', dbColumn: 'actual_minutes', label: 'Actual Minutes', type: 'text', valueType: 'text', readOnly: true, required: false, section: 'time_tracking', defaultValue: '', validation: null },
+  { key: 'water_added_gal', dbColumn: 'water_added_gal', label: 'Water Added (gal)', type: 'text', valueType: 'text', required: false, section: 'field_test_results', defaultValue: '', validation: null },
+  { key: 'air_temp_f', dbColumn: 'air_temp_f', label: 'Air Temp (°F)', type: 'text', valueType: 'text', required: false, section: 'field_test_results', defaultValue: '', validation: null },
+  { key: 'concrete_temp_f', dbColumn: 'concrete_temp_f', label: 'Concrete Temp (°F)', type: 'text', valueType: 'text', required: false, section: 'field_test_results', defaultValue: '', validation: null },
+  { key: 'slump_in', dbColumn: 'slump_in', label: 'Slump (in)', type: 'text', valueType: 'text', required: false, section: 'field_test_results', defaultValue: '', validation: null },
+  { key: 'air_content_percent', dbColumn: 'air_content_percent', label: 'Air Content (%)', type: 'text', valueType: 'text', required: false, section: 'field_test_results', defaultValue: '', validation: null },
+  { key: 'unit_weight_lbs_ft3', dbColumn: 'unit_weight_lbs_ft3', label: 'Unit Weight (lbs/ft³)', type: 'text', valueType: 'text', required: false, section: 'field_test_results', defaultValue: '', validation: null },
+  { key: 'j_ring_in', dbColumn: 'j_ring_in', label: 'J-Ring (in)', type: 'text', valueType: 'text', required: false, section: 'field_test_results', defaultValue: '', validation: null },
+  { key: 'spread_in', dbColumn: 'spread_in', label: 'Spread (in)', type: 'text', valueType: 'text', required: false, section: 'field_test_results', defaultValue: '', validation: null },
+  { key: 'set_number', dbColumn: 'set_number', label: 'Set Number', type: 'text', valueType: 'text', readOnly: true, required: false, section: 'cylinder_tracking', defaultValue: '' },
+  { key: 'lab_cylinders', dbColumn: 'lab_cylinders', label: 'Lab Cylinders', type: 'text', valueType: 'text', required: false, section: 'cylinder_tracking', defaultValue: '', validation: null },
+  { key: 'field_cylinders', dbColumn: 'field_cylinders', label: 'Field Cylinders', type: 'text', valueType: 'text', required: false, section: 'cylinder_tracking', defaultValue: '', validation: null },
+  { key: 'comments', dbColumn: 'comments', label: 'Comments', type: 'textarea', valueType: 'text', required: false, section: 'inspector_notes', defaultValue: '' },
+  { key: 'row_status', dbColumn: 'row_status', label: 'Record Result', type: 'select', valueType: 'text', required: false, section: 'inspector_notes', defaultValue: '' }
 ];
 
 export const deliveryRecordGroups = [
@@ -228,11 +211,10 @@ export const deliveryRecordGroups = [
   { key: 'time_tracking', title: 'Time Tracking' },
   { key: 'field_test_results', title: 'Field Test Results' },
   { key: 'cylinder_tracking', title: 'Cylinder Tracking' },
-  { key: 'placement_information', title: 'Placement Information' },
   { key: 'inspector_notes', title: 'Inspector Notes' }
 ];
 
-export const recordSummaryFields = ['truck_number', 'ticket_number', 'cubic_yards', 'mix_design'];
+export const recordSummaryFields = ['truck_number', 'ticket_number', 'cubic_yards'];
 
 export const attachmentTypes = [
   { key: 'batch-ticket', label: 'Batch Ticket' },
@@ -258,8 +240,7 @@ export const workflowSections = [
   { id: 'specifications', label: 'Concrete Specifications', shortLabel: 'Specifications', icon: FlaskConical },
   { id: 'records', label: 'Delivery Records', shortLabel: 'Records', icon: ClipboardCheck },
   { id: 'attachments', label: 'Attachments', shortLabel: 'Attachments', icon: UploadCloud },
-  { id: 'summary', label: 'Review & Submit', shortLabel: 'Review', icon: ClipboardCheck },
-  { id: 'pdf', label: 'Generate PDF', shortLabel: 'Generate PDF', icon: Download }
+  { id: 'summary', label: 'Review & Submit', shortLabel: 'Review', icon: ClipboardCheck }
 ];
 
 export const createDefaultObject = (fields) =>

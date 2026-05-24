@@ -42,6 +42,26 @@ function addPdfImageSafely(doc, imageData, x, y, width, height) {
   }
 }
 
+async function imageSourceToDataUrl(source) {
+  if (!source || source.startsWith?.('data:image/')) return source || '';
+
+  try {
+    const response = await fetch(source);
+    if (!response.ok) return '';
+    const blob = await response.blob();
+
+    return await new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(typeof reader.result === 'string' ? reader.result : '');
+      reader.onerror = () => resolve('');
+      reader.readAsDataURL(blob);
+    });
+  } catch (error) {
+    console.warn('Unable to load PDF image source', error);
+    return '';
+  }
+}
+
 function renderPdfHeader(doc, { projectName, dfrNumber, dateSampled, technician, statusBadge, generatedAt }, layout) {
   const { marginLeft, marginTop, contentWidth } = layout;
   const pageWidth = doc.internal.pageSize.getWidth();
@@ -76,7 +96,8 @@ function renderPdfHeader(doc, { projectName, dfrNumber, dateSampled, technician,
   // Status badge
   if (statusBadge) {
     const badgeX = pageWidth - marginLeft - 100;
-    doc.setFillColor(statusBadge.color || [56, 189, 248]);
+    const badgeColor = Array.isArray(statusBadge.color) ? statusBadge.color : [56, 189, 248];
+    doc.setFillColor(...badgeColor);
     doc.roundedRect(badgeX, 16, 88, 20, 4, 4, 'F');
     doc.setTextColor(255);
     doc.setFontSize(9);
@@ -236,7 +257,6 @@ function renderDeliveryRecord(doc, record, index, y, layout) {
   const truckItems = [
     ['Ticket Number', record.ticketNo],
     ['Truck Number', record.truckNo],
-    ['Mix Design', record.mixDesign || record.mix || '-'],
     ['Cubic Yards', record.cubicYards]
   ];
   truckItems.forEach((it, i) => {
@@ -285,17 +305,12 @@ function renderDeliveryRecord(doc, record, index, y, layout) {
   const testRows = Math.ceil(testItems.length / 2);
   cursorY += testRows * 12 + 8;
 
-  // Cylinder Information and Placement
+  // Cylinder Information
   doc.setFont('helvetica', 'bold');
   doc.text('Cylinder Info', colX, cursorY);
   doc.setFont('helvetica', 'normal');
   doc.text(`Lab Cylinders: ${record.labCylinders ?? record.lab_cylinders ?? '-'}`, colX + 100, cursorY);
   doc.text(`Field Cylinders: ${record.fieldCylinders ?? record.field_cylinders ?? '-'}`, colX + 260, cursorY);
-
-  doc.setFont('helvetica', 'bold');
-  doc.text('Placement', rightColX, cursorY);
-  doc.setFont('helvetica', 'normal');
-  doc.text(`${record.placementLocation ?? record.placement_location ?? '-'}`, rightColX + 70, cursorY);
 
   cursorY += 18;
 
@@ -398,10 +413,23 @@ function renderSummary(doc, summary, y, layout) {
   return rowY + cardH + 18;
 }
 
+function formatPdfDateTime(value) {
+  if (!value) return '';
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return new Intl.DateTimeFormat(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: '2-digit',
+    hour: 'numeric',
+    minute: '2-digit'
+  }).format(date);
+}
+
 function renderSignatures(doc, signatures, y, layout) {
   const { marginLeft, contentWidth } = layout;
-  const boxW = 180;
-  const gap = 36;
+  const gap = 18;
+  const boxW = (contentWidth - gap * 2) / 3;
   let x = marginLeft;
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(10);
@@ -409,24 +437,43 @@ function renderSignatures(doc, signatures, y, layout) {
   y += 14;
 
   const items = [
-    ['Technician', signatures?.technician],
-    ['QA Reviewer', signatures?.qcApproval]
+    {
+      label: 'Technician Signature',
+      value: signatures?.technician,
+      name: signatures?.technicianName || signatures?.technician_name || ''
+    },
+    {
+      label: 'QA Reviewer Signature',
+      value: signatures?.qcApproval,
+      name: signatures?.qcReviewerName || signatures?.reviewerName || signatures?.approvalBy || 'QA Reviewer'
+    },
+    {
+      label: 'Date Approved',
+      value: null,
+      text: formatPdfDateTime(signatures?.approvedAt)
+    }
   ];
 
-  items.forEach((it, idx) => {
+  items.forEach((item) => {
     if (x + boxW > marginLeft + contentWidth) {
       x = marginLeft;
       y += 80;
     }
-    doc.setDrawColor(200);
-    doc.rect(x, y, boxW, 60);
-    if (it[1]) addPdfImageSafely(doc, it[1], x + 8, y + 8, boxW - 16, 44);
+    doc.setDrawColor(203, 213, 225);
+    doc.line(x, y + 42, x + boxW, y + 42);
+    if (item.value) addPdfImageSafely(doc, item.value, x + 8, y + 2, boxW - 16, 36);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8);
+    doc.setTextColor(71, 85, 105);
+    doc.text(item.label.toUpperCase(), x, y + 58);
     doc.setFont('helvetica', 'normal');
-    doc.text(it[0], x + 8, y + 76);
+    doc.setFontSize(9);
+    doc.setTextColor(15, 23, 42);
+    doc.text(item.text || item.name || '-', x, y + 74);
     x += boxW + gap;
   });
 
-  return y + 92;
+  return y + 96;
 }
 
 function renderFooter(doc, layout) {
@@ -505,8 +552,13 @@ export async function generateConcreteTestLogPdf({ form, rows = [], weather, sig
   cursorY = renderSummary(doc, summary, cursorY, layout);
 
   // Signatures
+  const resolvedSignatures = {
+    ...signatures,
+    technician: await imageSourceToDataUrl(signatures.technician),
+    qcApproval: await imageSourceToDataUrl(signatures.qcApproval)
+  };
   cursorY = ensureSpace(doc, cursorY, 120, layout, { headerData: layout.headerData });
-  cursorY = renderSignatures(doc, signatures, cursorY, layout);
+  cursorY = renderSignatures(doc, resolvedSignatures, cursorY, layout);
 
   // Footer on every page
   renderFooter(doc, layout);

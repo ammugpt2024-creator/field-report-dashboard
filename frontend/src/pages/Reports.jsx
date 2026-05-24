@@ -1,11 +1,91 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '../services/supabase';
-import { Search, Calendar, FileText, Eye, Download, Inbox } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
+import { Search, Calendar, Inbox, FolderKanban } from 'lucide-react';
+import { isQcRole } from '../utils/permissions';
+import StatusBadge from '../components/StatusBadge';
+import ReportActions from '../components/ReportActions';
+import { ACTION_IDS, normalizeReportStatus } from '../workflow/workflowEngine';
+
+const REPORT_REGISTER_STATUSES = [
+  'GENERATED',
+  'SUBMITTED_FOR_QC',
+  'UNDER_REVIEW',
+  'REVISION_REQUIRED',
+  'RESUBMITTED',
+  'SUBMITTED_FOR_REVIEW',
+  'UNDER_QA_REVIEW',
+  'PENDING_QC_APPROVAL',
+  'APPROVED',
+  'FINALIZED',
+  'REJECTED'
+];
+
+function getReportPdfUrlValue(report) {
+  return report?.final_pdf_url || report?.pdf_url || report?.generated_pdf_url || '';
+}
+
+function isReportRegisterEntry(report) {
+  return Boolean(getReportPdfUrlValue(report)) || REPORT_REGISTER_STATUSES.includes(normalizeReportStatus(report.status));
+}
+
+function toSafeStorageName(value) {
+  return String(value || 'project')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '') || 'project';
+}
+
+function getProjectStorageFolder(report, projectId) {
+  const projectName = toSafeStorageName(report?.project_name);
+  const projectNumber = toSafeStorageName(report?.project_number);
+  if (projectName && projectNumber) return `${projectName}_${projectNumber}`;
+  return `project_${projectId}`;
+}
+
+async function findStoredReportPdf(report, projectId) {
+  if (getReportPdfUrlValue(report)) {
+    return {
+      url: getReportPdfUrlValue(report),
+      updatedAt: report.updated_at || report.created_at
+    };
+  }
+
+  const projectFolder = getProjectStorageFolder(report, projectId);
+  const candidateFolders = [
+    `${projectFolder}/concrete-test-logs/log_${report.id}/pdf`,
+    `project-${projectId}/concrete-test-logs/log_${report.id}/pdf`,
+    `project_${projectId}/concrete-test-logs/log_${report.id}/pdf`
+  ];
+
+  for (const folder of candidateFolders) {
+    const { data, error } = await supabase.storage.from('report-pdfs').list(folder, {
+      limit: 10,
+      sortBy: { column: 'created_at', order: 'desc' }
+    });
+    if (error || !Array.isArray(data)) continue;
+    const pdfFile = data.find((item) => /\.pdf$/i.test(item.name));
+    if (!pdfFile) continue;
+
+    const path = `${folder}/${pdfFile.name}`;
+    const { data: signedData } = await supabase.storage.from('report-pdfs').createSignedUrl(path, 60 * 60 * 24);
+    const publicData = supabase.storage.from('report-pdfs').getPublicUrl(path).data;
+    return {
+      url: signedData?.signedUrl || publicData?.publicUrl || '',
+      path,
+      updatedAt: pdfFile.updated_at || pdfFile.created_at || report.created_at
+    };
+  }
+
+  return null;
+}
 
 function Reports() {
   const { projectId } = useParams();
   const navigate = useNavigate();
+  const { role } = useAuth();
 
   const [reports, setReports] = useState([]);
   const [search, setSearch] = useState('');
@@ -13,6 +93,9 @@ function Reports() {
   const [technicianFilter, setTechnicianFilter] = useState('all');
   const [dateFilter, setDateFilter] = useState('');
   const [loading, setLoading] = useState(true);
+  const [hiddenDraftCount, setHiddenDraftCount] = useState(0);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage] = useState(20);
 
   useEffect(() => {
     async function fetchReports() {
@@ -43,12 +126,26 @@ function Reports() {
           }
         }
 
-        setReports(
-          reportRows.map((report) => ({
-            ...report,
-            dfr_number: report.dfr_number || specificationsByLogId[report.id]?.dfr_number || ''
-          }))
+        const mappedReports = reportRows.map((report) => ({
+          ...report,
+          dfr_number: report.dfr_number || specificationsByLogId[report.id]?.dfr_number || ''
+        }));
+        const mappedReportsWithPdfs = await Promise.all(
+          mappedReports.map(async (report) => {
+            const storedPdf = await findStoredReportPdf(report, projectId);
+            if (!storedPdf) return report;
+            return {
+              ...report,
+              generated_pdf_url: storedPdf.url,
+              generated_pdf_storage_path: storedPdf.path,
+              generated_pdf_updated_at: storedPdf.updatedAt,
+              status: report.status || 'GENERATED'
+            };
+          })
         );
+        const registerReports = mappedReportsWithPdfs.filter(isReportRegisterEntry);
+        setReports(registerReports);
+        setHiddenDraftCount(mappedReportsWithPdfs.length - registerReports.length);
       }
     } catch (err) {
       console.error('Unexpected error:', err);
@@ -65,53 +162,7 @@ function Reports() {
     return new Date(value).toLocaleString();
   };
 
-  const normalizeStatus = (status) => String(status || '').toUpperCase();
-
-  const getReportStatusLabel = (status) => {
-    switch (normalizeStatus(status)) {
-      case 'DRAFT':
-        return 'Draft';
-      case 'IN_PROGRESS':
-        return 'In Progress';
-      case 'SUBMITTED_FOR_REVIEW':
-        return 'Submitted for QA Review';
-      case 'UNDER_QA_REVIEW':
-        return 'Under QA Review';
-      case 'APPROVED':
-      case 'FINALIZED':
-        return 'Approved';
-      case 'REJECTED':
-        return 'Rejected';
-      case 'PENDING_QC_APPROVAL':
-        return 'Pending QC';
-      default:
-        return String(status || 'Draft')
-          .replaceAll('_', ' ')
-          .toLowerCase()
-          .replace(/\b\w/g, (c) => c.toUpperCase());
-    }
-  };
-
-  const statusBadgeClass = (status) => {
-    const normalized = normalizeStatus(status);
-    const base = 'inline-flex rounded-full px-3 py-1 text-xs font-semibold';
-    switch (normalized) {
-      case 'APPROVED':
-      case 'FINALIZED':
-        return `${base} bg-emerald-100 text-emerald-800`;
-      case 'SUBMITTED_FOR_REVIEW':
-      case 'UNDER_QA_REVIEW':
-      case 'PENDING_QC_APPROVAL':
-        return `${base} bg-sky-100 text-sky-800`;
-      case 'DRAFT':
-      case 'IN_PROGRESS':
-        return `${base} bg-amber-100 text-amber-800`;
-      case 'REJECTED':
-        return `${base} bg-rose-100 text-rose-800`;
-      default:
-        return `${base} bg-slate-100 text-slate-700`;
-    }
-  };
+  const normalizeStatus = normalizeReportStatus;
 
   const filteredReports = reports.filter((report) => {
     const lowerSearch = search.toLowerCase();
@@ -129,11 +180,62 @@ function Reports() {
     return matchesSearch && matchesStatus && matchesTechnician && matchesDate;
   });
 
+  const totalPages = Math.ceil(filteredReports.length / itemsPerPage);
+  const paginatedReports = filteredReports.slice(
+    (currentPage - 1) * itemsPerPage,
+    currentPage * itemsPerPage
+  );
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search, statusFilter, technicianFilter, dateFilter]);
+
   const uniqueTechnicians = Array.from(
     new Set(reports.map((report) => report.data_logger).filter(Boolean))
   );
 
-  const getReportPdfUrl = (report) => report.final_pdf_url || report.pdf_url || '';
+  const getReportPdfUrl = getReportPdfUrlValue;
+
+  const isQcUser = isQcRole(role);
+  const getDashboardActions = (report) => {
+    if (!isQcUser) return null;
+    const reportStatus = normalizeStatus(report.status);
+    if (['SUBMITTED_FOR_QC', 'UNDER_REVIEW', 'RESUBMITTED'].includes(reportStatus)) {
+      return [ACTION_IDS.REVIEW];
+    }
+    if (['APPROVED', 'FINALIZED'].includes(reportStatus)) {
+      return [ACTION_IDS.OPEN_REPORT, ACTION_IDS.DOWNLOAD_FINAL];
+    }
+    return [ACTION_IDS.OPEN_REPORT];
+  };
+
+  const handleReportAction = (actionId, report) => {
+    const editRoute = `/project/${projectId}/field-reports/concrete-test-log/${report.id}/edit`;
+    const viewRoute = `/project/${projectId}/field-reports/concrete-test-log/${report.id}`;
+    const reviewRoute = `/qc/review/${report.id}`;
+
+    switch (actionId) {
+      case ACTION_IDS.CONTINUE_DRAFT:
+      case ACTION_IDS.REVISE_REPORT:
+        navigate(editRoute);
+        break;
+      case ACTION_IDS.OPEN_REPORT:
+        navigate(viewRoute);
+        break;
+      case ACTION_IDS.REVIEW:
+        navigate(reviewRoute);
+        break;
+      case ACTION_IDS.TRACK_STATUS:
+        navigate(viewRoute); // For now, track status leads to view
+        break;
+      case ACTION_IDS.SUBMIT_TO_QC:
+      case ACTION_IDS.RESUBMIT_TO_QC:
+        navigate(editRoute); // Lead to edit/submit page
+        break;
+      default:
+        console.log('Action not handled in dashboard:', actionId);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-slate-100 p-8">
@@ -143,20 +245,38 @@ function Reports() {
             <div>
               <p className="text-sm uppercase tracking-[0.32em] text-slate-400">QC Management Platform</p>
               <h1 className="mt-3 text-4xl font-semibold text-slate-900">Report Dashboard</h1>
-              <p className="mt-2 text-slate-600">Search, filter and review final concrete test logs with status badges and PDF actions.</p>
+              <p className="mt-2 text-slate-600">
+                {isQcUser
+                  ? 'Review submitted concrete test logs, open PDFs, and approve or return reports.'
+                  : 'Track generated, submitted, and approved concrete test log reports.'}
+              </p>
+              {hiddenDraftCount > 0 && (
+                <p className="mt-2 text-sm font-medium text-slate-500">
+                  {hiddenDraftCount} autosaved draft {hiddenDraftCount === 1 ? 'session is' : 'sessions are'} hidden because no PDF has been generated yet.
+                </p>
+              )}
             </div>
 
-            <div className="grid gap-3 sm:grid-cols-3">
+            <div className="flex flex-col gap-4">
+              <button
+                type="button"
+                onClick={() => navigate(`/project/${projectId}`)}
+                className="inline-flex items-center justify-center gap-2 self-start rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-800 shadow-sm hover:bg-slate-50 lg:self-end"
+              >
+                <FolderKanban className="h-4 w-4" />
+                Project Workspace
+              </button>
+              <div className="grid gap-3 sm:grid-cols-3">
               <div className="rounded-3xl bg-slate-50 p-4 text-sm text-slate-700">
-                <p className="font-semibold text-slate-900">Total Reports</p>
+                <p className="font-semibold text-slate-900">Generated Reports</p>
                 <p className="mt-2 text-2xl font-semibold">{reports.length}</p>
               </div>
-              <div className="rounded-3xl bg-slate-50 p-4 text-sm text-slate-700">
+              <div className="rounded-3xl bg-sky-50 p-4 text-sm text-slate-700">
                 <p className="font-semibold text-slate-900">Pending QC</p>
                 <p className="mt-2 text-2xl font-semibold">
                   {reports.filter((r) => {
                     const status = normalizeStatus(r.status);
-                    return status === 'SUBMITTED_FOR_REVIEW' || status === 'UNDER_QA_REVIEW' || status === 'PENDING_QC_APPROVAL';
+                    return status === 'SUBMITTED_FOR_QC' || status === 'UNDER_REVIEW' || status === 'RESUBMITTED';
                   }).length}
                 </p>
               </div>
@@ -168,6 +288,7 @@ function Reports() {
                     return status === 'APPROVED' || status === 'FINALIZED';
                   }).length}
                 </p>
+              </div>
               </div>
             </div>
           </div>
@@ -196,10 +317,11 @@ function Reports() {
               >
                 <option value="all">All</option>
                 <option value="draft">Draft</option>
-                <option value="in_progress">In Progress</option>
-                <option value="submitted_for_review">Submitted for QA Review</option>
-                <option value="under_qa_review">Under QA Review</option>
-                <option value="pending_qc_approval">Pending QC</option>
+                <option value="generated">Generated</option>
+                <option value="submitted_for_qc">Submitted For QC</option>
+                <option value="under_review">Under Review</option>
+                <option value="revision_required">Revision Required</option>
+                <option value="resubmitted">Resubmitted</option>
                 <option value="approved">Approved</option>
                 <option value="finalized">Finalized</option>
                 <option value="rejected">Rejected</option>
@@ -234,61 +356,40 @@ function Reports() {
         </div>
 
         <div className="rounded-3xl bg-white p-6 shadow-sm border border-slate-200">
-          <div className="overflow-x-auto">
-            <table className="min-w-[1100px] w-full text-left text-sm text-slate-700">
+          <div className="hidden overflow-x-auto lg:block">
+            <table className="min-w-full text-left text-sm text-slate-700">
               <thead className="border-b border-slate-200 bg-slate-50 text-slate-700">
                 <tr>
                   <th className="px-4 py-3 font-semibold">DFR #</th>
                   <th className="px-4 py-3 font-semibold">Project</th>
                   <th className="px-4 py-3 font-semibold">Technician</th>
                   <th className="px-4 py-3 font-semibold">Sample Date</th>
-                  <th className="px-4 py-3 font-semibold">Generated</th>
-                  <th className="px-4 py-3 font-semibold">Status</th>
-                  <th className="px-4 py-3 font-semibold">PDF</th>
+                  <th className="px-4 py-3 font-semibold">Updated</th>
+                  <th className="px-4 py-3 font-semibold text-center">Status</th>
                   <th className="px-4 py-3 font-semibold">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
-                {filteredReports.map((report) => (
+                {paginatedReports.map((report) => (
                   <tr key={report.id} className="hover:bg-slate-50">
-                    <td className="px-4 py-4 font-semibold text-slate-900">{report.dfr_number || 'N/A'}</td>
+                    <td className="px-4 py-4">
+                      <p className="font-semibold text-slate-900">{report.dfr_number || 'N/A'}</p>
+                    </td>
                     <td className="px-4 py-4">{report.project_name || 'Unknown project'}</td>
                     <td className="px-4 py-4">{report.data_logger || 'Unassigned'}</td>
                     <td className="px-4 py-4">{report.date_sampled || '—'}</td>
-                    <td className="px-4 py-4 text-slate-700">{formatTimestamp(report.created_at)}</td>
-                    <td className="px-4 py-4"><span className={statusBadgeClass(report.status)}>{getReportStatusLabel(report.status)}</span></td>
-                    <td className="px-4 py-4">
-                      {getReportPdfUrl(report) ? (
-                        <a
-                          href={getReportPdfUrl(report)}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-200"
-                        >
-                          <FileText className="h-3.5 w-3.5" /> View PDF
-                        </a>
-                      ) : (
-                        <span className="text-xs text-slate-500">Pending</span>
-                      )}
+                    <td className="px-4 py-4 text-slate-700">{formatTimestamp(report.updated_at || report.generated_pdf_updated_at || report.created_at)}</td>
+                    <td className="px-4 py-4 text-center">
+                      <StatusBadge status={report.status} />
                     </td>
                     <td className="px-4 py-4">
-                      <div className="flex flex-wrap gap-2">
-                        <button
-                          onClick={() => navigate(`/project/${projectId}/field-reports/concrete-test-log/${report.id}`)}
-                          className="inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800"
-                        >
-                          <Eye className="h-3.5 w-3.5" /> View
-                        </button>
-                        {getReportPdfUrl(report) && (
-                          <a
-                            href={getReportPdfUrl(report)}
-                            download
-                            className="inline-flex items-center gap-2 rounded-2xl bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700"
-                          >
-                            <Download className="h-3.5 w-3.5" /> Download
-                          </a>
-                        )}
-                      </div>
+                      <ReportActions 
+                        role={role}
+                        status={report.status}
+                        pdfUrl={getReportPdfUrl(report)}
+                        onAction={(id) => handleReportAction(id, report)}
+                        allowedActions={getDashboardActions(report)}
+                      />
                     </td>
                   </tr>
                 ))}
@@ -296,11 +397,96 @@ function Reports() {
             </table>
           </div>
 
+          <div className="lg:hidden space-y-4">
+            {paginatedReports.map((report) => (
+              <div key={report.id} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="flex items-start justify-between gap-3 mb-3">
+                  <div>
+                    <p className="text-lg font-semibold text-slate-900">{report.dfr_number || 'N/A'}</p>
+                    <p className="text-sm text-slate-600">{report.project_name || 'Unknown project'}</p>
+                  </div>
+                  <StatusBadge status={report.status} />
+                </div>
+                <div className="grid grid-cols-2 gap-3 mb-4 text-sm">
+                  <div>
+                    <p className="text-xs text-slate-500">Technician</p>
+                    <p className="font-medium text-slate-900">{report.data_logger || 'Unassigned'}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-500">Sample Date</p>
+                    <p className="font-medium text-slate-900">{report.date_sampled || '—'}</p>
+                  </div>
+                  <div className="col-span-2">
+                    <p className="text-xs text-slate-500">Updated</p>
+                    <p className="font-medium text-slate-900">{formatTimestamp(report.updated_at || report.generated_pdf_updated_at || report.created_at)}</p>
+                  </div>
+                </div>
+                <ReportActions 
+                  role={role}
+                  status={report.status}
+                  pdfUrl={getReportPdfUrl(report)}
+                  onAction={(id) => handleReportAction(id, report)}
+                  isMobile={true}
+                  allowedActions={getDashboardActions(report)}
+                />
+              </div>
+            ))}
+          </div>
+
           {!loading && filteredReports.length === 0 && (
             <div className="mt-12 rounded-3xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-slate-600">
               <Inbox className="mx-auto mb-4 h-10 w-10 text-slate-400" />
               <p className="text-lg font-semibold">No matching reports found</p>
               <p className="mt-2 text-sm">Try clearing filters or creating a new report in the project workspace.</p>
+            </div>
+          )}
+
+          {totalPages > 1 && (
+            <div className="mt-6 flex items-center justify-between border-t border-slate-200 pt-4">
+              <p className="text-sm text-slate-600">
+                Showing {((currentPage - 1) * itemsPerPage) + 1} to {Math.min(currentPage * itemsPerPage, filteredReports.length)} of {filteredReports.length} reports
+              </p>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
+                  disabled={currentPage === 1}
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Previous
+                </button>
+                {Array.from({ length: Math.min(totalPages, 5) }, (_, i) => {
+                  let pageNum;
+                  if (totalPages <= 5) {
+                    pageNum = i + 1;
+                  } else if (currentPage <= 3) {
+                    pageNum = i + 1;
+                  } else if (currentPage >= totalPages - 2) {
+                    pageNum = totalPages - 4 + i;
+                  } else {
+                    pageNum = currentPage - 2 + i;
+                  }
+                  return (
+                    <button
+                      key={pageNum}
+                      onClick={() => setCurrentPage(pageNum)}
+                      className={`rounded-lg px-3 py-2 text-sm font-medium ${
+                        currentPage === pageNum
+                          ? 'bg-slate-900 text-white'
+                          : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                      }`}
+                    >
+                      {pageNum}
+                    </button>
+                  );
+                })}
+                <button
+                  onClick={() => setCurrentPage((prev) => Math.min(prev + 1, totalPages))}
+                  disabled={currentPage === totalPages}
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Next
+                </button>
+              </div>
             </div>
           )}
         </div>
