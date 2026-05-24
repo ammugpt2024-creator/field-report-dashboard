@@ -47,7 +47,7 @@ const ReportActions = ({
   };
 
   return (
-    <div className={`flex ${isMobile ? 'flex-col' : 'flex-wrap'} gap-2 ${className}`}>
+    <div className={`${isMobile ? 'grid w-full grid-cols-1 gap-2 sm:grid-cols-2' : 'flex max-w-full flex-wrap gap-2'} ${className}`}>
       {actions.map((action) => (
         <ActionButton
           key={action.id}
@@ -57,7 +57,7 @@ const ReportActions = ({
           href={getActionHref(action.id)}
           download={isDownloadAction(action.id) ? true : undefined}
           onClick={() => handleActionClick(action.id)}
-          className={isMobile ? 'w-full' : ''}
+          className={isMobile ? 'w-full text-sm' : ''}
         />
       ))}
     </div>

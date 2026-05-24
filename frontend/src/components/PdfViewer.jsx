@@ -27,15 +27,15 @@ export default function PdfViewer({ url, fileName, onClose }) {
   }
 
   return (
-    <div className={`${isFullscreen ? 'fixed inset-0 z-50 bg-slate-950' : 'bg-white'} rounded-2xl shadow-lg`}>
-      <div className="flex items-center justify-between gap-4 p-4 border-b border-slate-200 bg-slate-50">
-        <div className="flex items-center gap-2">
-          <h3 className="font-semibold text-slate-900 truncate max-w-xs sm:max-w-md">
+    <div className={`${isFullscreen ? 'fixed inset-0 z-50 bg-slate-950' : 'bg-white'} w-full max-w-full overflow-hidden rounded-2xl shadow-lg`}>
+      <div className="flex items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 p-3 sm:p-4">
+        <div className="min-w-0 flex-1">
+          <h3 className="truncate font-semibold text-slate-900">
             {fileName || 'Document'}
           </h3>
           <span className="text-xs text-slate-500">PDF artifact</span>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-1 sm:gap-2">
           <a
             href={url}
             target="_blank"
@@ -75,7 +75,7 @@ export default function PdfViewer({ url, fileName, onClose }) {
         </div>
       </div>
 
-      <div className={`relative ${isFullscreen ? 'h-[calc(100vh-64px)]' : 'h-[600px]'} overflow-auto bg-slate-100 flex justify-center p-4`}>
+      <div className={`relative ${isFullscreen ? 'h-[calc(100vh-58px)]' : 'h-[calc(100vh-190px)] min-h-[420px] lg:h-[600px]'} overflow-hidden bg-slate-100 p-2 sm:p-4`}>
         {loading && (
           <div className="absolute inset-x-0 top-20 z-10 flex justify-center">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-slate-900"></div>
@@ -84,7 +84,7 @@ export default function PdfViewer({ url, fileName, onClose }) {
         <iframe
           src={url}
           title={fileName || 'PDF report'}
-          className="h-full min-h-[560px] w-full rounded-xl border-0 bg-white shadow-inner"
+          className="h-full w-full rounded-xl border-0 bg-white shadow-inner"
           onLoad={() => setLoading(false)}
         />
       </div>

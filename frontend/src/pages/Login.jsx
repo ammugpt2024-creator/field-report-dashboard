@@ -22,9 +22,9 @@ function Login() {
 
   return (
 
-    <div className="flex items-center justify-center min-h-screen bg-gray-100">
+    <div className="flex min-h-screen w-full max-w-full items-center justify-center overflow-x-hidden bg-gray-100 px-4">
 
-      <div className="bg-white p-10 rounded-2xl shadow-xl w-[420px]">
+      <div className="w-full max-w-[420px] rounded-2xl bg-white p-6 shadow-xl sm:p-10">
 
         <div className="text-center mb-8">
 
@@ -56,7 +56,7 @@ function Login() {
 
         <button
           onClick={handleLogin}
-          className="w-full bg-blue-600 hover:bg-blue-700 text-white p-3 rounded-lg font-semibold transition"
+          className="min-h-11 w-full rounded-lg bg-blue-600 p-3 font-semibold text-white transition hover:bg-blue-700"
         >
           Login
         </button>

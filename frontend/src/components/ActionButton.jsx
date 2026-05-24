@@ -20,9 +20,9 @@ const ActionButton = ({
   href,
   download
 }) => {
-  const baseClasses = 'inline-flex items-center justify-center gap-2 rounded-2xl px-4 py-2 text-xs font-bold transition-all duration-200 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-md active:scale-[0.98]';
+  const baseClasses = 'inline-flex max-w-full items-center justify-center gap-2 rounded-2xl px-4 py-2 text-xs font-bold transition-all duration-200 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-md active:scale-[0.98]';
   const intentClasses = INTENT_CLASSES[intent] || INTENT_CLASSES.neutral;
-  const combinedClasses = `${baseClasses} ${intentClasses} ${className} min-h-[40px]`;
+  const combinedClasses = `${baseClasses} ${intentClasses} ${className} min-h-11`;
 
   const content = (
     <>

@@ -14,14 +14,14 @@ export default function SignaturePad({
   const [isDirty, setIsDirty] = useState(false);
   const [mode, setMode] = useState('draw');
   const [typedSignature, setTypedSignature] = useState('');
-  const [allowTypedSignature, setAllowTypedSignature] = useState(true);
+  const [allowTypedSignature, setAllowTypedSignature] = useState(false);
 
   useEffect(() => {
     pointerEventsSupportedRef.current = 'PointerEvent' in window;
     const mediaQuery = window.matchMedia('(pointer: fine)');
     const updateModeAvailability = () => {
-      setAllowTypedSignature(mediaQuery.matches);
-      if (!mediaQuery.matches) setMode('draw');
+      setAllowTypedSignature(false);
+      setMode('draw');
     };
 
     updateModeAvailability();
@@ -193,9 +193,6 @@ export default function SignaturePad({
     context.font = '52px "Brush Script MT", "Segoe Script", cursive';
     context.textAlign = 'center';
     context.fillText(trimmedSignature, canvas.width / 2, 118);
-    context.fillStyle = '#475569';
-    context.font = '14px Arial';
-    context.fillText('Digitally typed signature', canvas.width / 2, 162);
     onSave(canvas.toDataURL('image/png'));
   };
 

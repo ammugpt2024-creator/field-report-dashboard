@@ -17,6 +17,8 @@ body,
 #root {
   width: 100%;
   min-height: 100vh;
+  max-width: 100%;
+  overflow-x: hidden;
 }
 
 /* BODY */
@@ -25,6 +27,27 @@ body {
   font-family: Arial, sans-serif;
   background: #f3f4f6;
   color: #111827;
+  max-width: 100vw;
+  overflow-x: hidden;
+  -webkit-text-size-adjust: 100%;
+}
+
+img,
+svg,
+canvas,
+video,
+iframe,
+object,
+embed {
+  max-width: 100%;
+}
+
+button,
+a,
+input,
+select,
+textarea {
+  min-width: 0;
 }
 
 /* APP LAYOUT */
@@ -32,6 +55,9 @@ body {
 .app-container {
   display: flex;
   min-height: 100vh;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
 }
 
 /* SIDEBAR */
@@ -73,6 +99,9 @@ body {
 .main-content {
   flex: 1;
   min-height: 100vh;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: hidden;
 }
 
 /* TOP NAVBAR */

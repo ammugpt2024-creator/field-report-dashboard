@@ -238,13 +238,13 @@ function Reports() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-100 p-8">
-      <div className="mx-auto max-w-[1400px] space-y-8">
-        <div className="rounded-3xl bg-white p-8 shadow-sm border border-slate-200">
+    <div className="min-h-screen w-full max-w-full overflow-x-hidden bg-slate-100 px-4 py-5 sm:px-6 lg:p-8">
+      <div className="mx-auto w-full max-w-[1400px] space-y-5 sm:space-y-8">
+        <div className="rounded-3xl bg-white p-5 shadow-sm border border-slate-200 sm:p-8">
           <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
-            <div>
+            <div className="min-w-0">
               <p className="text-sm uppercase tracking-[0.32em] text-slate-400">QC Management Platform</p>
-              <h1 className="mt-3 text-4xl font-semibold text-slate-900">Report Dashboard</h1>
+              <h1 className="mt-3 text-3xl font-semibold text-slate-900 sm:text-4xl">Report Dashboard</h1>
               <p className="mt-2 text-slate-600">
                 {isQcUser
                   ? 'Review submitted concrete test logs, open PDFs, and approve or return reports.'
@@ -257,16 +257,16 @@ function Reports() {
               )}
             </div>
 
-            <div className="flex flex-col gap-4">
+            <div className="flex w-full flex-col gap-4 lg:w-auto">
               <button
                 type="button"
                 onClick={() => navigate(`/project/${projectId}`)}
-                className="inline-flex items-center justify-center gap-2 self-start rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-800 shadow-sm hover:bg-slate-50 lg:self-end"
+                className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-800 shadow-sm hover:bg-slate-50 sm:w-auto lg:self-end"
               >
                 <FolderKanban className="h-4 w-4" />
                 Project Workspace
               </button>
-              <div className="grid gap-3 sm:grid-cols-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <div className="rounded-3xl bg-slate-50 p-4 text-sm text-slate-700">
                 <p className="font-semibold text-slate-900">Generated Reports</p>
                 <p className="mt-2 text-2xl font-semibold">{reports.length}</p>
@@ -294,8 +294,8 @@ function Reports() {
           </div>
         </div>
 
-        <div className="rounded-3xl bg-white p-6 shadow-sm border border-slate-200">
-          <div className="grid gap-4 xl:grid-cols-[1.5fr_1fr_1fr_1fr]">
+        <div className="rounded-3xl bg-white p-5 shadow-sm border border-slate-200 sm:p-6">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-[1.5fr_1fr_1fr_1fr]">
             <label className="block">
               <span className="text-sm font-semibold text-slate-700">Search</span>
               <div className="mt-2 relative">
@@ -355,8 +355,8 @@ function Reports() {
           </div>
         </div>
 
-        <div className="rounded-3xl bg-white p-6 shadow-sm border border-slate-200">
-          <div className="hidden overflow-x-auto lg:block">
+        <div className="rounded-3xl bg-white p-4 shadow-sm border border-slate-200 sm:p-6">
+          <div className="hidden lg:block">
             <table className="min-w-full text-left text-sm text-slate-700">
               <thead className="border-b border-slate-200 bg-slate-50 text-slate-700">
                 <tr>
@@ -397,17 +397,17 @@ function Reports() {
             </table>
           </div>
 
-          <div className="lg:hidden space-y-4">
+          <div className="space-y-4 lg:hidden">
             {paginatedReports.map((report) => (
-              <div key={report.id} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                <div className="flex items-start justify-between gap-3 mb-3">
-                  <div>
-                    <p className="text-lg font-semibold text-slate-900">{report.dfr_number || 'N/A'}</p>
+              <div key={report.id} className="w-full rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0">
+                    <p className="break-words text-base font-semibold text-slate-900 sm:text-lg">{report.dfr_number || 'N/A'}</p>
                     <p className="text-sm text-slate-600">{report.project_name || 'Unknown project'}</p>
                   </div>
                   <StatusBadge status={report.status} />
                 </div>
-                <div className="grid grid-cols-2 gap-3 mb-4 text-sm">
+                <div className="mb-4 grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
                   <div>
                     <p className="text-xs text-slate-500">Technician</p>
                     <p className="font-medium text-slate-900">{report.data_logger || 'Unassigned'}</p>
@@ -416,7 +416,7 @@ function Reports() {
                     <p className="text-xs text-slate-500">Sample Date</p>
                     <p className="font-medium text-slate-900">{report.date_sampled || '—'}</p>
                   </div>
-                  <div className="col-span-2">
+                  <div className="sm:col-span-2">
                     <p className="text-xs text-slate-500">Updated</p>
                     <p className="font-medium text-slate-900">{formatTimestamp(report.updated_at || report.generated_pdf_updated_at || report.created_at)}</p>
                   </div>
@@ -442,11 +442,11 @@ function Reports() {
           )}
 
           {totalPages > 1 && (
-            <div className="mt-6 flex items-center justify-between border-t border-slate-200 pt-4">
+            <div className="mt-6 flex flex-col gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-sm text-slate-600">
                 Showing {((currentPage - 1) * itemsPerPage) + 1} to {Math.min(currentPage * itemsPerPage, filteredReports.length)} of {filteredReports.length} reports
               </p>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <button
                   onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
                   disabled={currentPage === 1}

@@ -30,6 +30,28 @@ function ReportsTable() {
 
       </div>
 
+      <div className="report-card-list">
+        {reports.map((report, index) => (
+          <article className="report-mobile-card" key={index}>
+            <div>
+              <p className="report-mobile-label">Report</p>
+              <h4>{report.name}</h4>
+            </div>
+            <div>
+              <p className="report-mobile-label">Project</p>
+              <p>{report.project}</p>
+            </div>
+            <span
+              className={`status ${report.status
+                .toLowerCase()
+                .replace(" ", "-")}`}
+            >
+              {report.status}
+            </span>
+          </article>
+        ))}
+      </div>
+
       <table className="custom-table">
 
         <thead>

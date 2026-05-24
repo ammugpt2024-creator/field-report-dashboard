@@ -4,6 +4,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import {
+  AlertCircle,
   Download,
   FolderKanban,
   Image,
@@ -386,6 +387,50 @@ function getRecordValidationErrors(record) {
 
     return fieldErrors;
   }, {});
+}
+
+function getMissingRequiredValueErrors({
+  projectInfo,
+  specifications,
+  records,
+  attachments,
+  includeSectionPrefix = false
+}) {
+  const validationErrors = [];
+  const sectionPrefix = (section) => (includeSectionPrefix ? `${section}: ` : '');
+
+  PROJECT_COMPLETION_FIELDS.forEach((key) => {
+    if (!hasEnteredValue(projectInfo[key])) {
+      validationErrors.push(`${sectionPrefix('Project Information')}${getFieldLabel(projectInfoFields, key)} is missing.`);
+    }
+  });
+
+  SPECIFICATION_COMPLETION_FIELDS.forEach((key) => {
+    if (!hasEnteredValue(specifications[key])) {
+      validationErrors.push(`${sectionPrefix('Concrete Specifications')}${getFieldLabel(specificationFields, key)} is missing.`);
+    }
+  });
+
+  if (records.length < workflow_validation.records.minRecords) {
+    validationErrors.push(`${sectionPrefix('Delivery Records')}At least one delivery record is required.`);
+  }
+
+  records.forEach((record, index) => {
+    DELIVERY_RECORD_COMPLETION_FIELDS.forEach((key) => {
+      if (!hasEnteredValue(record[key])) {
+        validationErrors.push(`${sectionPrefix('Delivery Records')}Record #${index + 1}: ${getFieldLabel(deliveryRecordFields, key)} is missing.`);
+      }
+    });
+  });
+
+  const hasValidAttachment =
+    !workflow_validation.attachments.required ||
+    attachments.some((attachment) => workflow_validation.attachments.requiredCategories.includes(attachment.category));
+  if (!hasValidAttachment) {
+    validationErrors.push(`${sectionPrefix('Attachments')}Attach at least one ticket upload or scanned ticket.`);
+  }
+
+  return validationErrors;
 }
 
 function getSpecificationValidationErrors(specifications) {
@@ -944,6 +989,11 @@ function ensurePdfSpace(doc, cursor, neededHeight, margins) {
   return { ...cursor, y: margins.top };
 }
 
+function startPdfPage(doc, margins) {
+  doc.addPage();
+  return { y: margins.top };
+}
+
 function drawStatusBadge(doc, label, tone, x, y, width = 70) {
   const badgeLabel = String(label).toUpperCase();
   const colors = getRecordStatusColors(tone);
@@ -1341,12 +1391,17 @@ async function renderPdfAttachmentPages(doc, attachment, accessUrl, cursor, marg
 
 async function renderImageAttachment(doc, attachment, imageUrl, cursor, margins) {
   const imageData = await urlToDataUrl(imageUrl);
-  if (!imageData) return cursor;
+  if (!imageData) return renderAttachmentFallback(doc, attachment, cursor, margins);
 
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
   const contentWidth = pageWidth - margins.left - margins.right;
-  const maxImageHeight = pageHeight - margins.top - margins.bottom - 24;
+  const fullPageImageHeight = pageHeight - margins.top - margins.bottom - 24;
+  const remainingPageImageHeight = pageHeight - cursor.y - margins.bottom - 28;
+  const maxImageHeight = Math.max(
+    120,
+    Math.min(fullPageImageHeight, remainingPageImageHeight)
+  );
   const image = await new Promise((resolve) => {
     const nextImage = new window.Image();
     nextImage.onload = () => resolve(nextImage);
@@ -1362,7 +1417,6 @@ async function renderImageAttachment(doc, attachment, imageUrl, cursor, margins)
     renderWidth = renderHeight * imageRatio;
   }
 
-  cursor = ensurePdfSpace(doc, cursor, renderHeight + 24, margins);
   setPdfText(doc, PDF_STYLE.slate, 7, 'bold');
   doc.text(pdfValue(attachment.name), margins.left, cursor.y + 8);
   addPdfImageSafely(doc, imageData, margins.left + (contentWidth - renderWidth) / 2, cursor.y + 14, renderWidth, renderHeight);
@@ -1371,19 +1425,48 @@ async function renderImageAttachment(doc, attachment, imageUrl, cursor, margins)
 
 async function renderTextAttachment(doc, attachment, accessUrl, cursor, margins) {
   const text = await getAttachmentText(attachment, accessUrl);
-  if (!text) return cursor;
+  if (!text) return renderAttachmentFallback(doc, attachment, cursor, margins);
   return renderAttachmentTextBlock(doc, attachment.name, text, cursor, margins);
+}
+
+function renderAttachmentFallback(doc, attachment, cursor, margins) {
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const contentWidth = pageWidth - margins.left - margins.right;
+  cursor = ensurePdfSpace(doc, cursor, 52, margins);
+
+  doc.setFillColor(...PDF_STYLE.lightSlate);
+  doc.setDrawColor(...PDF_STYLE.border);
+  doc.roundedRect(margins.left, cursor.y + 4, contentWidth, 42, 6, 6, 'FD');
+  setPdfText(doc, PDF_STYLE.navy, 8, 'bold');
+  doc.text(pdfValue(attachment.name || attachment.file_name || 'Attachment'), margins.left + 12, cursor.y + 20);
+  setPdfText(doc, PDF_STYLE.slate, 7, 'normal');
+  doc.text(
+    pdfValue(attachment.type || attachment.content_type || attachment.category || 'Original file attached'),
+    margins.left + 12,
+    cursor.y + 34
+  );
+
+  return { ...cursor, y: cursor.y + 54 };
 }
 
 function renderCanvasSlices(doc, title, canvas, cursor, margins) {
   const contentWidth = doc.internal.pageSize.getWidth() - margins.left - margins.right;
   const pageHeight = doc.internal.pageSize.getHeight();
-  const maxImageHeight = pageHeight - margins.top - margins.bottom - 24;
-  const sourceSliceHeight = Math.max(1, Math.floor(maxImageHeight * canvas.width / contentWidth));
   let sourceY = 0;
   let pageIndex = 1;
 
   while (sourceY < canvas.height) {
+    let availableImageHeight = pageHeight - cursor.y - margins.bottom - 28;
+    if (availableImageHeight < 120) {
+      doc.addPage();
+      cursor = { ...cursor, y: margins.top };
+      availableImageHeight = pageHeight - cursor.y - margins.bottom - 28;
+    }
+
+    const sourceSliceHeight = Math.max(
+      1,
+      Math.floor(availableImageHeight * canvas.width / contentWidth)
+    );
     const sliceHeight = Math.min(sourceSliceHeight, canvas.height - sourceY);
     const sliceCanvas = document.createElement('canvas');
     sliceCanvas.width = canvas.width;
@@ -1393,7 +1476,6 @@ function renderCanvasSlices(doc, title, canvas, cursor, margins) {
 
     const imageData = sliceCanvas.toDataURL('image/png');
     const renderHeight = contentWidth * (sliceHeight / canvas.width);
-    cursor = ensurePdfSpace(doc, cursor, renderHeight + 24, margins);
     setPdfText(doc, PDF_STYLE.slate, 7, 'bold');
     doc.text(`${pdfValue(title)}${canvas.height > sourceSliceHeight ? ` · Page ${pageIndex}` : ''}`, margins.left, cursor.y + 8);
     addPdfImageSafely(doc, imageData, margins.left, cursor.y + 14, contentWidth, renderHeight);
@@ -1462,7 +1544,7 @@ function renderAttachmentTextBlock(doc, title, text, cursor, margins) {
 
 async function renderDocxAttachment(doc, attachment, accessUrl, cursor, margins) {
   const arrayBuffer = await getAttachmentArrayBuffer(attachment, accessUrl);
-  if (!arrayBuffer) return cursor;
+  if (!arrayBuffer) return renderAttachmentFallback(doc, attachment, cursor, margins);
   const mammoth = await import('mammoth/mammoth.browser');
   const result = await mammoth.convertToHtml({ arrayBuffer });
   return renderHtmlAttachment(doc, attachment.name, result.value, cursor, margins);
@@ -1471,6 +1553,8 @@ async function renderDocxAttachment(doc, attachment, accessUrl, cursor, margins)
 async function renderAttachments(doc, context, cursor, margins) {
   const inlineAttachments = context.attachments.filter((attachment) => !isPdfAttachment(attachment));
   if (!inlineAttachments.length) return cursor;
+
+  cursor = startPdfPage(doc, margins);
   cursor = drawSectionTitle(doc, 'Attachments', cursor, margins);
 
   for (const attachment of inlineAttachments) {
@@ -1483,23 +1567,17 @@ async function renderAttachments(doc, context, cursor, margins) {
       if (isPdfAttachment(attachment)) {
         cursor = await renderPdfAttachmentPages(doc, attachment, freshAccessUrl || attachment.previewUrl || attachment.url, cursor, margins);
       } else if (attachment.type?.startsWith('image/')) {
-        cursor = await renderImageAttachment(doc, attachment, imageUrl, cursor, margins);
+        cursor = await renderImageAttachment(doc, attachment, imageUrl, { ...cursor, y: cursor.y - 8 }, margins);
       } else if (isDocxAttachment(attachment)) {
-        cursor = await renderDocxAttachment(doc, attachment, freshAccessUrl || attachment.previewUrl || attachment.url, cursor, margins);
+        cursor = await renderDocxAttachment(doc, attachment, freshAccessUrl || attachment.previewUrl || attachment.url, { ...cursor, y: cursor.y - 8 }, margins);
       } else if (isTextAttachment(attachment)) {
-        cursor = await renderTextAttachment(doc, attachment, freshAccessUrl || attachment.previewUrl || attachment.url, cursor, margins);
+        cursor = await renderTextAttachment(doc, attachment, freshAccessUrl || attachment.previewUrl || attachment.url, { ...cursor, y: cursor.y - 8 }, margins);
       } else {
-        cursor = ensurePdfSpace(doc, cursor, 34, margins);
-        setPdfText(doc, PDF_STYLE.slate, 8, 'bold');
-        doc.text(`${pdfValue(attachment.name)} could not be rendered inline.`, margins.left, cursor.y + 14);
-        cursor = { ...cursor, y: cursor.y + 24 };
+        cursor = renderAttachmentFallback(doc, attachment, cursor, margins);
       }
     } catch (error) {
       console.warn('Attachment could not be embedded in PDF', attachment.name, error);
-      cursor = ensurePdfSpace(doc, cursor, 34, margins);
-      setPdfText(doc, PDF_STYLE.slate, 8, 'bold');
-      doc.text(`${pdfValue(attachment.name)} could not be rendered inline.`, margins.left, cursor.y + 14);
-      cursor = { ...cursor, y: cursor.y + 24 };
+      cursor = renderAttachmentFallback(doc, attachment, cursor, margins);
     }
   }
 
@@ -1537,6 +1615,177 @@ async function mergePdfAttachments(basePdfBlob, attachments) {
 
   const mergedBytes = await mergedDocument.save();
   return new Blob([mergedBytes], { type: 'application/pdf' });
+}
+
+async function imageSourceToBytes(source) {
+  const dataUrl = source?.startsWith?.('data:image/') ? source : await urlToDataUrl(source);
+  if (!dataUrl) return null;
+  const cleanedDataUrl = await removeGeneratedSignatureCaption(dataUrl);
+  const response = await fetch(cleanedDataUrl);
+  if (!response.ok) return null;
+  return new Uint8Array(await response.arrayBuffer());
+}
+
+async function removeGeneratedSignatureCaption(dataUrl) {
+  if (!dataUrl?.startsWith?.('data:image/')) return dataUrl;
+
+  try {
+    const image = await new Promise((resolve) => {
+      const nextImage = new window.Image();
+      nextImage.onload = () => resolve(nextImage);
+      nextImage.onerror = () => resolve(null);
+      nextImage.src = dataUrl;
+    });
+    if (!image?.width || !image?.height) return dataUrl;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = image.width;
+    canvas.height = image.height;
+    const context = canvas.getContext('2d');
+    context.drawImage(image, 0, 0);
+
+    const sampleY = Math.floor(image.height * 0.69);
+    const band = context.getImageData(0, Math.max(0, sampleY - 4), image.width, 9).data;
+    let nonWhitePixels = 0;
+    for (let index = 0; index < band.length; index += 4) {
+      const red = band[index];
+      const green = band[index + 1];
+      const blue = band[index + 2];
+      if (red < 252 || green < 252 || blue < 252) nonWhitePixels += 1;
+    }
+
+    const hasGeneratedBaseline = nonWhitePixels > image.width * 0.08;
+    if (!hasGeneratedBaseline) return dataUrl;
+
+    const croppedHeight = Math.floor(image.height * 0.64);
+    const cleanedCanvas = document.createElement('canvas');
+    cleanedCanvas.width = image.width;
+    cleanedCanvas.height = croppedHeight;
+    const cleanedContext = cleanedCanvas.getContext('2d');
+    cleanedContext.fillStyle = '#ffffff';
+    cleanedContext.fillRect(0, 0, cleanedCanvas.width, cleanedCanvas.height);
+    cleanedContext.drawImage(canvas, 0, 0, image.width, croppedHeight, 0, 0, image.width, croppedHeight);
+    return cleanedCanvas.toDataURL('image/png');
+  } catch {
+    return dataUrl;
+  }
+}
+
+async function embedPdfImage(pdfDocument, source) {
+  const bytes = await imageSourceToBytes(source);
+  if (!bytes) return null;
+
+  try {
+    return await pdfDocument.embedPng(bytes);
+  } catch {
+    try {
+      return await pdfDocument.embedJpg(bytes);
+    } catch {
+      return null;
+    }
+  }
+}
+
+async function appendSignaturePage(pdfBlob, context) {
+  const { PDFDocument, StandardFonts, rgb } = await import('pdf-lib');
+  const pdfDocument = await PDFDocument.load(await pdfBlob.arrayBuffer());
+  const page = pdfDocument.addPage([612, 792]);
+  const font = await pdfDocument.embedFont(StandardFonts.Helvetica);
+  const boldFont = await pdfDocument.embedFont(StandardFonts.HelveticaBold);
+  const technicianSignature = await embedPdfImage(pdfDocument, context.technicianSignatureUrl);
+  const qcSignature = await embedPdfImage(pdfDocument, context.qcSignatureUrl);
+
+  const marginLeft = 40;
+  const pageWidth = page.getWidth();
+  const contentWidth = pageWidth - marginLeft * 2;
+  const sectionY = 690;
+  const columnGap = 10;
+  const columnWidth = (contentWidth - columnGap * 2) / 3;
+
+  page.drawRectangle({
+    x: marginLeft,
+    y: sectionY,
+    width: contentWidth,
+    height: 24,
+    color: rgb(0.06, 0.09, 0.16)
+  });
+  page.drawText('SIGNATURES', {
+    x: marginLeft + 12,
+    y: sectionY + 8,
+    size: 10,
+    font: boldFont,
+    color: rgb(1, 1, 1)
+  });
+
+  const fields = [
+    {
+      label: 'TECHNICIAN SIGNATURE',
+      name: context.technicianName || '-',
+      image: technicianSignature
+    },
+    {
+      label: 'QA REVIEWER SIGNATURE',
+      name: context.approvalBy || 'QA Reviewer',
+      image: qcSignature
+    },
+    {
+      label: 'DATE APPROVED',
+      name: context.approvedAt || '-',
+      image: null
+    }
+  ];
+
+  fields.forEach((field, index) => {
+    const x = marginLeft + index * (columnWidth + columnGap);
+    const lineY = sectionY - 68;
+    page.drawLine({
+      start: { x, y: lineY },
+      end: { x: x + columnWidth, y: lineY },
+      thickness: 0.6,
+      color: rgb(0.80, 0.84, 0.90)
+    });
+
+    if (field.image) {
+      const dims = field.image.scale(1);
+      const maxWidth = columnWidth - 14;
+      const maxHeight = 42;
+      const scale = Math.min(maxWidth / dims.width, maxHeight / dims.height);
+      page.drawImage(field.image, {
+        x: x + 7,
+        y: lineY + 8,
+        width: dims.width * scale,
+        height: dims.height * scale
+      });
+    } else if (field.label === 'DATE APPROVED') {
+      page.drawText(field.name, {
+        x: x + 7,
+        y: lineY + 22,
+        size: 9,
+        font,
+        color: rgb(0.06, 0.09, 0.16)
+      });
+    }
+
+    page.drawText(field.label, {
+      x,
+      y: lineY - 18,
+      size: 8,
+      font: boldFont,
+      color: rgb(0.28, 0.33, 0.41)
+    });
+    if (field.label !== 'DATE APPROVED') {
+      page.drawText(field.name, {
+        x,
+        y: lineY - 34,
+        size: 9,
+        font,
+        color: rgb(0.06, 0.09, 0.16)
+      });
+    }
+  });
+
+  const finalBytes = await pdfDocument.save();
+  return new Blob([finalBytes], { type: 'application/pdf' });
 }
 
 async function renderSignatures(doc, cursor, margins, context) {
@@ -1730,6 +1979,7 @@ function ConcreteTestLog() {
   const stepIds = useMemo(() => workflowSections.map((step) => step.id), []);
   const activeStepId = stepIds[activeStepIndex] || 'project';
   const lastAutosaveRef = useRef('');
+  const errorsRef = useRef(null);
   const reportIdRef = useRef(reportId);
   const createDraftPromiseRef = useRef(null);
   const deliveryRecordRowIdsRef = useRef({});
@@ -1827,6 +2077,26 @@ function ConcreteTestLog() {
 
   const completedSteps = workflowSections.filter((step) => step.id !== 'pdf' && stepCompletion[step.id]);
   const pendingSteps = workflowSections.filter((step) => step.id !== 'pdf' && !stepCompletion[step.id]);
+  const reviewUnlockErrors = activeStepId === 'attachments' && !stepState.summary?.unlocked
+    ? getReviewUnlockErrors()
+    : [];
+
+  useEffect(() => {
+    if (errors.length === 0) return;
+    window.setTimeout(() => {
+      errorsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 50);
+  }, [errors]);
+
+  function getReviewUnlockErrors() {
+    return getMissingRequiredValueErrors({
+      projectInfo,
+      specifications: getValues(),
+      records: deliveryRecords,
+      attachments,
+      includeSectionPrefix: true
+    });
+  }
   const reviewStepComplete = activeStepId === 'summary' && workflowComplete;
   const canSubmit = reviewStepComplete && !saving && !isLocked;
   const canGeneratePdf = !saving && (!isLocked || status === REPORT_STATUS.APPROVED || status === REPORT_STATUS.FINALIZED);
@@ -2145,7 +2415,8 @@ function ConcreteTestLog() {
     const nextIndex = stepIds.indexOf(stepId);
     if (nextIndex < 0 || nextIndex === activeStepIndex) return;
     if (!stepState[stepId]?.unlocked) {
-      setErrors(['Complete Project Information, Concrete Specifications, and Delivery Records before reviewing the report.']);
+      const unlockErrors = getReviewUnlockErrors();
+      setErrors(unlockErrors.length ? unlockErrors : ['Complete the missing workflow fields before opening Review & Submit.']);
       return;
     }
 
@@ -2174,7 +2445,8 @@ function ConcreteTestLog() {
     if (!isValid) return;
     const nextStepId = stepIds[activeStepIndex + 1];
     if (nextStepId && !stepState[nextStepId]?.unlocked) {
-      setErrors(['Complete Project Information, Concrete Specifications, and Delivery Records before reviewing the report.']);
+      const unlockErrors = getReviewUnlockErrors();
+      setErrors(unlockErrors.length ? unlockErrors : ['Complete the missing workflow fields before opening Review & Submit.']);
       return;
     }
 
@@ -2310,31 +2582,12 @@ function ConcreteTestLog() {
   }
 
   function validateReport() {
-    const validationErrors = [];
-
-    workflow_validation.project.required.forEach((key) => {
-      if (!projectInfo[key]) validationErrors.push(`${getFieldLabel(projectInfoFields, key)} is required.`);
+    return getMissingRequiredValueErrors({
+      projectInfo,
+      specifications: getValues(),
+      records: deliveryRecords,
+      attachments
     });
-
-    validationErrors.push(...getSpecificationValidationErrors(getValues()));
-
-    if (deliveryRecords.length < workflow_validation.records.minRecords) {
-      validationErrors.push('At least one delivery record is required.');
-    }
-    deliveryRecords.forEach((record, index) => {
-      Object.values(getRecordValidationErrors(record)).forEach((message) => {
-        validationErrors.push(`Record #${index + 1}: ${message}`);
-      });
-    });
-
-    const hasValidAttachment =
-      !workflow_validation.attachments.required ||
-      attachments.some((attachment) => workflow_validation.attachments.requiredCategories.includes(attachment.category));
-    if (!hasValidAttachment) {
-      validationErrors.push('Attach at least one ticket upload or scanned ticket before submitting.');
-    }
-
-    return validationErrors;
   }
 
   const buildLogPayload = useCallback((nextStatus = REPORT_STATUS.DRAFT, nextRevision = revisionNo) => ({
@@ -2607,7 +2860,8 @@ function ConcreteTestLog() {
 
   async function submitReport() {
     if (!canSubmit) {
-      setErrors(['Complete all required workflow sections before submitting.']);
+      const unlockErrors = getReviewUnlockErrors();
+      setErrors(unlockErrors.length ? unlockErrors : ['Complete all required workflow sections before submitting.']);
       return;
     }
     setShowSubmitConfirmation(true);
@@ -2716,7 +2970,8 @@ function ConcreteTestLog() {
   }
 
   async function uploadTechnicianSignature(logId) {
-    const signatureBlob = dataUrlToBlob(technicianSignature);
+    const cleanedSignature = await removeGeneratedSignatureCaption(technicianSignature);
+    const signatureBlob = dataUrlToBlob(cleanedSignature);
     const projectFolder = getProjectStorageFolder(projectInfo, projectId);
     const technicianName = toSafeStorageName(projectInfo.technician_name);
     const dfrNumber = toSafeStorageName(getValues('dfr_number'));
@@ -2787,15 +3042,17 @@ function ConcreteTestLog() {
       cursor = renderProjectInfo(doc, pdfContext, cursor, margins);
       cursor = renderSpecifications(doc, pdfContext, cursor, margins);
       cursor = renderDeliveryRecords(doc, pdfContext, cursor, margins);
-      cursor = await renderAttachments(doc, pdfContext, cursor, margins);
       if (isFinalApproved || normalizedTargetStatus === REPORT_STATUS.SUBMITTED_FOR_QC || normalizedTargetStatus === REPORT_STATUS.UNDER_REVIEW || normalizedTargetStatus === REPORT_STATUS.RESUBMITTED) {
         cursor = renderSummary(doc, pdfContext, cursor, margins);
-        await renderSignatures(doc, cursor, margins, pdfContext);
         if (isFinalApproved) drawApprovalSeal(doc);
       }
+      cursor = await renderAttachments(doc, pdfContext, cursor, margins);
       renderFooter(doc, pdfContext, margins);
 
-    const pdfBlob = await mergePdfAttachments(doc.output('blob'), attachments);
+      let pdfBlob = await mergePdfAttachments(doc.output('blob'), attachments);
+    if (isFinalApproved || normalizedTargetStatus === REPORT_STATUS.SUBMITTED_FOR_QC || normalizedTargetStatus === REPORT_STATUS.UNDER_REVIEW || normalizedTargetStatus === REPORT_STATUS.RESUBMITTED) {
+      pdfBlob = await appendSignaturePage(pdfBlob, pdfContext);
+    }
     const pdfFileName = `${pdfContext.dfrNumber || 'concrete-test-log'}.pdf`;
     return { pdfBlob, pdfFileName };
   }
@@ -2888,20 +3145,20 @@ function ConcreteTestLog() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-100">
+    <div className="min-h-screen w-full max-w-full overflow-x-hidden bg-slate-100">
       <div className="sticky top-0 z-20 border-b border-slate-200 bg-white/95 backdrop-blur-sm">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-3 sm:px-6">
-          <div>
+        <div className="mx-auto flex w-full max-w-6xl flex-col gap-3 px-4 py-3 sm:px-6 lg:flex-row lg:items-center lg:justify-between">
+          <div className="min-w-0">
             <p className="text-[11px] uppercase tracking-[0.3em] text-slate-500">Concrete QA/QC Inspection</p>
-            <h1 className="mt-2 text-xl font-semibold text-slate-950 sm:text-2xl">
+            <h1 className="mt-2 break-words text-xl font-semibold text-slate-950 sm:text-2xl">
               {projectInfo.project_name || 'Concrete Test Log'}
             </h1>
           </div>
-          <div className="flex flex-wrap items-center gap-3 text-sm text-slate-600">
+          <div className="flex flex-wrap items-center gap-2 text-sm text-slate-600 sm:gap-3">
             <button
               type="button"
               onClick={() => navigate(`/project/${projectId}`)}
-              className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-800 shadow-sm hover:bg-slate-50"
+              className="inline-flex min-h-11 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-800 shadow-sm hover:bg-slate-50"
             >
               <FolderKanban className="h-4 w-4" />
               Project Workspace
@@ -2913,7 +3170,7 @@ function ConcreteTestLog() {
         </div>
       </div>
 
-      <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6">
+      <div className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6">
         {projectInfo.rejection_reason && (status === REPORT_STATUS.REVISION_REQUIRED || status === REPORT_STATUS.REJECTED) && (
           <div className="mb-6 rounded-3xl border border-rose-200 bg-rose-50 p-6 shadow-sm">
             <div className="flex items-start gap-3">
@@ -2928,7 +3185,7 @@ function ConcreteTestLog() {
         )}
 
         {errors.length > 0 && (
-          <div className="rounded-3xl bg-red-50 px-4 py-4 text-sm font-semibold text-red-800">
+          <div ref={errorsRef} role="alert" className="mb-5 rounded-3xl border border-red-200 bg-red-50 px-4 py-4 text-sm font-semibold text-red-800 shadow-sm">
             {errors.map((error) => (
               <p key={error}>{error}</p>
             ))}
@@ -2936,8 +3193,8 @@ function ConcreteTestLog() {
         )}
 
         <div className="space-y-5">
-          <div className="sticky top-[76px] z-20 mb-4 overflow-x-auto rounded-full bg-white/95 px-3 py-3 shadow-sm shadow-slate-200/10 ring-1 ring-slate-200/70">
-            <div className="flex min-w-max gap-2">
+          <div className="sticky top-[76px] z-20 mb-4 rounded-3xl bg-white/95 px-3 py-3 shadow-sm shadow-slate-200/10 ring-1 ring-slate-200/70">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:flex lg:flex-wrap">
               {workflowSections.map((step, index) => {
                 const { status, unlocked } = stepState[step.id] || { status: 'locked', unlocked: false };
                 const isActive = status === 'active';
@@ -2947,21 +3204,21 @@ function ConcreteTestLog() {
                     key={step.id}
                     type="button"
                     onClick={() => goToStep(step.id)}
-                    disabled={!unlocked}
-                    className={`inline-flex min-w-[120px] items-center justify-center gap-2 whitespace-nowrap rounded-full px-4 py-2 text-sm font-semibold transition ${
+                    aria-disabled={!unlocked}
+                    className={`inline-flex min-h-11 min-w-0 items-center justify-center gap-2 rounded-full px-3 py-2 text-xs font-semibold transition sm:text-sm lg:px-4 ${
                       isActive
                         ? 'bg-blue-600 text-white shadow-sm shadow-blue-200/40'
-                        : isComplete
+                      : isComplete
                         ? 'bg-emerald-600 text-white'
-                        : !unlocked
-                        ? 'cursor-not-allowed bg-slate-100 text-slate-400 opacity-70'
+                      : !unlocked
+                        ? 'cursor-pointer bg-slate-100 text-slate-400 opacity-70'
                         : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                     }`}
                   >
                     <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-white text-[11px] font-bold text-slate-900">
                       {isComplete ? '✓' : index + 1}
                     </span>
-                    <span>{step.shortLabel || step.label}</span>
+                    <span className="truncate">{step.shortLabel || step.label}</span>
                   </button>
                 );
               })}
@@ -3011,7 +3268,7 @@ function ConcreteTestLog() {
                   type="button"
                   onClick={goToNextStep}
                   disabled={saving}
-                  className="rounded-2xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:bg-slate-300 disabled:text-slate-500 disabled:cursor-not-allowed disabled:opacity-70"
+                  className="min-h-11 rounded-2xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:bg-slate-300 disabled:text-slate-500 disabled:cursor-not-allowed disabled:opacity-70"
                 >
                   Next: Specifications
                 </button>
@@ -3224,16 +3481,16 @@ function ConcreteTestLog() {
                   <span>{attachments.filter((attachment) => attachment.uploaded).length} uploaded</span>
                 </div>
               </div>
-              <div className="flex flex-wrap gap-2">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:flex lg:flex-wrap">
                 {attachmentTypes.map((type) =>
                   type.key === 'scan-ticket' ? (
-                    <label key={type.key} className="inline-flex cursor-pointer items-center gap-2 rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">
+                    <label key={type.key} className="inline-flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">
                       {scanLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ScanLine className="h-4 w-4" />}
                       {type.label}
                       <input type="file" className="hidden" accept="image/*,.pdf" onChange={handleScanTicket} disabled={isLocked || scanLoading} />
                     </label>
                   ) : (
-                    <label key={type.key} className="inline-flex cursor-pointer items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50">
+                    <label key={type.key} className="inline-flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50">
                       <UploadCloud className="h-4 w-4" />
                       {type.label}
                       <input type="file" multiple className="hidden" onChange={(event) => handleAttachmentFiles(event.target.files, type.key)} disabled={isLocked} />
@@ -3321,11 +3578,27 @@ function ConcreteTestLog() {
                 </div>
               )}
 
-              <div className="mt-6 flex justify-between">
+              {reviewUnlockErrors.length > 0 && (
+                <div role="alert" className="mt-5 rounded-3xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 shadow-sm">
+                  <div className="flex items-start gap-3">
+                    <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-amber-700" />
+                    <div>
+                      <p className="font-bold">Review is not ready yet</p>
+                      <ul className="mt-2 space-y-1 font-semibold">
+                        {reviewUnlockErrors.map((message) => (
+                          <li key={message}>• {message}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-between">
                 <button
                   type="button"
                   onClick={goToPreviousStep}
-                  className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-900 hover:bg-slate-50"
+                  className="min-h-11 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-900 hover:bg-slate-50"
                 >
                   Previous
                 </button>
@@ -3333,7 +3606,7 @@ function ConcreteTestLog() {
                   type="button"
                   onClick={goToNextStep}
                   disabled={saving}
-                  className="rounded-2xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:bg-slate-300 disabled:text-slate-500 disabled:cursor-not-allowed disabled:opacity-70"
+                  className="min-h-11 rounded-2xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:bg-slate-300 disabled:text-slate-500 disabled:cursor-not-allowed disabled:opacity-70"
                 >
                   Next: Review & Submit
                 </button>
@@ -3434,7 +3707,8 @@ function ConcreteTestLog() {
                   </span>
                 </div>
                 {deliveryReviewRows.length > 0 ? (
-                  <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white">
+                  <>
+                  <div className="hidden rounded-2xl border border-slate-200 bg-white lg:block">
                     <table className="min-w-[1320px] w-full border-collapse text-left text-[11px] text-slate-800">
                       <thead className="bg-slate-950 text-white">
                         <tr>
@@ -3464,6 +3738,37 @@ function ConcreteTestLog() {
                       </tbody>
                     </table>
                   </div>
+                  <div className="space-y-3 lg:hidden">
+                    {deliveryReviewRows.map((row) => (
+                      <div key={row.id} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                        <div className="mb-3 flex items-start justify-between gap-3">
+                          <div>
+                            <p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-500">Test #{row.values.test_number}</p>
+                            <p className="mt-1 text-sm font-semibold text-slate-950">Ticket {row.values.ticket_number} · Truck {row.values.truck_number}</p>
+                          </div>
+                          <span className={`inline-flex rounded-full border px-2 py-1 text-[10px] font-bold uppercase tracking-[0.12em] ${badgeClass(row.status.tone)}`}>
+                            {row.values.status}
+                          </span>
+                        </div>
+                        <dl className="grid grid-cols-2 gap-3 text-sm">
+                          {[
+                            ['CY', row.values.cubic_yards],
+                            ['Batch', row.values.time_batched],
+                            ['Finish', row.values.finish_unload],
+                            ['Minutes', row.values.actual_minutes],
+                            ['Slump', row.values.slump_in],
+                            ['Air %', row.values.air_content_percent]
+                          ].map(([label, value]) => (
+                            <div key={label} className="rounded-xl bg-slate-50 px-3 py-2">
+                              <dt className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">{label}</dt>
+                              <dd className="mt-1 break-words font-semibold text-slate-900">{value || '—'}</dd>
+                            </div>
+                          ))}
+                        </dl>
+                      </div>
+                    ))}
+                  </div>
+                  </>
                 ) : (
                   <div className="rounded-2xl bg-white px-4 py-6 text-sm font-semibold text-slate-500">
                     No delivery records entered.

@@ -1,12 +1,15 @@
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useState } from "react";
+import { FolderKanban, Home, LogOut, Menu, ShieldCheck, X } from "lucide-react";
 import { supabase } from "../services/supabase";
 import { useAuth } from "../context/AuthContext";
 
 function Navbar() {
 
   const navigate = useNavigate();
+  const location = useLocation();
   const [profileOpen, setProfileOpen] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const {
     session,
@@ -25,6 +28,18 @@ function Navbar() {
     .slice(0, 2)
     .map((part) => part[0]?.toUpperCase())
     .join("") || "U";
+  const projectId = location.pathname.match(/\/project\/([^/]+)/)?.[1];
+  const mobileLinks = [
+    { label: "Project Home", icon: Home, path: projectId ? `/project/${projectId}` : "/" },
+    ...(projectId ? [{ label: "Report Dashboard", icon: FolderKanban, path: `/project/${projectId}/field-reports/concrete-test-log` }] : []),
+    ...(projectId ? [{ label: "QC Review Queue", icon: ShieldCheck, path: `/project/${projectId}/qc-review-dashboard` }] : [])
+  ];
+
+  function handleNavigate(path) {
+    navigate(path);
+    setMobileMenuOpen(false);
+    setProfileOpen(false);
+  }
 
   async function handleLogout() {
 
@@ -61,9 +76,14 @@ function Navbar() {
 
   return (
 
-    <div className="
-      px-6
-      py-4
+    <header className="
+      w-full
+      max-w-full
+      overflow-x-hidden
+      px-4
+      py-3
+      sm:px-6
+      sm:py-4
       bg-white
       border-b
       border-slate-200
@@ -78,14 +98,15 @@ function Navbar() {
 
       {/* LEFT SECTION */}
 
-      <div className="flex items-center gap-4">
+      <div className="flex min-w-0 items-center gap-3 sm:gap-4">
 
         {/* COMPANY / APP */}
 
-        <div>
+        <div className="min-w-0">
 
           <h2 className="
-            text-2xl
+            text-xl
+            sm:text-2xl
             font-bold
             text-slate-900
             leading-none
@@ -94,21 +115,25 @@ function Navbar() {
           </h2>
 
           <p className="
+            hidden
             text-xs
             text-slate-500
             tracking-wide
             uppercase
             mt-1
+            sm:block
           ">
             Quality Control Management Platform
           </p>
 
           {companyName && (
             <p className="
+              hidden
               text-sm
               text-slate-600
               mt-1
               font-medium
+              sm:block
             ">
               {companyName}
             </p>
@@ -119,12 +144,14 @@ function Navbar() {
         {/* ROLE BADGE */}
 
         <div className="
+          hidden
           rounded-2xl
           bg-slate-100
           px-4
           py-2
           border
           border-slate-200
+          md:block
         ">
 
           <p className="
@@ -151,7 +178,16 @@ function Navbar() {
 
       {/* RIGHT SECTION */}
 
-      <div className="relative flex items-center gap-3">
+      <div className="relative flex shrink-0 items-center gap-2 sm:gap-3">
+
+        <button
+          type="button"
+          onClick={() => setMobileMenuOpen(true)}
+          className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-900 shadow-sm md:hidden"
+          aria-label="Open navigation menu"
+        >
+          <Menu className="h-5 w-5" />
+        </button>
 
         <button
           type="button"
@@ -159,12 +195,14 @@ function Navbar() {
           className="
             inline-flex
             items-center
-            gap-3
+            gap-2
+            sm:gap-3
             rounded-2xl
             border
             border-slate-200
             bg-white
-            px-3
+            px-2
+            sm:px-3
             py-2
             text-left
             transition
@@ -173,8 +211,8 @@ function Navbar() {
         >
           <span className="
             flex
-            h-9
-            w-9
+            h-10
+            w-10
             items-center
             justify-center
             rounded-full
@@ -185,7 +223,7 @@ function Navbar() {
           ">
             {initials}
           </span>
-          <span className="block">
+          <span className="hidden sm:block">
             <span className="block text-sm font-semibold text-slate-900">
               {displayName}
             </span>
@@ -198,10 +236,11 @@ function Navbar() {
         {profileOpen && (
           <div className="
             absolute
-            right-24
+            right-0
             top-14
             z-50
-            w-80
+            w-[calc(100vw-2rem)]
+            max-w-80
             rounded-3xl
             border
             border-slate-200
@@ -236,6 +275,7 @@ function Navbar() {
         <button
           onClick={handleLogout}
           className="
+            hidden
             rounded-2xl
             bg-slate-900
             px-5
@@ -246,6 +286,7 @@ function Navbar() {
             transition
             hover:bg-slate-800
             active:scale-95
+            sm:inline-flex
           "
         >
           Logout
@@ -253,7 +294,59 @@ function Navbar() {
 
       </div>
 
-    </div>
+      {mobileMenuOpen && (
+        <div className="fixed inset-0 z-50 md:hidden">
+          <button
+            type="button"
+            className="absolute inset-0 bg-slate-950/50"
+            onClick={() => setMobileMenuOpen(false)}
+            aria-label="Close navigation overlay"
+          />
+          <aside className="absolute right-0 top-0 flex h-full w-[min(88vw,360px)] max-w-full flex-col bg-white p-5 shadow-2xl">
+            <div className="flex items-start justify-between gap-4 border-b border-slate-100 pb-4">
+              <div className="min-w-0">
+                <p className="text-xl font-bold text-slate-950">QCore</p>
+                <p className="mt-1 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{roleLabel || "Field User"}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setMobileMenuOpen(false)}
+                className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-100 text-slate-900"
+                aria-label="Close navigation menu"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <nav className="mt-5 space-y-2">
+              {mobileLinks.map(({ label, icon: Icon, path }) => (
+                <button
+                  key={path}
+                  type="button"
+                  onClick={() => handleNavigate(path)}
+                  className="flex min-h-[48px] w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-bold text-slate-800 hover:bg-slate-100"
+                >
+                  <Icon className="h-5 w-5 text-slate-500" />
+                  {label}
+                </button>
+              ))}
+            </nav>
+
+            <div className="mt-auto border-t border-slate-100 pt-4">
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="flex min-h-[48px] w-full items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 py-3 text-sm font-bold text-white"
+              >
+                <LogOut className="h-5 w-5" />
+                Logout
+              </button>
+            </div>
+          </aside>
+        </div>
+      )}
+
+    </header>
 
   );
 }

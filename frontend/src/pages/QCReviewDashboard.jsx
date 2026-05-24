@@ -139,31 +139,31 @@ function QCReviewDashboard() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-100 p-6">
-      <div className="mx-auto max-w-7xl space-y-6">
-        <div className="rounded-3xl bg-white p-8 shadow-sm">
+    <div className="min-h-screen w-full max-w-full overflow-x-hidden bg-slate-100 px-4 py-5 sm:px-6">
+      <div className="mx-auto w-full max-w-7xl space-y-5 sm:space-y-6">
+        <div className="rounded-3xl bg-white p-5 shadow-sm sm:p-8">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <div>
+            <div className="min-w-0">
               <button
                 onClick={() => navigate(-1)}
                 className="mb-4 inline-flex items-center gap-2 text-sm font-semibold text-slate-600 hover:text-slate-900"
               >
                 <ChevronLeft className="w-5 h-5" /> Back
               </button>
-              <h1 className="text-3xl font-semibold text-slate-950">QC Review Dashboard</h1>
+              <h1 className="text-2xl font-semibold text-slate-950 sm:text-3xl">QC Review Dashboard</h1>
               <p className="mt-2 text-sm text-slate-600">
                 Review concrete log submissions, approve reports, and manage revisions.
               </p>
             </div>
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm text-slate-700">
+            <div className="flex w-full flex-wrap items-center gap-3 lg:w-auto">
+              <div className="inline-flex min-h-11 w-full items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm text-slate-700 lg:w-auto">
                 <Search className="h-4 w-4" />
                 <input
                   type="search"
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
                   placeholder="Search DFR, project, status"
-                  className="w-64 bg-transparent text-sm outline-none"
+                  className="w-full bg-transparent text-sm outline-none lg:w-64"
                 />
               </div>
             </div>
@@ -176,7 +176,7 @@ function QCReviewDashboard() {
           </div>
         )}
 
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
           {[
             ['pending', 'Pending Review', pendingCount, 'bg-amber-50 text-amber-900'],
             ['under_review', 'Under Review', underReviewCount, 'bg-sky-50 text-sky-900'],
@@ -198,12 +198,12 @@ function QCReviewDashboard() {
           ))}
         </div>
 
-        <div className="rounded-3xl bg-white p-6 shadow-sm">
+        <div className="rounded-3xl bg-white p-4 shadow-sm sm:p-6">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex flex-wrap gap-2">
+            <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-2 lg:flex lg:w-auto lg:flex-wrap">
               <button
                 onClick={() => setActiveTab('pending')}
-                className={`inline-flex items-center gap-2 rounded-2xl px-4 py-2 text-sm font-semibold transition ${
+                className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl px-4 py-2 text-sm font-semibold transition lg:justify-start ${
                   activeTab === 'pending'
                     ? 'bg-amber-100 text-amber-800'
                     : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
@@ -217,7 +217,7 @@ function QCReviewDashboard() {
               </button>
               <button
                 onClick={() => setActiveTab('under_review')}
-                className={`inline-flex items-center gap-2 rounded-2xl px-4 py-2 text-sm font-semibold transition ${
+                className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl px-4 py-2 text-sm font-semibold transition lg:justify-start ${
                   activeTab === 'under_review'
                     ? 'bg-sky-100 text-sky-800'
                     : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
@@ -231,7 +231,7 @@ function QCReviewDashboard() {
               </button>
               <button
                 onClick={() => setActiveTab('approved')}
-                className={`inline-flex items-center gap-2 rounded-2xl px-4 py-2 text-sm font-semibold transition ${
+                className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl px-4 py-2 text-sm font-semibold transition lg:justify-start ${
                   activeTab === 'approved'
                     ? 'bg-emerald-100 text-emerald-800'
                     : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
@@ -245,7 +245,7 @@ function QCReviewDashboard() {
               </button>
               <button
                 onClick={() => setActiveTab('rejected')}
-                className={`inline-flex items-center gap-2 rounded-2xl px-4 py-2 text-sm font-semibold transition ${
+                className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl px-4 py-2 text-sm font-semibold transition lg:justify-start ${
                   activeTab === 'rejected'
                     ? 'bg-rose-100 text-rose-800'
                     : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
@@ -263,7 +263,7 @@ function QCReviewDashboard() {
             </span>
           </div>
 
-          <div className="mt-6 hidden overflow-x-auto lg:block">
+          <div className="mt-6 hidden lg:block">
             <table className="min-w-full table-auto text-sm text-left">
               <thead className="bg-slate-50 text-slate-700">
                 <tr>
@@ -319,15 +319,15 @@ function QCReviewDashboard() {
               <p className="p-8 text-center text-slate-500 font-medium">Loading QC queue...</p>
             ) : filteredTabReports.length > 0 ? (
               filteredTabReports.map((report) => (
-                <div key={report.id} className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                  <div className="flex items-start justify-between gap-3 mb-4">
-                    <div>
-                      <p className="text-lg font-bold text-slate-900">{report.dfr_number || 'No DFR #'}</p>
+                <div key={report.id} className="w-full rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                  <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="min-w-0">
+                      <p className="break-words text-base font-bold text-slate-900 sm:text-lg">{report.dfr_number || 'No DFR #'}</p>
                       <p className="text-sm text-slate-500 font-medium">{report.project_name || 'No Project Name'}</p>
                     </div>
                     <StatusBadge status={report.status} />
                   </div>
-                  <div className="grid grid-cols-2 gap-4 mb-5 text-sm border-y border-slate-50 py-4">
+                  <div className="mb-5 grid grid-cols-1 gap-4 border-y border-slate-50 py-4 text-sm sm:grid-cols-2">
                     <div>
                       <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Sample Date</p>
                       <p className="mt-1 font-semibold text-slate-700">{report.date_sampled || '—'}</p>

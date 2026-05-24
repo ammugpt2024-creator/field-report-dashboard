@@ -43,22 +43,68 @@ function addPdfImageSafely(doc, imageData, x, y, width, height) {
 }
 
 async function imageSourceToDataUrl(source) {
-  if (!source || source.startsWith?.('data:image/')) return source || '';
+  if (!source) return '';
+  if (source.startsWith?.('data:image/')) return removeGeneratedSignatureCaption(source);
 
   try {
     const response = await fetch(source);
     if (!response.ok) return '';
     const blob = await response.blob();
 
-    return await new Promise((resolve) => {
+    const dataUrl = await new Promise((resolve) => {
       const reader = new FileReader();
       reader.onloadend = () => resolve(typeof reader.result === 'string' ? reader.result : '');
       reader.onerror = () => resolve('');
       reader.readAsDataURL(blob);
     });
+    return removeGeneratedSignatureCaption(dataUrl);
   } catch (error) {
     console.warn('Unable to load PDF image source', error);
     return '';
+  }
+}
+
+async function removeGeneratedSignatureCaption(dataUrl) {
+  if (!dataUrl?.startsWith?.('data:image/')) return dataUrl || '';
+
+  try {
+    const image = await new Promise((resolve) => {
+      const nextImage = new window.Image();
+      nextImage.onload = () => resolve(nextImage);
+      nextImage.onerror = () => resolve(null);
+      nextImage.src = dataUrl;
+    });
+    if (!image?.width || !image?.height) return dataUrl;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = image.width;
+    canvas.height = image.height;
+    const context = canvas.getContext('2d');
+    context.drawImage(image, 0, 0);
+
+    const sampleY = Math.floor(image.height * 0.69);
+    const band = context.getImageData(0, Math.max(0, sampleY - 4), image.width, 9).data;
+    let nonWhitePixels = 0;
+    for (let index = 0; index < band.length; index += 4) {
+      const red = band[index];
+      const green = band[index + 1];
+      const blue = band[index + 2];
+      if (red < 252 || green < 252 || blue < 252) nonWhitePixels += 1;
+    }
+
+    if (nonWhitePixels <= image.width * 0.08) return dataUrl;
+
+    const croppedHeight = Math.floor(image.height * 0.64);
+    const cleanedCanvas = document.createElement('canvas');
+    cleanedCanvas.width = image.width;
+    cleanedCanvas.height = croppedHeight;
+    const cleanedContext = cleanedCanvas.getContext('2d');
+    cleanedContext.fillStyle = '#ffffff';
+    cleanedContext.fillRect(0, 0, cleanedCanvas.width, cleanedCanvas.height);
+    cleanedContext.drawImage(canvas, 0, 0, image.width, croppedHeight, 0, 0, image.width, croppedHeight);
+    return cleanedCanvas.toDataURL('image/png');
+  } catch {
+    return dataUrl;
   }
 }
 
@@ -328,17 +374,15 @@ function renderDeliveryRecord(doc, record, index, y, layout) {
 
 function renderAttachments(doc, attachmentsList, y, layout) {
   const { marginLeft, contentWidth } = layout;
+  if (!attachmentsList || attachmentsList.length === 0) {
+    return y;
+  }
+
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(10);
   doc.setTextColor(15, 23, 42);
   doc.text('ATTACHMENTS', marginLeft, y);
   y += 14;
-
-  if (!attachmentsList || attachmentsList.length === 0) {
-    doc.setFont('helvetica', 'normal');
-    doc.text('No attachments', marginLeft, y);
-    return y + 12;
-  }
 
   const thumbW = 90;
   const thumbH = 60;

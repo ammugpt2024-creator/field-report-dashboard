@@ -271,6 +271,18 @@ export default function ConcreteTestLogDetails() {
     return supabase.storage.from('signatures').getPublicUrl(path).data?.publicUrl || '';
   }
 
+  async function getStoredTechnicianSignatureUrl() {
+    if (report?.technician_signature_url) return report.technician_signature_url;
+    if (report?.technician_signature_storage_path) {
+      const { data: signedData, error: signedError } = await supabase.storage
+        .from('signatures')
+        .createSignedUrl(report.technician_signature_storage_path, 60 * 60 * 24 * 30);
+      if (!signedError && signedData?.signedUrl) return signedData.signedUrl;
+      return supabase.storage.from('signatures').getPublicUrl(report.technician_signature_storage_path).data?.publicUrl || '';
+    }
+    return '';
+  }
+
   async function getOriginalSubmittedPdfUrl() {
     if (report?.pdf_storage_path) {
       const { data: signedData, error: signedError } = await supabase.storage
@@ -295,6 +307,68 @@ export default function ConcreteTestLogDetails() {
     return new Uint8Array(await response.arrayBuffer());
   }
 
+  async function sourceToCleanSignatureBytes(source) {
+    if (!source) return null;
+    const response = await fetch(source);
+    if (!response.ok) throw new Error(`Unable to load approval asset: ${response.status}`);
+    const blob = await response.blob();
+    if (!blob.type?.startsWith('image/')) return new Uint8Array(await blob.arrayBuffer());
+
+    const dataUrl = await new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(typeof reader.result === 'string' ? reader.result : '');
+      reader.onerror = () => resolve('');
+      reader.readAsDataURL(blob);
+    });
+    const cleanedDataUrl = await removeGeneratedSignatureCaption(dataUrl);
+    const cleanedResponse = await fetch(cleanedDataUrl);
+    return new Uint8Array(await cleanedResponse.arrayBuffer());
+  }
+
+  async function removeGeneratedSignatureCaption(dataUrl) {
+    if (!dataUrl?.startsWith?.('data:image/')) return dataUrl || '';
+
+    try {
+      const image = await new Promise((resolve) => {
+        const nextImage = new window.Image();
+        nextImage.onload = () => resolve(nextImage);
+        nextImage.onerror = () => resolve(null);
+        nextImage.src = dataUrl;
+      });
+      if (!image?.width || !image?.height) return dataUrl;
+
+      const canvas = document.createElement('canvas');
+      canvas.width = image.width;
+      canvas.height = image.height;
+      const context = canvas.getContext('2d');
+      context.drawImage(image, 0, 0);
+
+      const sampleY = Math.floor(image.height * 0.69);
+      const band = context.getImageData(0, Math.max(0, sampleY - 4), image.width, 9).data;
+      let nonWhitePixels = 0;
+      for (let index = 0; index < band.length; index += 4) {
+        const red = band[index];
+        const green = band[index + 1];
+        const blue = band[index + 2];
+        if (red < 252 || green < 252 || blue < 252) nonWhitePixels += 1;
+      }
+
+      if (nonWhitePixels <= image.width * 0.08) return dataUrl;
+
+      const croppedHeight = Math.floor(image.height * 0.64);
+      const cleanedCanvas = document.createElement('canvas');
+      cleanedCanvas.width = image.width;
+      cleanedCanvas.height = croppedHeight;
+      const cleanedContext = cleanedCanvas.getContext('2d');
+      cleanedContext.fillStyle = '#ffffff';
+      cleanedContext.fillRect(0, 0, cleanedCanvas.width, cleanedCanvas.height);
+      cleanedContext.drawImage(canvas, 0, 0, image.width, croppedHeight, 0, 0, image.width, croppedHeight);
+      return cleanedCanvas.toDataURL('image/png');
+    } catch {
+      return dataUrl;
+    }
+  }
+
   function formatApprovalDate(value) {
     if (!value) return '';
     const date = new Date(value);
@@ -308,17 +382,93 @@ export default function ConcreteTestLogDetails() {
     }).format(date);
   }
 
+  async function findSignaturePlacement(pdfBytes, fallbackPageIndex) {
+    try {
+      const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+      const loadingTask = pdfjs.getDocument({
+        data: new Uint8Array(pdfBytes),
+        disableWorker: true
+      });
+      const pdf = await loadingTask.promise;
+
+      for (let pageNumber = pdf.numPages; pageNumber >= 1; pageNumber -= 1) {
+        const pdfPage = await pdf.getPage(pageNumber);
+        const textContent = await pdfPage.getTextContent();
+        const qaLabel = textContent.items.find((item) => (
+          String(item.str || '').toUpperCase().includes('QA REVIEWER SIGNATURE')
+        ));
+        const dateLabel = textContent.items.find((item) => (
+          String(item.str || '').toUpperCase().includes('DATE APPROVED')
+        ));
+
+        if (qaLabel && dateLabel) {
+          return {
+            pageIndex: pageNumber - 1
+          };
+        }
+      }
+    } catch (error) {
+      console.warn('Unable to locate signature page; falling back to final page stamping.', error);
+    }
+
+    return { pageIndex: fallbackPageIndex };
+  }
+
+  async function findAttachmentOnlyPageIndexes(pdfBytes) {
+    try {
+      const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+      const loadingTask = pdfjs.getDocument({
+        data: new Uint8Array(pdfBytes),
+        disableWorker: true
+      });
+      const pdf = await loadingTask.promise;
+      const pageIndexes = [];
+
+      for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+        const pdfPage = await pdf.getPage(pageNumber);
+        const textContent = await pdfPage.getTextContent();
+        const pageText = textContent.items
+          .map((item) => String(item.str || '').trim())
+          .filter(Boolean)
+          .join(' ')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .toUpperCase();
+
+        if (pageText === 'ATTACHMENTS') pageIndexes.push(pageNumber - 1);
+      }
+
+      return pageIndexes;
+    } catch (error) {
+      console.warn('Unable to inspect attachment pages for cleanup.', error);
+      return [];
+    }
+  }
+
   async function stampApprovalOnSubmittedPdf(
     basePdfUrl,
     qcSignatureUrl,
     approvedAtOverride = report?.approved_at,
-    statusLabel = 'APPROVED'
+    statusLabel = 'APPROVED',
+    reviewerNameOverride = reviewerName,
+    technicianSignatureUrl = ''
   ) {
     const { PDFDocument, StandardFonts, rgb } = await import('pdf-lib');
     const pdfBytes = await sourceToBytes(basePdfUrl);
     const pdfDocument = await PDFDocument.load(pdfBytes);
+    const attachmentOnlyPageIndexes = await findAttachmentOnlyPageIndexes(pdfBytes);
+    attachmentOnlyPageIndexes
+      .sort((a, b) => b - a)
+      .forEach((pageIndex) => {
+        if (pageIndex > 0 && pageIndex < pdfDocument.getPageCount() - 1) {
+          pdfDocument.removePage(pageIndex);
+        }
+      });
+
+    const cleanedPdfBytes = attachmentOnlyPageIndexes.length > 0 ? await pdfDocument.save() : pdfBytes;
+    const signaturePlacement = await findSignaturePlacement(cleanedPdfBytes, pdfDocument.getPageCount() - 1);
     const pages = pdfDocument.getPages();
-    const page = pages[pages.length - 1];
+    const page = pages[signaturePlacement.pageIndex] || pages[pages.length - 1];
     const firstPage = pages[0];
     const { width, height } = page.getSize();
     const { width: firstPageWidth, height: firstPageHeight } = firstPage.getSize();
@@ -333,6 +483,7 @@ export default function ConcreteTestLogDetails() {
       }
     }
     let signatureImage = null;
+    let technicianSignatureImage = null;
 
     if (signatureBytes) {
       try {
@@ -342,24 +493,42 @@ export default function ConcreteTestLogDetails() {
       }
     }
 
+    if (technicianSignatureUrl) {
+      try {
+        const technicianSignatureBytes = await sourceToCleanSignatureBytes(technicianSignatureUrl);
+        if (technicianSignatureBytes) {
+          try {
+            technicianSignatureImage = await pdfDocument.embedPng(technicianSignatureBytes);
+          } catch {
+            technicianSignatureImage = await pdfDocument.embedJpg(technicianSignatureBytes);
+          }
+        }
+      } catch (technicianSignatureError) {
+        console.warn('Unable to load technician signature image for PDF cleanup.', technicianSignatureError);
+      }
+    }
+
     const marginLeft = 40;
     const gap = 10;
     const columnWidth = (width - marginLeft * 2 - gap * 2) / 3;
-    const qcX = marginLeft + columnWidth + gap;
-    const dateX = marginLeft + (columnWidth + gap) * 2;
-    const signatureLineY = 358;
+    const qcX = Number.isFinite(signaturePlacement.qcX) ? signaturePlacement.qcX : marginLeft + columnWidth + gap;
+    const dateX = Number.isFinite(signaturePlacement.dateX) ? signaturePlacement.dateX : marginLeft + (columnWidth + gap) * 2;
+    const technicianX = marginLeft;
+    const signatureLineY = Number.isFinite(signaturePlacement.signatureLineY) ? signaturePlacement.signatureLineY : height - 170;
     const signatureY = signatureLineY + 4;
-    const dateValueY = signatureLineY + 8;
+    const reviewerNameY = signatureLineY - 34;
+    const dateValueY = signatureLineY + 22;
     const approvalDate = formatApprovalDate(approvedAtOverride);
+    const approvalReviewerName = reviewerNameOverride || report?.reviewed_by_name || 'QA/QC Reviewer';
 
     const statusText = String(statusLabel || 'APPROVED').toUpperCase();
     const statusBadgeWidth = Math.max(64, boldFont.widthOfTextAtSize(statusText, 8) + 18);
     const statusBadgeHeight = 20;
     const headerRightX = firstPageWidth - 40;
-    const originalBadgeX = firstPageWidth - 140;
-    const originalBadgeY = firstPageHeight - 124;
-    const statusBadgeX = headerRightX - statusBadgeWidth - 6;
-    const statusBadgeY = firstPageHeight - 119;
+    const originalBadgeX = firstPageWidth - 172;
+    const originalBadgeY = firstPageHeight - 132;
+    const statusBadgeX = headerRightX - statusBadgeWidth - 12;
+    const statusBadgeY = firstPageHeight - 123;
     const isApprovedStatus = statusText === 'APPROVED';
     const badgeFill = isApprovedStatus ? rgb(0.86, 0.98, 0.91) : rgb(1, 0.95, 0.82);
     const badgeText = isApprovedStatus ? rgb(0.02, 0.44, 0.26) : rgb(0.57, 0.23, 0.02);
@@ -369,7 +538,7 @@ export default function ConcreteTestLogDetails() {
       x: originalBadgeX,
       y: originalBadgeY,
       width: headerRightX - originalBadgeX,
-      height: 30,
+      height: 36,
       color: rgb(0.06, 0.09, 0.16)
     });
     firstPage.drawRectangle({
@@ -389,12 +558,41 @@ export default function ConcreteTestLogDetails() {
 
     if (isApprovedStatus) {
       // Fill only the blank approval fields that already exist in the submitted PDF.
+      if (technicianSignatureImage) {
+        page.drawRectangle({
+          x: technicianX,
+          y: signatureLineY + 2,
+          width: columnWidth,
+          height: 58,
+          color: rgb(1, 1, 1)
+        });
+      }
       page.drawRectangle({
-        x: dateX,
-        y: dateValueY - 4,
+        x: qcX,
+        y: reviewerNameY - 4,
         width: columnWidth,
         height: 18,
         color: rgb(1, 1, 1)
+      });
+      page.drawRectangle({
+        x: dateX,
+        y: signatureLineY + 4,
+        width: columnWidth,
+        height: 38,
+        color: rgb(1, 1, 1)
+      });
+    }
+
+    if (isApprovedStatus && technicianSignatureImage) {
+      const technicianDims = technicianSignatureImage.scale(1);
+      const maxWidth = columnWidth - 14;
+      const maxHeight = 34;
+      const scale = Math.min(maxWidth / technicianDims.width, maxHeight / technicianDims.height);
+      page.drawImage(technicianSignatureImage, {
+        x: technicianX + 7,
+        y: signatureY,
+        width: technicianDims.width * scale,
+        height: technicianDims.height * scale
       });
     }
 
@@ -412,6 +610,13 @@ export default function ConcreteTestLogDetails() {
     }
 
     if (isApprovedStatus) {
+      page.drawText(approvalReviewerName, {
+        x: qcX,
+        y: reviewerNameY,
+        size: 9,
+        font,
+        color: rgb(0.06, 0.09, 0.16)
+      });
       page.drawText(approvalDate || '-', {
         x: dateX,
         y: dateValueY,
@@ -426,16 +631,24 @@ export default function ConcreteTestLogDetails() {
 
   async function regenerateApprovedPdfSnapshot({ force = false } = {}) {
     if (!report?.id || ![REPORT_STATUS.APPROVED, REPORT_STATUS.FINALIZED].includes(reportStatus)) return;
-    const refreshKey = `qcore-approved-pdf-refresh-v11-${report.id}-${report.approved_at || 'no-date'}`;
+    const refreshKey = `qcore-approved-pdf-refresh-v19-${report.id}-${report.approved_at || 'no-date'}-${report.reviewed_by_name || 'reviewer'}`;
     if (!force && window.sessionStorage.getItem(refreshKey)) return;
 
     try {
       if (force) setApprovedPdfRefreshStatus('Refreshing approved PDF...');
       const qcSignatureUrl = await getStoredQcSignatureUrl();
       if (!qcSignatureUrl && !report.approved_at) return;
+      const technicianSignatureUrl = await getStoredTechnicianSignatureUrl();
       const originalPdfUrl = await getOriginalSubmittedPdfUrl();
       if (!originalPdfUrl) throw new Error('Original submitted PDF is not available.');
-      const pdfBlob = await stampApprovalOnSubmittedPdf(originalPdfUrl, qcSignatureUrl);
+      const pdfBlob = await stampApprovalOnSubmittedPdf(
+        originalPdfUrl,
+        qcSignatureUrl,
+        report.approved_at,
+        'APPROVED',
+        report.reviewed_by_name || reviewerName,
+        technicianSignatureUrl
+      );
 
       const refreshedPdfUrl = await uploadReportPdf(effectiveProjectId, report.id, pdfBlob);
       await setReportStatus(report.id, reportStatus, {
@@ -578,9 +791,17 @@ export default function ConcreteTestLogDetails() {
         }
 
         try {
+          const technicianSignatureUrl = await getStoredTechnicianSignatureUrl();
           const originalPdfUrl = await getOriginalSubmittedPdfUrl();
           if (!originalPdfUrl) throw new Error('Original submitted PDF is not available.');
-          const pdfBlob = await stampApprovalOnSubmittedPdf(originalPdfUrl, activeSignature || qcSignatureUrl, now);
+          const pdfBlob = await stampApprovalOnSubmittedPdf(
+            originalPdfUrl,
+            activeSignature || qcSignatureUrl,
+            now,
+            'APPROVED',
+            reviewerName,
+            technicianSignatureUrl
+          );
           pdfUrl = await uploadReportPdf(effectiveProjectId, report.id, pdfBlob);
         } catch (pdfError) {
           console.warn('Approved PDF stamping failed; preserving submitted review PDF.', pdfError);
@@ -590,7 +811,15 @@ export default function ConcreteTestLogDetails() {
         try {
           const originalPdfUrl = await getOriginalSubmittedPdfUrl();
           if (originalPdfUrl) {
-            const pdfBlob = await stampApprovalOnSubmittedPdf(originalPdfUrl, '', now, 'REVISION REQUIRED');
+            const technicianSignatureUrl = await getStoredTechnicianSignatureUrl();
+            const pdfBlob = await stampApprovalOnSubmittedPdf(
+              originalPdfUrl,
+              '',
+              now,
+              'REVISION REQUIRED',
+              reviewerName,
+              technicianSignatureUrl
+            );
             pdfUrl = await uploadReportPdf(effectiveProjectId, report.id, pdfBlob);
           }
         } catch (pdfError) {
@@ -706,14 +935,14 @@ export default function ConcreteTestLogDetails() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-100 pb-32">
-      <div className="mx-auto max-w-[1600px] p-6 space-y-6">
-        <div className="rounded-3xl bg-slate-950 p-8 text-white shadow-lg">
+    <div className="min-h-screen w-full max-w-full overflow-x-hidden bg-slate-100 pb-44 md:pb-32">
+      <div className="mx-auto w-full max-w-[1600px] space-y-5 px-4 py-5 sm:px-6 sm:space-y-6">
+        <div className="rounded-3xl bg-slate-950 p-5 text-white shadow-lg sm:p-8">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <div>
+            <div className="min-w-0">
               <button
                 onClick={() => navigate(effectiveProjectId ? `/project/${effectiveProjectId}/field-reports/concrete-test-log` : -1)}
-                className="mb-4 inline-flex items-center gap-2 text-sm font-semibold text-slate-200 hover:text-white"
+                className="mb-3 inline-flex min-h-11 items-center gap-2 rounded-2xl px-1 text-sm font-semibold text-slate-200 hover:text-white sm:mb-4"
               >
                 <ChevronLeft className="w-5 h-5" /> Back to Report Dashboard
               </button>
@@ -721,18 +950,27 @@ export default function ConcreteTestLogDetails() {
                 <button
                   type="button"
                   onClick={() => navigate(`/project/${effectiveProjectId}`)}
-                  className="mb-4 ml-4 inline-flex items-center gap-2 rounded-2xl border border-white/15 bg-white/10 px-3 py-2 text-sm font-semibold text-white hover:bg-white/15"
+                  className="mb-3 inline-flex min-h-11 items-center gap-2 rounded-2xl border border-white/15 bg-white/10 px-3 py-2 text-sm font-semibold text-white hover:bg-white/15 sm:mb-4 sm:ml-4"
                 >
                   <FolderKanban className="h-4 w-4" />
                   Project Workspace
                 </button>
               )}
-              <h1 className="text-4xl font-semibold">QC Review: {report.dfr_number || 'Concrete Test Log'}</h1>
+              <h1 className="break-words text-2xl font-semibold sm:text-4xl">QC Review: {report.dfr_number || 'Concrete Test Log'}</h1>
               <p className="mt-2 max-w-2xl text-slate-300">
                 Perform professional QA/QC review of the submitted log metrics and generated PDF artifact.
               </p>
             </div>
-            <div className="flex flex-wrap items-center gap-3">
+            <div className="flex w-full flex-wrap items-center gap-3 lg:w-auto">
+              {reportPdfUrl && (
+                <button
+                  type="button"
+                  onClick={() => setShowPdfViewer(true)}
+                  className="inline-flex min-h-11 w-full items-center justify-center rounded-2xl bg-white px-4 py-2 text-sm font-bold text-slate-950 shadow-sm sm:w-auto lg:hidden"
+                >
+                  View PDF
+                </button>
+              )}
               <ReportActions 
                 role={role}
                 status={report.status}
@@ -755,12 +993,12 @@ export default function ConcreteTestLogDetails() {
           )}
         </div>
 
-        <div className="grid gap-6 lg:grid-cols-2">
+        <div className="grid grid-cols-1 gap-5 lg:grid-cols-2 lg:gap-6">
           {/* LEFT PANE: DATA & METRICS */}
           <div className="space-y-6">
-            <div className="rounded-3xl bg-white p-6 shadow-sm">
+            <div className="rounded-3xl bg-white p-5 shadow-sm sm:p-6">
               <h2 className="text-lg font-semibold text-slate-900 border-b border-slate-100 pb-3">Report summary</h2>
-              <dl className="mt-4 grid grid-cols-2 gap-4 text-sm text-slate-700">
+              <dl className="mt-4 grid grid-cols-1 gap-4 text-sm text-slate-700 sm:grid-cols-2">
                 <div>
                   <dt className="text-xs uppercase tracking-wider text-slate-400 font-bold">DFR Number</dt>
                   <dd className="mt-1 font-semibold text-slate-900">{report.dfr_number || specifications?.dfr_number || '—'}</dd>
@@ -777,12 +1015,12 @@ export default function ConcreteTestLogDetails() {
                   <dt className="text-xs uppercase tracking-wider text-slate-400 font-bold">Project</dt>
                   <dd className="mt-1 font-medium">{report.project_name || '—'}</dd>
                 </div>
-                <div className="col-span-2">
+                <div className="sm:col-span-2">
                   <dt className="text-xs uppercase tracking-wider text-slate-400 font-bold">Technician</dt>
                   <dd className="mt-1 font-medium">{report.data_logger || '—'}</dd>
                 </div>
                 {(reportStatus === REPORT_STATUS.APPROVED || reportStatus === REPORT_STATUS.FINALIZED) && (
-                  <div className="col-span-2 grid grid-cols-2 gap-4 border-t border-slate-100 pt-4">
+                  <div className="sm:col-span-2 grid grid-cols-1 gap-4 border-t border-slate-100 pt-4 sm:grid-cols-2">
                     <div>
                       <dt className="text-xs uppercase tracking-wider text-emerald-600 font-bold">Approved By</dt>
                       <dd className="mt-1 text-emerald-900 font-bold">{report.reviewed_by_name || 'QA Reviewer'}</dd>
@@ -834,8 +1072,8 @@ export default function ConcreteTestLogDetails() {
                   </p>
                 )}
               </div>
-              <div className="mt-4 overflow-x-auto">
-                <table className="min-w-full table-auto text-xs text-left">
+              <div className="mt-4 hidden lg:block">
+                <table className="w-full table-auto text-xs text-left">
                   <thead className="bg-slate-50 text-slate-500">
                     <tr>
                       <th className="px-2 py-3 font-bold uppercase tracking-wider">Test #</th>
@@ -870,6 +1108,29 @@ export default function ConcreteTestLogDetails() {
                     )}
                   </tbody>
                 </table>
+              </div>
+              <div className="mt-4 space-y-3 lg:hidden">
+                {rows.length > 0 ? (
+                  rows.map((row) => (
+                    <div key={row.id} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                      <div className="mb-3 flex items-start justify-between gap-3">
+                        <p className="text-sm font-bold text-slate-950">Test #{row.test_number || '—'}</p>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3 text-sm">
+                        {QC_MARKABLE_FIELDS.map((field) => (
+                          <div key={`${row.id}-${field.key}`} className={field.key === 'comments' ? 'col-span-2' : ''}>
+                            <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">{field.label}</p>
+                            <div className="mt-1">{renderReviewValue(row, field)}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="rounded-2xl bg-slate-50 px-4 py-6 text-center text-sm font-semibold text-slate-500">
+                    No row records saved.
+                  </div>
+                )}
               </div>
               {canApprove && markedIssues.length > 0 && (
                 <div className="mt-5 rounded-2xl border border-rose-200 bg-rose-50 p-4">
@@ -910,7 +1171,7 @@ export default function ConcreteTestLogDetails() {
           </div>
 
           {/* RIGHT PANE: PDF ARTIFACT */}
-          <div className="lg:sticky lg:top-32 h-[calc(100vh-160px)]">
+          <div className="hidden lg:sticky lg:top-32 lg:block lg:h-[calc(100vh-160px)]">
             {reportPdfUrl ? (
               <PdfViewer
                 url={reportPdfUrl}
@@ -932,8 +1193,8 @@ export default function ConcreteTestLogDetails() {
       </div>
 
       {/* QC ACTION BAR */}
-      <div className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 border-t border-slate-200 shadow-2xl backdrop-blur-md px-6 py-4">
-        <div className="mx-auto max-w-[1600px] flex flex-col md:flex-row items-center gap-6">
+      <div className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 border-t border-slate-200 shadow-2xl backdrop-blur-md px-4 py-3 sm:px-6 sm:py-4">
+        <div className="mx-auto flex w-full max-w-[1600px] flex-col items-stretch gap-3 md:flex-row md:items-center md:gap-6">
           <div className="flex-1 w-full">
             {canApprove ? (
               <div className="relative group">
@@ -941,12 +1202,12 @@ export default function ConcreteTestLogDetails() {
                   value={approvalComment}
                   onChange={(event) => setApprovalComment(event.target.value)}
                   placeholder="Enter review remarks, findings, or requested changes..."
-                  className="w-full h-16 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm text-slate-900 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 transition-all outline-none"
+                  className="h-20 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition-all focus:border-blue-500 focus:ring-4 focus:ring-blue-100 md:h-16"
                 />
                 <div className="absolute right-3 bottom-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest group-focus-within:text-blue-500">Review Remarks</div>
               </div>
             ) : (
-              <div className="flex items-center gap-3">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
                 <StatusBadge status={reportStatus} className="scale-110" />
                 <p className="text-sm font-semibold text-slate-600">
                   {reportStatus === REPORT_STATUS.APPROVED || reportStatus === REPORT_STATUS.FINALIZED
@@ -956,7 +1217,7 @@ export default function ConcreteTestLogDetails() {
               </div>
             )}
           </div>
-          <div className="flex items-center gap-3 w-full md:w-auto">
+          <div className="flex w-full items-center gap-3 md:w-auto">
             {canApprove && (
               <ReportActions 
                 role={role}
@@ -1003,7 +1264,7 @@ export default function ConcreteTestLogDetails() {
 
       {showPdfViewer && reportPdfUrl && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4">
-          <div className="relative w-full max-w-6xl h-[90vh]">
+          <div className="relative h-[92vh] w-full max-w-6xl">
             <button
               onClick={() => setShowPdfViewer(false)}
               className="absolute -top-12 right-0 rounded-full bg-white/10 px-4 py-2 text-sm font-semibold text-white hover:bg-white/20 backdrop-blur"
