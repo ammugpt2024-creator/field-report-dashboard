@@ -650,12 +650,6 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
     setLastAutosavedAt(new Date().toLocaleTimeString());
   }
 
-  function findExistingTechnicianSignature() {
-    const directSignature = log.technicianSignature || log.technician_signature || technicianSignatureDraft;
-    if (directSignature) return directSignature;
-    return "";
-  }
-
   async function submitLogWithSignature(signature) {
     const logToSubmit = {
       ...log,
@@ -685,12 +679,11 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
       return;
     }
     const explicitSignature = typeof signatureOverride === "string" ? signatureOverride : "";
-    const signature = explicitSignature || findExistingTechnicianSignature();
-    if (!signature) {
+    if (!explicitSignature) {
       setSignatureModalOpen(true);
       return;
     }
-    await submitLogWithSignature(signature);
+    await submitLogWithSignature(explicitSignature);
   }
 
   useEffect(() => {
