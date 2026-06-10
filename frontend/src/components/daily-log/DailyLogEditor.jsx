@@ -169,6 +169,11 @@ function hasConcreteReportContent(report = {}) {
   );
 }
 
+function isConcreteReportSubmitReady(report = {}) {
+  const reportStatus = String(report.status || "").toLowerCase();
+  return ["completed", "submitted", "approved", "finalized"].includes(reportStatus) || hasConcreteReportContent(report);
+}
+
 function createAttachmentRecord(file, attachmentType, context) {
   const safeName = file.name.replace(/[^a-zA-Z0-9_.-]/g, "_");
   const companyId = context.companyId || "company";
@@ -215,6 +220,29 @@ function createAttachmentRecord(file, attachmentType, context) {
     previewUrl: "",
     createdAt: new Date().toISOString()
   };
+}
+
+function getAttachmentIdentityKey(attachment = {}) {
+  if (attachment.id) return `id:${attachment.id}`;
+  const storagePath = attachment.storagePath || attachment.storage_path || attachment.filePath || attachment.file_path || attachment.objectPath || attachment.object_path || attachment.path;
+  if (storagePath) return `path:${storagePath}`;
+  const fileName = attachment.fileName || attachment.file_name || attachment.name || "";
+  const createdAt = attachment.createdAt || attachment.created_at || attachment.uploadedAt || attachment.uploaded_at || "";
+  return `file:${fileName}:${createdAt}`;
+}
+
+function mergeActivityAttachments(...attachmentGroups) {
+  const merged = [];
+  const seen = new Set();
+
+  attachmentGroups.flat().filter(Boolean).forEach((attachment) => {
+    const key = getAttachmentIdentityKey(attachment);
+    if (key && seen.has(key)) return;
+    if (key) seen.add(key);
+    merged.push(attachment);
+  });
+
+  return merged;
 }
 
 async function uploadDailyLogAttachment(file, attachment) {
@@ -285,7 +313,7 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
     String(activity.description || "").trim()
   ));
   const reportsComplete = log.activities.every((activity) => (
-    getActivityAttachedReports(activity).every((report) => String(report.status || "").toLowerCase() === "completed")
+    getActivityAttachedReports(activity).every((report) => isConcreteReportSubmitReady(report))
   ));
   const canSubmit = activitiesComplete && reportsComplete;
   const attachedReportCount = log.activities.reduce((sum, activity) => sum + getActivityAttachedReports(activity).length, 0);
@@ -466,13 +494,18 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
     if (!attachmentsToSave.length) return;
 
     const currentLog = getDailyLogById(log.id) || log;
+    const currentStateActivity = (log.activities || []).find((activity) => activity.id === activityId);
     updateLog({
       ...currentLog,
       activities: (currentLog.activities || []).map((activity) => (
         activity.id === activityId
           ? {
               ...activity,
-              attachments: [...(activity.attachments || []), ...attachmentsToSave],
+              attachments: mergeActivityAttachments(
+                activity.attachments || [],
+                currentStateActivity?.attachments || [],
+                attachmentsToSave
+              ),
               updatedAt: new Date().toISOString()
             }
           : activity
@@ -489,6 +522,10 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
           ? {
               ...activity,
               attachments: (activity.attachments || []).filter((attachment) => attachment.id !== attachmentId),
+              _deletedAttachmentIds: [
+                ...(activity._deletedAttachmentIds || []),
+                attachmentId
+              ],
               updatedAt: new Date().toISOString()
             }
           : activity
@@ -882,10 +919,7 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
                   </div>
                 </div>
                 {concreteReports.map((report) => {
-                  const reportStatus = String(report.status || "").toLowerCase();
-                  const shouldShowReportContent =
-                    ["completed", "submitted", "approved", "finalized"].includes(reportStatus) ||
-                    hasConcreteReportContent(report);
+                  const shouldShowReportContent = isConcreteReportSubmitReady(report);
                   visibleReportOrdinal += 1;
                   const reportLabel = `Report ${visibleReportOrdinal}`;
 
@@ -899,7 +933,7 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
                             {report.status || "Draft"} • Updated {report.updatedAt ? new Date(report.updatedAt).toLocaleString() : "-"}
                           </p>
                           {report.reportNumber && <p className="mt-1 text-xs font-bold uppercase tracking-[0.14em] text-slate-400">{report.reportNumber}</p>}
-                          {attemptedSubmit && reportStatus !== "completed" && (
+                          {attemptedSubmit && !isConcreteReportSubmitReady(report) && (
                             <p className="mt-2 text-sm font-bold text-rose-700">Concrete Report must be completed before Daily Log submission.</p>
                           )}
                         </div>

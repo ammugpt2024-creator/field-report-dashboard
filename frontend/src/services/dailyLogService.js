@@ -363,19 +363,51 @@ function dedupeConcreteReports(reports = []) {
   return deduped;
 }
 
+function attachmentIdentityKey(attachment = {}) {
+  if (attachment.id) return `id:${attachment.id}`;
+  const storagePath = attachment.storagePath || attachment.storage_path || attachment.filePath || attachment.file_path || attachment.objectPath || attachment.object_path || attachment.path;
+  if (storagePath) return `path:${storagePath}`;
+  const fileName = attachment.fileName || attachment.file_name || attachment.name || "";
+  const createdAt = attachment.createdAt || attachment.created_at || attachment.uploadedAt || attachment.uploaded_at || "";
+  return `file:${fileName}:${createdAt}`;
+}
+
+function mergeAttachmentLists(...attachmentGroups) {
+  const merged = [];
+  const seen = new Set();
+
+  attachmentGroups.flat().filter(Boolean).forEach((attachment) => {
+    const key = attachmentIdentityKey(attachment);
+    if (key && seen.has(key)) return;
+    if (key) seen.add(key);
+    merged.push(attachment);
+  });
+
+  return merged;
+}
+
 function mergeConcreteReportsForSave(nextActivity, existingActivity) {
   const nextReports = nextActivity.concreteReports || nextActivity.reports || [];
   const existingReports = existingActivity?.concreteReports || existingActivity?.reports || [];
   const deletedReportIds = new Set((nextActivity._deletedConcreteReportIds || []).map(String));
+  const deletedAttachmentIds = new Set((nextActivity._deletedAttachmentIds || []).map(String));
   const reportKeys = (report) => reportIdentityKeys(report).map((key) => key.replace(/^id:/, ""));
   const nextReportKeys = new Set(nextReports.flatMap(reportKeys));
   const preservedReports = existingReports.filter((report) => (
     !reportKeys(report).some((key) => deletedReportIds.has(key) || nextReportKeys.has(key))
   ));
+  const preservedAttachments = (existingActivity?.attachments || []).filter((attachment) => (
+    !deletedAttachmentIds.has(String(attachment.id || ""))
+  ));
+  const preservedPhotos = (existingActivity?.photos || []).filter((photo) => (
+    !deletedAttachmentIds.has(String(photo.id || ""))
+  ));
 
-  const { _deletedConcreteReportIds, ...cleanActivity } = nextActivity;
+  const { _deletedConcreteReportIds, _deletedAttachmentIds, ...cleanActivity } = nextActivity;
   return {
     ...cleanActivity,
+    attachments: mergeAttachmentLists(preservedAttachments, cleanActivity.attachments || []),
+    photos: mergeAttachmentLists(preservedPhotos, cleanActivity.photos || []),
     concreteReports: dedupeConcreteReports([...nextReports, ...preservedReports])
   };
 }
