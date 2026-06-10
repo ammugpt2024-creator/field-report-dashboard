@@ -125,6 +125,50 @@ function getActivityAttachedReports(activity) {
   return dedupeReports([...(activity?.concreteReports || []), ...(activity?.reports || [])]);
 }
 
+function hasConcreteReportContent(report = {}) {
+  const specifications = report.specifications || {};
+  const records = Array.isArray(report.deliveryRecords)
+    ? report.deliveryRecords
+    : Array.isArray(report.testRecords)
+      ? report.testRecords
+      : [];
+  const specificationKeys = [
+    "airContent",
+    "airContentPercent",
+    "air_content_percent",
+    "unitWeight",
+    "unitWeightLbsFt3",
+    "unit_weight_lbs_ft3",
+    "spread",
+    "spreadIn",
+    "spread_in",
+    "slump",
+    "slumpIn",
+    "slump_in",
+    "concreteTemperature",
+    "materialTemp",
+    "materialTempF",
+    "concrete_temp_f",
+    "mixNumber",
+    "mixNo",
+    "mix_number",
+    "jRing",
+    "jRingIn",
+    "j_ring_in",
+    "specifiedStrength",
+    "specifiedStrengthPsi",
+    "specified_strength_psi"
+  ];
+
+  return (
+    records.length > 0 ||
+    specificationKeys.some((key) => {
+      const value = report[key] ?? specifications[key];
+      return value !== null && value !== undefined && String(value).trim() !== "";
+    })
+  );
+}
+
 function createAttachmentRecord(file, attachmentType, context) {
   const safeName = file.name.replace(/[^a-zA-Z0-9_.-]/g, "_");
   const companyId = context.companyId || "company";
@@ -795,7 +839,7 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
 
         <div className="mt-5 space-y-4">
           {log.activities.map((activity) => {
-            const concreteReports = dedupeReports(activity.concreteReports || []);
+            const concreteReports = getActivityAttachedReports(activity);
             const reportCount = getActivityAttachedReports(activity).length;
             const titleMissing = attemptedSubmit && !String(activity.title || "").trim();
             const locationMissing = attemptedSubmit && !String(activity.location || "").trim();
@@ -839,7 +883,9 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
                 </div>
                 {concreteReports.map((report) => {
                   const reportStatus = String(report.status || "").toLowerCase();
-                  const isCompleted = reportStatus === "completed";
+                  const shouldShowReportContent =
+                    ["completed", "submitted", "approved", "finalized"].includes(reportStatus) ||
+                    hasConcreteReportContent(report);
                   visibleReportOrdinal += 1;
                   const reportLabel = `Report ${visibleReportOrdinal}`;
 
@@ -869,7 +915,7 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
                           <button type="button" onClick={() => removeConcreteReport(activity.id, report.id)} className="min-h-10 rounded-xl border border-rose-200 bg-white px-3 text-xs font-bold text-rose-700">Delete Report</button>
                         </div>
                       </div>
-                      {isCompleted && <ConcreteReportInlineContent report={report} reportLabel={reportLabel} />}
+                      {shouldShowReportContent && <ConcreteReportInlineContent report={report} reportLabel={reportLabel} />}
                     </div>
                   );
                 })}
