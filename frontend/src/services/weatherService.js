@@ -37,6 +37,23 @@ function formatWeatherSummary(weatherData, sourceLabel) {
   return `${label} • High ${highText} / Low ${lowText}${sourceLabel ? ` • ${sourceLabel}` : ''}`;
 }
 
+function getCacheKey(projectLocation, date) {
+  return `imqcore:weather:${String(projectLocation || 'unknown').toLowerCase()}:${date || 'today'}`;
+}
+
+function readCachedWeather(projectLocation, date) {
+  try {
+    return JSON.parse(window.localStorage.getItem(getCacheKey(projectLocation, date)) || 'null');
+  } catch {
+    return null;
+  }
+}
+
+function cacheWeather(projectLocation, date, weather) {
+  window.localStorage.setItem(getCacheKey(projectLocation, date), JSON.stringify(weather));
+  return weather;
+}
+
 function getBrowserPosition() {
   if (!navigator.geolocation) return Promise.resolve(null);
 
@@ -96,6 +113,25 @@ async function requestDailyWeather({ latitude, longitude, date }) {
   return response.json();
 }
 
+async function requestStructuredWeather({ latitude, longitude, date }) {
+  const url = new URL('https://api.open-meteo.com/v1/forecast');
+  url.searchParams.set('latitude', latitude);
+  url.searchParams.set('longitude', longitude);
+  url.searchParams.set('current', 'temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code');
+  url.searchParams.set('hourly', 'precipitation_probability');
+  url.searchParams.set('temperature_unit', 'fahrenheit');
+  url.searchParams.set('wind_speed_unit', 'mph');
+  url.searchParams.set('timezone', 'auto');
+  if (date) {
+    url.searchParams.set('start_date', date);
+    url.searchParams.set('end_date', date);
+  }
+
+  const response = await fetch(url.toString());
+  if (!response.ok) throw new Error('Weather service did not return a valid response.');
+  return response.json();
+}
+
 async function fetchDailyWeather({ latitude, longitude, date }) {
   try {
     return await requestDailyWeather({ latitude, longitude, date });
@@ -114,4 +150,32 @@ export async function getDailyWeatherSummary({ projectLocation, date, preferGps 
 
   const weatherData = await fetchDailyWeather({ ...coordinates, date });
   return formatWeatherSummary(weatherData, coordinates.sourceLabel);
+}
+
+export async function getStructuredWeatherConditions({ projectLocation, date, forceRefresh = false }) {
+  if (!forceRefresh) {
+    const cached = readCachedWeather(projectLocation, date);
+    if (cached) return cached;
+  }
+
+  const coordinates = (await geocodeProjectLocation(projectLocation)) || (await getBrowserPosition());
+  if (!coordinates) {
+    throw new Error('Weather location could not be determined from project location.');
+  }
+
+  const weatherData = await requestStructuredWeather({ ...coordinates, date });
+  const current = weatherData?.current || {};
+  const rainProbability = weatherData?.hourly?.precipitation_probability?.find((value) => Number.isFinite(Number(value)));
+  const weather = {
+    temperature: Number.isFinite(Number(current.temperature_2m)) ? Math.round(Number(current.temperature_2m)) : '',
+    humidity: Number.isFinite(Number(current.relative_humidity_2m)) ? Math.round(Number(current.relative_humidity_2m)) : '',
+    windSpeed: Number.isFinite(Number(current.wind_speed_10m)) ? Math.round(Number(current.wind_speed_10m)) : '',
+    rainProbability: Number.isFinite(Number(rainProbability)) ? Math.round(Number(rainProbability)) : '',
+    condition: getWeatherLabel(current.weather_code),
+    capturedAt: new Date().toISOString(),
+    source: coordinates.sourceLabel || 'Project location',
+    error: ''
+  };
+
+  return cacheWeather(projectLocation, date, weather);
 }

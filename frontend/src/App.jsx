@@ -21,6 +21,7 @@ import ConcreteTestLog from "./pages/ConcreteTestLog";
 import ConcreteTestLogDetails from "./pages/ConcreteTestLogDetails";
 import QCReviewDashboard from "./pages/QCReviewDashboard";
 import Reports from "./pages/Reports";
+import DailyLogReview from "./pages/DailyLogReview";
 
 function App() {
 
@@ -51,6 +52,13 @@ function App() {
     return <Navigate to={getRoleHomeRoute(role)} replace />;
   }
 
+  function ProfileRoute() {
+    if (String(role || "").toLowerCase() === "technician") {
+      return <Navigate to="/technician/dashboard?view=profile" replace />;
+    }
+    return <RoleHome />;
+  }
+
   return (
 
     <MainLayout>
@@ -68,6 +76,26 @@ function App() {
         />
 
         <Route
+          path="/technician/activity-history"
+          element={<TechnicianDashboard />}
+        />
+
+        <Route
+          path="/technician/daily-log/:logId"
+          element={<TechnicianDashboard />}
+        />
+
+        <Route
+          path="/technician/daily-log/:logId/activity/:activityId/concrete-report/:reportId"
+          element={<ConcreteTestLog />}
+        />
+
+        <Route
+          path="/profile"
+          element={<ProfileRoute />}
+        />
+
+        <Route
           path="/qc/dashboard"
           element={<QCReviewDashboard />}
         />
@@ -75,6 +103,11 @@ function App() {
         <Route
           path="/manager/dashboard"
           element={<ManagerDashboard />}
+        />
+
+        <Route
+          path="/manager/daily-log-review/:logId"
+          element={<DailyLogReview />}
         />
 
         <Route

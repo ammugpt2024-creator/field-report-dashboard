@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import {
@@ -35,6 +35,7 @@ import { scanConcreteTicket } from '../services/ticketScanner';
 import { getDailyWeatherSummary } from '../services/weatherService';
 import { addReviewHistory } from '../services/auditService';
 import { buildQcReviewEmail, queueAndSendNotification } from '../services/notificationService';
+import { attachConcreteReportToActivity } from '../services/dailyLogService';
 import DigitalSignaturePad from '../components/SignaturePad';
 import StatusBadge from '../components/StatusBadge';
 import {
@@ -104,11 +105,14 @@ const DELIVERY_RECORD_COMPLETION_FIELDS = [
   'unit_weight_lbs_ft3',
   'j_ring_in',
   'spread_in',
+  'row_status'
+];
+const STRENGTH_VERIFICATION_COMPLETION_FIELDS = [
   'set_number',
   'lab_cylinders',
   'field_cylinders'
 ];
-
+const RETEST_OPTIONAL_TIMING_FIELDS = new Set(['finish_unload', 'actual_minutes']);
 function toNullableNumber(value) {
   if (value === '' || value === null || value === undefined) return null;
   const numberValue = Number(value);
@@ -124,6 +128,11 @@ function hasEnteredValue(value) {
 }
 
 function normalizeFieldValue(value, field) {
+  if (field.valueType === 'boolean') {
+    if (value === true || value === 'true' || value === 'yes') return true;
+    if (value === false || value === 'false' || value === 'no') return false;
+    return false;
+  }
   if (field.valueType === 'number') return toNullableNumber(value);
   return toNullableText(value);
 }
@@ -137,7 +146,10 @@ function buildPayloadFromFields(fields, values) {
 
 function mapPayloadToFields(fields, payload = {}) {
   return fields.reduce((values, field) => {
-    values[field.key] = payload[field.dbColumn] ?? payload[field.key] ?? field.defaultValue ?? '';
+    const nextValue = payload[field.dbColumn] ?? payload[field.key] ?? field.defaultValue ?? '';
+    values[field.key] = field.valueType === 'boolean'
+      ? (nextValue === true || nextValue === 'true' || nextValue === 'yes' ? 'yes' : 'no')
+      : nextValue;
     return values;
   }, {});
 }
@@ -373,9 +385,15 @@ function getFieldValidationMessage() {
   return '';
 }
 
-function getRecordValidationErrors(record) {
+function getRecordValidationErrors(record, records = []) {
+  const requiredRecordFields = new Set([
+    ...workflow_validation.records.requiredFields,
+    ...getDeliveryRecordCompletionFields(record, records),
+    ...(isStrengthVerificationRequired(record) ? STRENGTH_VERIFICATION_COMPLETION_FIELDS : [])
+  ]);
+
   return deliveryRecordFields.reduce((fieldErrors, field) => {
-    const required = workflow_validation.records.requiredFields.includes(field.key);
+    const required = requiredRecordFields.has(field.key);
     const value = record[field.key];
 
     if (required && (value === '' || value === undefined || value === null)) {
@@ -395,16 +413,20 @@ function getMissingRequiredValueErrors({
   specifications,
   records,
   attachments,
-  includeSectionPrefix = false
+  includeSectionPrefix = false,
+  skipProjectRequirement = false,
+  skipAttachmentRequirement = false
 }) {
   const validationErrors = [];
   const sectionPrefix = (section) => (includeSectionPrefix ? `${section}: ` : '');
 
-  PROJECT_COMPLETION_FIELDS.forEach((key) => {
-    if (!hasEnteredValue(projectInfo[key])) {
-      validationErrors.push(`${sectionPrefix('Project Information')}${getFieldLabel(projectInfoFields, key)} is missing.`);
-    }
-  });
+  if (!skipProjectRequirement) {
+    PROJECT_COMPLETION_FIELDS.forEach((key) => {
+      if (!hasEnteredValue(projectInfo[key])) {
+        validationErrors.push(`${sectionPrefix('Project Information')}${getFieldLabel(projectInfoFields, key)} is missing.`);
+      }
+    });
+  }
 
   SPECIFICATION_COMPLETION_FIELDS.forEach((key) => {
     if (!hasEnteredValue(specifications[key])) {
@@ -417,18 +439,23 @@ function getMissingRequiredValueErrors({
   }
 
   records.forEach((record, index) => {
-    DELIVERY_RECORD_COMPLETION_FIELDS.forEach((key) => {
+    const requiredRecordFields = isStrengthVerificationRequired(record)
+      ? [...getDeliveryRecordCompletionFields(record, records), ...STRENGTH_VERIFICATION_COMPLETION_FIELDS]
+      : getDeliveryRecordCompletionFields(record, records);
+    requiredRecordFields.forEach((key) => {
       if (!hasEnteredValue(record[key])) {
         validationErrors.push(`${sectionPrefix('Delivery Records')}Record #${index + 1}: ${getFieldLabel(deliveryRecordFields, key)} is missing.`);
       }
     });
   });
 
-  const hasValidAttachment =
-    !workflow_validation.attachments.required ||
-    attachments.some((attachment) => workflow_validation.attachments.requiredCategories.includes(attachment.category));
-  if (!hasValidAttachment) {
-    validationErrors.push(`${sectionPrefix('Attachments')}Attach at least one ticket upload or scanned ticket.`);
+  if (!skipAttachmentRequirement) {
+    const hasValidAttachment =
+      !workflow_validation.attachments.required ||
+      attachments.some((attachment) => workflow_validation.attachments.requiredCategories.includes(attachment.category));
+    if (!hasValidAttachment) {
+      validationErrors.push(`${sectionPrefix('Attachments')}Attach at least one ticket upload or scanned ticket.`);
+    }
   }
 
   return validationErrors;
@@ -467,7 +494,7 @@ function getStepCompletion(stepId, projectInfo, specifications, records, attachm
 
   if (stepId === 'records') {
     if (records.length < workflow_validation.records.minRecords) return false;
-    return records.every((record) => DELIVERY_RECORD_COMPLETION_FIELDS.every((fieldKey) => hasEnteredValue(record[fieldKey])));
+    return records.every((record) => getDeliveryRecordCompletionFields(record, records).every((fieldKey) => hasEnteredValue(record[fieldKey])));
   }
 
   if (stepId === 'attachments') {
@@ -536,7 +563,7 @@ async function validateStep(stepId, {
       validationErrors.push('At least one delivery record is required.');
     }
     records.forEach((record, index) => {
-      const fieldErrors = getRecordValidationErrors(record);
+      const fieldErrors = getRecordValidationErrors(record, records);
       Object.entries(fieldErrors).forEach(([key, message]) => {
         validationErrors.push(`Record #${index + 1}: ${message}`);
         recordErrors[record.id] = {
@@ -573,10 +600,10 @@ async function validateStep(stepId, {
 
 function getRecordStatus(record, reportStatus = REPORT_STATUS.DRAFT) {
   const selectedStatus = String(record.row_status || '').toLowerCase();
-  if (selectedStatus === 'passed') {
+  if (selectedStatus === 'pass' || selectedStatus === 'passed') {
     return { label: 'PASS', tone: 'emerald', severity: 1, messages: [] };
   }
-  if (selectedStatus === 'failed') {
+  if (selectedStatus === 'fail' || selectedStatus === 'failed') {
     return { label: 'FAIL', tone: 'red', severity: 2, messages: [] };
   }
   if (selectedStatus === 'retest') {
@@ -587,19 +614,7 @@ function getRecordStatus(record, reportStatus = REPORT_STATUS.DRAFT) {
   if (!hasAnyRecordData) {
     return { label: 'Draft', tone: 'slate', severity: 0 };
   }
-
-  const normalizedStatus = normalizeReportStatus(reportStatus);
-  if ([REPORT_STATUS.DRAFT, REPORT_STATUS.REVISION_REQUIRED].includes(normalizedStatus)) {
-    return { label: 'Ready for Review', tone: 'amber', severity: 1, messages: [] };
-  }
-  if ([REPORT_STATUS.SUBMITTED_FOR_QC, REPORT_STATUS.UNDER_REVIEW, REPORT_STATUS.RESUBMITTED].includes(normalizedStatus)) {
-    return { label: WORKFLOW_LABELS.submittedForValidation, tone: 'amber', severity: 1, messages: [] };
-  }
-  if ([REPORT_STATUS.REJECTED, REPORT_STATUS.REVISION_REQUIRED].includes(normalizedStatus)) {
-    return { label: 'Revision Required', tone: 'red', severity: 2, messages: [] };
-  }
-
-  return { label: 'Approved', tone: 'emerald', severity: 1, messages: [] };
+  return { label: 'Missing Result', tone: 'red', severity: 2, messages: ['Record Result is required.'] };
 }
 
 function badgeClass(tone) {
@@ -644,6 +659,7 @@ const DELIVERY_REVIEW_COLUMNS = [
   { key: 'actual_minutes', label: 'Min' },
   { key: 'water_added_gal', label: 'Water' },
   { key: 'status', label: 'Status' },
+  { key: 'strength_verification', label: 'Strength Verification' },
   { key: 'air_temp_f', label: 'Air °F' },
   { key: 'concrete_temp_f', label: 'Conc °F' },
   { key: 'slump_in', label: 'Slump' },
@@ -675,6 +691,7 @@ function getDeliveryReviewRows(records, reportStatus = REPORT_STATUS.DRAFT) {
         actual_minutes: pdfValue(record.actual_minutes),
         water_added_gal: pdfValue(record.water_added_gal, '0'),
         status: recordStatus.label,
+        strength_verification: isStrengthVerificationRequired(record) ? 'Required' : 'Not Required',
         air_temp_f: pdfValue(record.air_temp_f),
         concrete_temp_f: pdfValue(record.concrete_temp_f),
         slump_in: pdfValue(record.slump_in),
@@ -940,6 +957,26 @@ function generateSetNumberWithOffset(projectName, recordIndex, sequenceOffset = 
   return `${prefix}-${sequence}`;
 }
 
+function isStrengthVerificationRequired(record) {
+  return record?.strength_verification_required === true ||
+    record?.strength_verification_required === 'true' ||
+    record?.strength_verification_required === 'yes';
+}
+
+function isRetestRelatedRecord(record, records = []) {
+  const status = String(record?.row_status || '').toLowerCase();
+  const comments = String(record?.comments || '').trim().toLowerCase();
+  return status === 'retest' ||
+    Boolean(record?.retestRecordId || record?.retestSourceRecordId) ||
+    records.some((item) => item?.retestRecordId && item.retestRecordId === record?.id) ||
+    comments.startsWith('retest');
+}
+
+function getDeliveryRecordCompletionFields(record, records = []) {
+  if (!isRetestRelatedRecord(record, records)) return DELIVERY_RECORD_COMPLETION_FIELDS;
+  return DELIVERY_RECORD_COMPLETION_FIELDS.filter((fieldKey) => !RETEST_OPTIONAL_TIMING_FIELDS.has(fieldKey));
+}
+
 async function fetchProjectSetNumberOffset(projectId, currentReportId = null) {
   try {
     const { data: logs, error: logsError } = await supabase
@@ -969,10 +1006,16 @@ async function fetchProjectSetNumberOffset(projectId, currentReportId = null) {
 function enrichDeliveryRecords(records, projectInfo, sequenceOffset = 0) {
   return records.map((record, index) => {
     const calculatedMinutes = calculateActualMinutes(record.time_batched, record.finish_unload);
+    const strengthRequired = isStrengthVerificationRequired(record);
     return {
       ...record,
       actual_minutes: calculatedMinutes || record.actual_minutes || '',
-      set_number: record.set_number || generateSetNumberWithOffset(projectInfo.project_name, index, sequenceOffset)
+      strength_verification_required: strengthRequired ? 'yes' : 'no',
+      set_number: strengthRequired ? (record.set_number || generateSetNumberWithOffset(projectInfo.project_name, index, sequenceOffset)) : '',
+      lab_cylinders: strengthRequired ? record.lab_cylinders : '',
+      field_cylinders: strengthRequired ? record.field_cylinders : '',
+      row_status: record.row_status === 'pending' ? '' : record.row_status || '',
+      comments: record.comments || ''
     };
   });
 }
@@ -986,12 +1029,15 @@ function setPdfText(doc, color = PDF_STYLE.navy, size = 10, style = 'normal') {
 function ensurePdfSpace(doc, cursor, neededHeight, margins) {
   const pageHeight = doc.internal.pageSize.getHeight();
   if (cursor.y + neededHeight <= pageHeight - margins.bottom) return cursor;
-  doc.addPage();
+  const pageWidth = doc.internal.pageSize.getWidth();
+  doc.addPage('letter', pageWidth > pageHeight ? 'landscape' : 'portrait');
   return { ...cursor, y: margins.top };
 }
 
 function startPdfPage(doc, margins) {
-  doc.addPage();
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  doc.addPage('letter', pageWidth > pageHeight ? 'landscape' : 'portrait');
   return { y: margins.top };
 }
 
@@ -1056,42 +1102,46 @@ function renderFieldGrid(doc, fields, cursor, margins, columns = 2) {
 
 async function renderHeader(doc, context, cursor, margins) {
   const pageWidth = doc.internal.pageSize.getWidth();
-  const headerHeight = 96;
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const isLandscape = pageWidth > pageHeight;
+  const headerHeight = isLandscape ? 76 : 96;
   const contentWidth = pageWidth - margins.left - margins.right;
 
   doc.setFillColor(...PDF_STYLE.navy);
   doc.roundedRect(margins.left, cursor.y, contentWidth, headerHeight, 10, 10, 'F');
 
   const companyLogo = await getPdfReadyImageData(context.companyLogoUrl, getDullesLogoDataUrl());
-  const companyLogoRendered = addPdfImageSafely(doc, companyLogo, margins.left + 12, cursor.y + 13, 68, 34);
+  const logoWidth = isLandscape ? 56 : 68;
+  const logoHeight = isLandscape ? 28 : 34;
+  const companyLogoRendered = addPdfImageSafely(doc, companyLogo, margins.left + 12, cursor.y + 10, logoWidth, logoHeight);
   if (!companyLogoRendered) {
     doc.setFillColor(...PDF_STYLE.white);
-    doc.roundedRect(margins.left + 14, cursor.y + 18, 52, 42, 8, 8, 'F');
+    doc.roundedRect(margins.left + 14, cursor.y + 14, 46, 34, 8, 8, 'F');
     setPdfText(doc, PDF_STYLE.navy, 13, 'bold');
-    doc.text('DE', margins.left + 40, cursor.y + 45, { align: 'center' });
+    doc.text('DE', margins.left + 37, cursor.y + 36, { align: 'center' });
   }
   setPdfText(doc, PDF_STYLE.white, 10, 'bold');
-  doc.text(pdfValue(context.companyName), margins.left + 14, cursor.y + 64);
+  doc.text(pdfValue(context.companyName), margins.left + 14, cursor.y + (isLandscape ? 51 : 64));
   setPdfText(doc, [203, 213, 225], 6.5, 'normal');
-  doc.text('Quality & Compliance Operations', margins.left + 14, cursor.y + 76);
+  doc.text('Quality & Compliance Operations', margins.left + 14, cursor.y + (isLandscape ? 62 : 76));
 
   const clientLogo = await urlToDataUrl(context.clientLogoUrl);
-  addPdfImageSafely(doc, clientLogo, pageWidth - margins.right - 62, cursor.y + 18, 48, 48);
+  addPdfImageSafely(doc, clientLogo, pageWidth - margins.right - 56, cursor.y + 14, 42, 42);
 
-  setPdfText(doc, PDF_STYLE.white, 20, 'bold');
-  doc.text('Field Operations Record', pageWidth / 2, cursor.y + 31, { align: 'center' });
+  setPdfText(doc, PDF_STYLE.white, isLandscape ? 17 : 20, 'bold');
+  doc.text('Field Operations Record', pageWidth / 2, cursor.y + (isLandscape ? 25 : 31), { align: 'center' });
   setPdfText(doc, [203, 213, 225], 10, 'bold');
-  doc.text(pdfValue(context.projectName), pageWidth / 2, cursor.y + 49, { align: 'center' });
+  doc.text(pdfValue(context.projectName), pageWidth / 2, cursor.y + (isLandscape ? 40 : 49), { align: 'center' });
 
   setPdfText(doc, [226, 232, 240], 8, 'normal');
-  doc.text(`DFR: ${pdfValue(context.dfrNumber)}`, pageWidth / 2, cursor.y + 68, { align: 'center' });
-  doc.text(`Date Sampled: ${context.dateSampled}`, pageWidth / 2, cursor.y + 81, { align: 'center' });
+  doc.text(`DFR: ${pdfValue(context.dfrNumber)}`, pageWidth / 2, cursor.y + (isLandscape ? 56 : 68), { align: 'center' });
+  doc.text(`Date Sampled: ${context.dateSampled}`, pageWidth / 2, cursor.y + (isLandscape ? 67 : 81), { align: 'center' });
 
-  drawStatusBadge(doc, context.status, context.statusTone, pageWidth - margins.right - 92, cursor.y + 70, 78);
+  drawStatusBadge(doc, context.status, context.statusTone, pageWidth - margins.right - 92, cursor.y + (isLandscape ? 50 : 70), 78);
   setPdfText(doc, [226, 232, 240], 8, 'bold');
-  doc.text(`Generated: ${context.generatedAt}`, margins.left + 14, cursor.y + 90);
+  doc.text(`Generated: ${context.generatedAt}`, margins.left + 14, cursor.y + (isLandscape ? 72 : 90));
 
-  return { ...cursor, y: cursor.y + headerHeight + 18 };
+  return { ...cursor, y: cursor.y + headerHeight + (isLandscape ? 12 : 18) };
 }
 
 function renderProjectInfo(doc, context, cursor, margins) {
@@ -1180,6 +1230,20 @@ function renderDeliveryRecords(doc, context, cursor, margins) {
     cursor = { ...cursor, y: margins.top };
   }
 
+  const contentWidth = doc.internal.pageSize.getWidth() - margins.left - margins.right;
+  const baseColumnWidths = [
+    20, 32, 32, 20, 29, 29, 29, 29, 22, 26, 36, 24, 28, 26, 22, 32, 28, 28, 24, 20, 22, 54
+  ];
+  const columnScale = contentWidth / baseColumnWidths.reduce((sum, width) => sum + width, 0);
+  const deliveryColumnStyles = baseColumnWidths.reduce((styles, width, index) => {
+    styles[index] = { cellWidth: width * columnScale };
+    return styles;
+  }, {});
+  deliveryColumnStyles[10] = { ...deliveryColumnStyles[10], halign: 'left' };
+  deliveryColumnStyles[21] = { ...deliveryColumnStyles[21], halign: 'left' };
+  const estimatedTableHeight = 34 + 18 + Math.max(context.deliveryRecords.length, 1) * 16 + 18;
+  cursor = ensurePdfSpace(doc, cursor, estimatedTableHeight, margins);
+
   cursor = drawSectionTitle(doc, 'Material Delivery & Verification Records', cursor, margins);
   if (!context.deliveryRecords.length) {
     setPdfText(doc, PDF_STYLE.slate, 10, 'bold');
@@ -1189,7 +1253,8 @@ function renderDeliveryRecords(doc, context, cursor, margins) {
 
   autoTable(doc, {
     startY: cursor.y,
-    margin: { left: 24, right: 24, top: margins.top, bottom: margins.bottom },
+    margin: { left: margins.left, right: margins.right, top: margins.top, bottom: margins.bottom },
+    tableWidth: contentWidth,
     theme: 'grid',
     showHead: 'everyPage',
     head: [[
@@ -1262,32 +1327,7 @@ function renderDeliveryRecords(doc, context, cursor, margins) {
       minCellHeight: 18
     },
     alternateRowStyles: { fillColor: [248, 250, 252] },
-    columnStyles: {
-      0: { cellWidth: 20 },
-      1: { cellWidth: 32 },
-      2: { cellWidth: 32 },
-      3: { cellWidth: 20 },
-      4: { cellWidth: 29 },
-      5: { cellWidth: 29 },
-      6: { cellWidth: 29 },
-      7: { cellWidth: 29 },
-      8: { cellWidth: 22 },
-      9: { cellWidth: 26 },
-      10: { cellWidth: 36, halign: 'left' },
-      11: { cellWidth: 24 },
-      12: { cellWidth: 28 },
-      13: { cellWidth: 26 },
-      14: { cellWidth: 22 },
-      15: { cellWidth: 32 },
-      16: { cellWidth: 28 },
-      17: { cellWidth: 28 },
-      18: { cellWidth: 24 },
-      19: { cellWidth: 20 },
-      20: { cellWidth: 22 },
-      21: { cellWidth: 54, halign: 'left' },
-      22: { cellWidth: 30, halign: 'left' },
-      23: { cellWidth: 44, halign: 'left' }
-    },
+    columnStyles: deliveryColumnStyles,
     didParseCell: (data) => {
       if (data.section !== 'body' || data.column.index !== 10) return;
       const status = String(data.cell.raw).toLowerCase();
@@ -1308,6 +1348,7 @@ function renderDeliveryRecords(doc, context, cursor, margins) {
 }
 
 function renderSummary(doc, context, cursor, margins) {
+  cursor = ensurePdfSpace(doc, cursor, 148, margins);
   cursor = drawSectionTitle(doc, 'Compliance Summary', cursor, margins);
   const summaryCards = [
     { label: 'Total Records', value: context.summary.totalRecords, tone: PDF_STYLE.blue },
@@ -1672,158 +1713,6 @@ async function removeGeneratedSignatureCaption(dataUrl) {
   }
 }
 
-async function embedPdfImage(pdfDocument, source) {
-  const bytes = await imageSourceToBytes(source);
-  if (!bytes) return null;
-
-  try {
-    return await pdfDocument.embedPng(bytes);
-  } catch {
-    try {
-      return await pdfDocument.embedJpg(bytes);
-    } catch {
-      return null;
-    }
-  }
-}
-
-async function appendSignaturePage(pdfBlob, context) {
-  const { PDFDocument, StandardFonts, rgb } = await import('pdf-lib');
-  const pdfDocument = await PDFDocument.load(await pdfBlob.arrayBuffer());
-  const page = pdfDocument.addPage([612, 792]);
-  const font = await pdfDocument.embedFont(StandardFonts.Helvetica);
-  const boldFont = await pdfDocument.embedFont(StandardFonts.HelveticaBold);
-  const technicianSignature = await embedPdfImage(pdfDocument, context.technicianSignatureUrl);
-  const qcSignature = await embedPdfImage(pdfDocument, context.qcSignatureUrl);
-
-  const marginLeft = 40;
-  const pageWidth = page.getWidth();
-  const contentWidth = pageWidth - marginLeft * 2;
-  const sectionY = 690;
-  const columnGap = 10;
-  const columnWidth = (contentWidth - columnGap * 2) / 3;
-
-  page.drawRectangle({
-    x: marginLeft,
-    y: sectionY,
-    width: contentWidth,
-    height: 24,
-    color: rgb(0.06, 0.09, 0.16)
-  });
-  page.drawText('SIGNATURES', {
-    x: marginLeft + 12,
-    y: sectionY + 8,
-    size: 10,
-    font: boldFont,
-    color: rgb(1, 1, 1)
-  });
-
-  const fields = [
-    {
-      label: 'FIELD ENGINEER SIGNATURE',
-      name: context.technicianName || '-',
-      image: technicianSignature
-    },
-    {
-      label: 'QUALITY REVIEWER SIGNATURE',
-      name: context.approvalBy || WORKFLOW_LABELS.validationReviewer,
-      image: qcSignature
-    },
-    {
-      label: 'DATE APPROVED',
-      name: context.approvedAt || '-',
-      image: null
-    }
-  ];
-
-  fields.forEach((field, index) => {
-    const x = marginLeft + index * (columnWidth + columnGap);
-    const lineY = sectionY - 68;
-    page.drawLine({
-      start: { x, y: lineY },
-      end: { x: x + columnWidth, y: lineY },
-      thickness: 0.6,
-      color: rgb(0.80, 0.84, 0.90)
-    });
-
-    if (field.image) {
-      const dims = field.image.scale(1);
-      const maxWidth = columnWidth - 14;
-      const maxHeight = 42;
-      const scale = Math.min(maxWidth / dims.width, maxHeight / dims.height);
-      page.drawImage(field.image, {
-        x: x + 7,
-        y: lineY + 8,
-        width: dims.width * scale,
-        height: dims.height * scale
-      });
-    } else if (field.label === 'DATE APPROVED') {
-      page.drawText(field.name, {
-        x: x + 7,
-        y: lineY + 22,
-        size: 9,
-        font,
-        color: rgb(0.06, 0.09, 0.16)
-      });
-    }
-
-    page.drawText(field.label, {
-      x,
-      y: lineY - 18,
-      size: 8,
-      font: boldFont,
-      color: rgb(0.28, 0.33, 0.41)
-    });
-    if (field.label !== 'DATE APPROVED') {
-      page.drawText(field.name, {
-        x,
-        y: lineY - 34,
-        size: 9,
-        font,
-        color: rgb(0.06, 0.09, 0.16)
-      });
-    }
-  });
-
-  const finalBytes = await pdfDocument.save();
-  return new Blob([finalBytes], { type: 'application/pdf' });
-}
-
-async function renderSignatures(doc, cursor, margins, context) {
-  cursor = drawSectionTitle(doc, 'Signatures', cursor, margins);
-  const pageWidth = doc.internal.pageSize.getWidth();
-  const width = (pageWidth - margins.left - margins.right - 20) / 3;
-  const labels = ['Field Engineer Signature', 'Quality Reviewer Signature', 'Date Approved'];
-  const technicianSignature = await urlToDataUrl(context.technicianSignatureUrl);
-  const qcSignature = await urlToDataUrl(context.qcSignatureUrl);
-  labels.forEach((label, index) => {
-    const x = margins.left + index * (width + 10);
-    doc.setDrawColor(...PDF_STYLE.border);
-    doc.line(x, cursor.y + 36, x + width, cursor.y + 36);
-    if (label === 'Field Engineer Signature' && technicianSignature) {
-      addPdfImageSafely(doc, technicianSignature, x, cursor.y + 2, width, 30);
-    }
-    if (label === 'Quality Reviewer Signature' && qcSignature) {
-      addPdfImageSafely(doc, qcSignature, x, cursor.y + 2, width, 30);
-    }
-    setPdfText(doc, PDF_STYLE.slate, 8, 'bold');
-    doc.text(label.toUpperCase(), x, cursor.y + 50);
-    if (label === 'Field Engineer Signature' && context.technicianName) {
-      setPdfText(doc, PDF_STYLE.navy, 8, 'normal');
-      doc.text(context.technicianName, x, cursor.y + 64);
-    }
-    if (label === 'Quality Reviewer Signature' && context.approvalBy) {
-      setPdfText(doc, PDF_STYLE.navy, 8, 'normal');
-      doc.text(context.approvalBy, x, cursor.y + 64);
-    }
-    if (label === 'Date Approved' && context.approvedAt) {
-      setPdfText(doc, PDF_STYLE.navy, 8, 'normal');
-      doc.text(context.approvedAt, x, cursor.y + 64);
-    }
-  });
-  return { ...cursor, y: cursor.y + 80 };
-}
-
 function drawApprovalSeal(doc) {
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
@@ -1905,7 +1794,8 @@ function TextAreaField({ label, value, onChange, register, name, error, readOnly
   );
 }
 
-function RecordStatusField({ value, onChange, readOnly = false }) {
+function RecordStatusField({ value, onChange, readOnly = false, error = '' }) {
+  const normalizedValue = value === 'pass' ? 'passed' : value === 'fail' ? 'failed' : value === 'pending' ? '' : value || '';
   const options = [
     { value: '', label: 'SELECT RESULT' },
     { value: 'passed', label: 'PASS' },
@@ -1919,22 +1809,46 @@ function RecordStatusField({ value, onChange, readOnly = false }) {
         Record Result
       </span>
       <select
-        value={value || ''}
+        value={normalizedValue}
         onChange={(event) => onChange(event.target.value)}
         disabled={readOnly}
-        className="h-11 w-full rounded-2xl border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-900 outline-none transition focus:border-blue-700 focus:ring-4 focus:ring-blue-100 disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-600"
+        className={`h-11 w-full rounded-2xl border bg-white px-3 text-sm font-semibold text-slate-900 outline-none transition disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-600 ${
+          error
+            ? 'border-red-500 focus:border-red-700 focus:ring-4 focus:ring-red-100'
+            : 'border-slate-300 focus:border-blue-700 focus:ring-4 focus:ring-blue-100'
+        }`}
       >
         {options.map((option) => (
           <option key={option.value} value={option.value}>{option.label}</option>
         ))}
       </select>
+      {error && <span className="mt-1 block text-xs font-semibold text-red-700">{error}</span>}
     </label>
   );
 }
 
 function ConcreteTestLog() {
-  const { projectId, reportId: routeReportId } = useParams();
+  const {
+    projectId: routeProjectId,
+    logId: routeDailyLogId,
+    activityId: routeActivityId,
+    reportId: routeReportId
+  } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
+  const queryParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
+  const projectId = routeProjectId || queryParams.get('projectId') || '1';
+  const concreteRouteReportId = routeReportId && /^\d+$/.test(String(routeReportId)) ? routeReportId : null;
+  const dailyLogContext = useMemo(() => {
+    return {
+      dailyLogId: queryParams.get('dailyLogId') || routeDailyLogId,
+      activityId: queryParams.get('activityId') || routeActivityId,
+      sourceReportId: queryParams.get('sourceReportId') || '',
+      returnTo: queryParams.get('returnTo') || (routeDailyLogId ? `/technician/daily-log/${routeDailyLogId}` : '/technician/dashboard?view=create-daily-log')
+    };
+  }, [queryParams, routeActivityId, routeDailyLogId]);
+  const isDailyLogReportContext = Boolean(dailyLogContext.dailyLogId && dailyLogContext.activityId);
+  const isDailyLogEditMode = isDailyLogReportContext && queryParams.get('mode') === 'edit';
   const { session, profile, role } = useAuth();
 
   const {
@@ -1958,7 +1872,7 @@ function ConcreteTestLog() {
   const [collapsedRecords, setCollapsedRecords] = useState({});
   const [attachments, setAttachments] = useState([]);
   const [uploadProgress, setUploadProgress] = useState({});
-  const [reportId, setReportId] = useState(() => routeReportId || window.sessionStorage.getItem(getReportSessionKey(projectId)) || null);
+  const [reportId, setReportId] = useState(() => concreteRouteReportId || (isDailyLogReportContext ? null : window.sessionStorage.getItem(getReportSessionKey(projectId))) || null);
   const [status, setStatus] = useState(REPORT_STATUS.DRAFT);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -1968,17 +1882,26 @@ function ConcreteTestLog() {
   const [revisionNo, setRevisionNo] = useState(1);
   const [approvalBy, setApprovalBy] = useState('');
   const [approvedAt, setApprovedAt] = useState('');
-  const [qcSignatureUrl, setQcSignatureUrl] = useState('');
   const [hasNonFormChanges, setHasNonFormChanges] = useState(false);
   const [errors, setErrors] = useState([]);
   const [attachmentPreview, setAttachmentPreview] = useState(null);
   const [generatedPdf, setGeneratedPdf] = useState(null);
   const [pdfGenerationStatus, setPdfGenerationStatus] = useState('');
   const [technicianSignature, setTechnicianSignature] = useState('');
+  const [technicianSignatureUrl, setTechnicianSignatureUrl] = useState('');
+  const [technicianSignatureStoragePath, setTechnicianSignatureStoragePath] = useState('');
   const [weatherLookupStatus, setWeatherLookupStatus] = useState('');
+  const visibleWorkflowSections = useMemo(
+    () => workflowSections.filter((step) => !isDailyLogReportContext || !['project', 'attachments'].includes(step.id)),
+    [isDailyLogReportContext]
+  );
+  const stepIds = useMemo(() => visibleWorkflowSections.map((step) => step.id), [visibleWorkflowSections]);
   const [activeStepIndex, setActiveStepIndex] = useState(0);
-  const stepIds = useMemo(() => workflowSections.map((step) => step.id), []);
   const activeStepId = stepIds[activeStepIndex] || 'project';
+  const nextWorkflowStep = visibleWorkflowSections[activeStepIndex + 1];
+  const nextWorkflowStepLabel = nextWorkflowStep?.id === 'summary'
+    ? 'Review'
+    : nextWorkflowStep?.shortLabel || nextWorkflowStep?.label || '';
   const lastAutosaveRef = useRef('');
   const errorsRef = useRef(null);
   const reportIdRef = useRef(reportId);
@@ -1989,13 +1912,21 @@ function ConcreteTestLog() {
   const weatherLookupAttemptedRef = useRef(false);
   const setNumberSequenceOffsetRef = useRef(0);
 
-  const isLocked = isStatusLocked(status);
+  const isLocked = isStatusLocked(status) && !isDailyLogEditMode;
   const hasUnsavedChanges = isDirty || hasNonFormChanges;
 
-  const visibleSpecificationFields = specificationFields.filter((field) => field.type !== 'textarea');
   const specificationCommentsField = specificationFields.find((field) => field.key === 'comments');
+  const specificationFieldByKey = useMemo(() => (
+    specificationFields.reduce((fields, field) => ({ ...fields, [field.key]: field }), {})
+  ), []);
   const currentSpecifications = getValues();
   const deliveryReviewRows = getDeliveryReviewRows(deliveryRecords, status);
+  const deliveryReviewColumns = useMemo(() => {
+    const hasStrengthVerification = deliveryRecords.some(isStrengthVerificationRequired);
+    return DELIVERY_REVIEW_COLUMNS.filter((column) => (
+      hasStrengthVerification || !['set_number', 'lab_cylinders', 'field_cylinders'].includes(column.key)
+    ));
+  }, [deliveryRecords]);
 
   const summary = useMemo(() => {
     const totalCubicYards = deliveryRecords.reduce(
@@ -2003,11 +1934,11 @@ function ConcreteTestLog() {
       0
     );
     const totalLabCylinders = deliveryRecords.reduce(
-      (sum, record) => sum + (toNullableNumber(record.lab_cylinders) || 0),
+      (sum, record) => sum + (isStrengthVerificationRequired(record) ? (toNullableNumber(record.lab_cylinders) || 0) : 0),
       0
     );
     const totalFieldCylinders = deliveryRecords.reduce(
-      (sum, record) => sum + (toNullableNumber(record.field_cylinders) || 0),
+      (sum, record) => sum + (isStrengthVerificationRequired(record) ? (toNullableNumber(record.field_cylinders) || 0) : 0),
       0
     );
     const failedTests = deliveryRecords.filter((record) => {
@@ -2036,12 +1967,15 @@ function ConcreteTestLog() {
   }, [deliveryRecords, status]);
 
   const stepCompletion = {
-    project: getStepCompletion('project', projectInfo, currentSpecifications, deliveryRecords, attachments),
+    project: isDailyLogReportContext ? true : getStepCompletion('project', projectInfo, currentSpecifications, deliveryRecords, attachments),
     specifications: getStepCompletion('specifications', projectInfo, currentSpecifications, deliveryRecords, attachments),
     records: getStepCompletion('records', projectInfo, currentSpecifications, deliveryRecords, attachments),
-    attachments: getStepCompletion('attachments', projectInfo, currentSpecifications, deliveryRecords, attachments),
-    summary: getStepCompletion('summary', projectInfo, currentSpecifications, deliveryRecords, attachments)
+    attachments: isDailyLogReportContext ? true : getStepCompletion('attachments', projectInfo, currentSpecifications, deliveryRecords, attachments)
   };
+  stepCompletion.summary = stepCompletion.project &&
+    stepCompletion.specifications &&
+    stepCompletion.records &&
+    stepCompletion.attachments;
 
   const workflowComplete = stepCompletion.summary;
   const normalizedStatus = normalizeReportStatus(status);
@@ -2076,8 +2010,8 @@ function ConcreteTestLog() {
     return state;
   }, {});
 
-  const completedSteps = workflowSections.filter((step) => step.id !== 'pdf' && stepCompletion[step.id]);
-  const pendingSteps = workflowSections.filter((step) => step.id !== 'pdf' && !stepCompletion[step.id]);
+  const completedSteps = visibleWorkflowSections.filter((step) => step.id !== 'pdf' && stepCompletion[step.id]);
+  const pendingSteps = visibleWorkflowSections.filter((step) => step.id !== 'pdf' && !stepCompletion[step.id]);
   const reviewUnlockErrors = activeStepId === 'attachments' && !stepState.summary?.unlocked
     ? getReviewUnlockErrors()
     : [];
@@ -2095,12 +2029,20 @@ function ConcreteTestLog() {
       specifications: getValues(),
       records: deliveryRecords,
       attachments,
-      includeSectionPrefix: true
+      includeSectionPrefix: true,
+      skipProjectRequirement: isDailyLogReportContext,
+      skipAttachmentRequirement: isDailyLogReportContext
     });
   }
   const reviewStepComplete = activeStepId === 'summary' && workflowComplete;
   const canSubmit = reviewStepComplete && !saving && !isLocked;
   const canGeneratePdf = !saving && (!isLocked || status === REPORT_STATUS.APPROVED || status === REPORT_STATUS.FINALIZED);
+
+  useEffect(() => {
+    if (activeStepIndex >= stepIds.length) {
+      setActiveStepIndex(Math.max(stepIds.length - 1, 0));
+    }
+  }, [activeStepIndex, stepIds.length]);
 
   useEffect(() => {
     reportIdRef.current = reportId;
@@ -2151,11 +2093,13 @@ function ConcreteTestLog() {
             return projectFields;
           }, {});
 
-          setNumberSequenceOffsetRef.current = await fetchProjectSetNumberOffset(projectId, reportIdRef.current || routeReportId || null);
+          setNumberSequenceOffsetRef.current = await fetchProjectSetNumberOffset(projectId, reportIdRef.current || concreteRouteReportId || null);
 
 	        setProjectInfo(nextProjectInfo);
 
-          const existingDfrNumber = window.sessionStorage.getItem(getDfrSessionKey(projectId));
+          const existingDfrNumber = reportIdRef.current || concreteRouteReportId
+            ? window.sessionStorage.getItem(getDfrSessionKey(projectId))
+            : '';
           const dfrNumber = await getUsableDfrNumber(getValues('dfr_number') || existingDfrNumber, nextProjectInfo.project_number, projectId, reportIdRef.current);
           window.sessionStorage.setItem(getDfrSessionKey(projectId), dfrNumber);
           reset(
@@ -2170,9 +2114,9 @@ function ConcreteTestLog() {
           // ONLY auto-load from database if we have a reportId but no data yet,
           // OR if we are explicitly on an edit/details route.
           // DO NOT auto-load abandoned drafts from the database when on the "create" route.
-          if (!reportIdRef.current && routeReportId) {
-            reportIdRef.current = routeReportId;
-            setReportId(routeReportId);
+          if (!reportIdRef.current && concreteRouteReportId) {
+            reportIdRef.current = concreteRouteReportId;
+            setReportId(concreteRouteReportId);
           }
 
           if (!reportIdRef.current) {
@@ -2199,7 +2143,7 @@ function ConcreteTestLog() {
               
               // If we auto-loaded this from sessionStorage but it's already submitted/approved,
               // and we're NOT on an explicit edit route, then clear it and start fresh.
-              if (!routeReportId && !['DRAFT', 'REVISION_REQUIRED'].includes(normalizedStatus)) {
+              if (!concreteRouteReportId && !['DRAFT', 'REVISION_REQUIRED'].includes(normalizedStatus)) {
                 console.log('Clearing finished report from session storage:', reportIdRef.current);
                 window.sessionStorage.removeItem(getReportSessionKey(projectId));
                 window.sessionStorage.removeItem(getDfrSessionKey(projectId));
@@ -2210,11 +2154,15 @@ function ConcreteTestLog() {
                 return;
               }
 
-              setStatus(normalizedStatus);
+              const editableRecalledStatus = isDailyLogEditMode && isStatusLocked(normalizedStatus)
+                ? REPORT_STATUS.DRAFT
+                : normalizedStatus;
+              setStatus(editableRecalledStatus);
               setRevisionNo(savedReport.revision_no || 1);
               if (savedReport?.reviewed_by_name || savedReport?.approved_by) setApprovalBy(savedReport.reviewed_by_name || savedReport.approved_by);
               if (savedReport?.approved_at) setApprovedAt(savedReport.approved_at);
-              if (savedReport?.qc_signature_url) setQcSignatureUrl(savedReport.qc_signature_url);
+              if (savedReport?.technician_signature_url) setTechnicianSignatureUrl(savedReport.technician_signature_url);
+              if (savedReport?.technician_signature_storage_path) setTechnicianSignatureStoragePath(savedReport.technician_signature_storage_path);
               const loadedProjectInfo = mapPayloadToFields(projectInfoFields, savedReport);
               setProjectInfo((previous) => ({ ...previous, ...loadedProjectInfo }));
 
@@ -2297,7 +2245,7 @@ function ConcreteTestLog() {
     }
 
     initializeConcreteLog();
-  }, [getValues, projectId, reset, setValue]);
+  }, [concreteRouteReportId, getValues, isDailyLogEditMode, projectId, reset, setValue]);
 
   useEffect(() => {
     if (!loading && !getValues('dfr_number') && projectInfo.project_number) {
@@ -2387,7 +2335,13 @@ function ConcreteTestLog() {
             ...sourceRecord,
             id: retestId,
             set_number: '',
+            time_batched: '',
+            arrival_time: '',
+            time_tested: '',
+            finish_unload: '',
+            actual_minutes: '',
             row_status: '',
+            retestSourceRecordId: sourceRecord.id,
             comments: sourceRecord.comments ? `Retest: ${sourceRecord.comments}` : 'Retest record'
           };
           const updatedSource = { ...sourceRecord, row_status: value, retestRecordId: retestId };
@@ -2403,6 +2357,11 @@ function ConcreteTestLog() {
       const updatedRecords = previous.map((record) => {
         if (record.id !== recordId) return record;
         const nextRecord = { ...record, [fieldName]: value };
+        if (fieldName === 'strength_verification_required' && value !== 'yes') {
+          nextRecord.set_number = '';
+          nextRecord.lab_cylinders = '';
+          nextRecord.field_cylinders = '';
+        }
         if (['time_batched', 'finish_unload'].includes(fieldName)) {
           nextRecord.actual_minutes = calculateActualMinutes(nextRecord.time_batched, nextRecord.finish_unload);
         }
@@ -2480,7 +2439,9 @@ function ConcreteTestLog() {
       records.map((record, index) => ({
         ...record,
         test_number: String(index + 1),
-        set_number: record.set_number || generateSetNumberWithOffset(projectInfo.project_name, index, setNumberSequenceOffsetRef.current)
+        set_number: isStrengthVerificationRequired(record)
+          ? (record.set_number || generateSetNumberWithOffset(projectInfo.project_name, index, setNumberSequenceOffsetRef.current))
+          : ''
       })),
       projectInfo,
       setNumberSequenceOffsetRef.current
@@ -2587,18 +2548,23 @@ function ConcreteTestLog() {
       projectInfo,
       specifications: getValues(),
       records: deliveryRecords,
-      attachments
+      attachments,
+      skipProjectRequirement: isDailyLogReportContext,
+      skipAttachmentRequirement: isDailyLogReportContext
     });
   }
 
   const buildLogPayload = useCallback((nextStatus = REPORT_STATUS.DRAFT, nextRevision = revisionNo) => ({
     project_id: Number(projectId),
+    daily_log_id: dailyLogContext.dailyLogId || null,
+    activity_id: dailyLogContext.activityId || null,
+    source_report_id: dailyLogContext.sourceReportId || null,
     status: nextStatus,
     revision_no: nextRevision,
     dfr_number: getValues('dfr_number'),
     rejection_reason: nextStatus === REPORT_STATUS.REJECTED ? undefined : null,
     ...buildPayloadFromFields(projectInfoFields, projectInfo)
-  }), [getValues, projectId, projectInfo, revisionNo]);
+  }), [dailyLogContext.activityId, dailyLogContext.dailyLogId, dailyLogContext.sourceReportId, getValues, projectId, projectInfo, revisionNo]);
 
   const buildSpecificationPayload = useCallback((logId) => ({
     log_id: logId,
@@ -2859,6 +2825,78 @@ function ConcreteTestLog() {
     }
   }
 
+  function buildDailyLogConcreteReportSummary(logId, statusLabel, pdfMetadata = {}) {
+    const specifications = getValues();
+    const firstRecord = deliveryRecords[0] || {};
+    const statusConfig = getStatusBadgeConfig(normalizeReportStatus(status));
+
+    return {
+      id: dailyLogContext.sourceReportId || `concrete-report-${logId}`,
+      linkedReportId: logId,
+      type: 'Concrete Report',
+      status: statusLabel || statusConfig.label || 'Draft',
+      dfrNumber: specifications.dfr_number || '',
+      mixNumber: specifications.mix_number || '',
+      placementLocation: firstRecord.placement_location || projectInfo.project_location || '',
+      ticketNumber: firstRecord.ticket_number || '',
+      truckNumber: firstRecord.truck_number || '',
+      cubicYards: firstRecord.cubic_yards || '',
+      slump: firstRecord.slump_in || specifications.slump_in || '',
+      airContent: firstRecord.air_content_percent || specifications.air_content_percent || '',
+      concreteTemperature: firstRecord.concrete_temp_f || specifications.concrete_temp_f || '',
+      strengthVerificationRequired: isStrengthVerificationRequired(firstRecord),
+      setNumber: isStrengthVerificationRequired(firstRecord) ? firstRecord.set_number || '' : '',
+      labSamples: isStrengthVerificationRequired(firstRecord) ? firstRecord.lab_cylinders || '' : '',
+      fieldSamples: isStrengthVerificationRequired(firstRecord) ? firstRecord.field_cylinders || '' : '',
+      recordResult: firstRecord.row_status || '',
+      inspectorNotes: firstRecord.comments || '',
+      cylinders: isStrengthVerificationRequired(firstRecord) ? [firstRecord.lab_cylinders, firstRecord.field_cylinders].filter(Boolean).join(' / ') : '',
+      notes: firstRecord.comments || specifications.comments || '',
+      specifications,
+      deliveryRecords,
+      summary,
+      pdfUrl: pdfMetadata.pdfAccessUrl || pdfMetadata.pdfUrl || '',
+      pdf_url: pdfMetadata.pdfAccessUrl || pdfMetadata.pdfUrl || '',
+      pdfStoragePath: pdfMetadata.path || pdfMetadata.pdfStoragePath || '',
+      pdf_storage_path: pdfMetadata.path || pdfMetadata.pdfStoragePath || '',
+      pdfFileName: pdfMetadata.pdfFileName || '',
+      pdf_file_name: pdfMetadata.pdfFileName || '',
+      pdfGeneratedAt: pdfMetadata.pdfGeneratedAt || '',
+      pdf_generated_at: pdfMetadata.pdfGeneratedAt || '',
+      pdfGenerationStatus: pdfMetadata.pdfGenerationStatus || (pdfMetadata.pdfAccessUrl ? 'generated' : 'pending'),
+      pdf_generation_status: pdfMetadata.pdfGenerationStatus || (pdfMetadata.pdfAccessUrl ? 'generated' : 'pending'),
+      createdDate: new Date().toISOString()
+    };
+  }
+
+  async function submitReportToDailyLog() {
+    if (!canSubmit) {
+      const unlockErrors = getReviewUnlockErrors();
+      setErrors(unlockErrors.length ? unlockErrors : ['Complete all required workflow sections before completing this report.']);
+      return;
+    }
+    const validationErrors = validateReport();
+    if (validationErrors.length > 0) {
+      setErrors(validationErrors);
+      return;
+    }
+
+    try {
+      const logId = await saveReportData(REPORT_STATUS.GENERATED);
+      if (!logId) return;
+      attachConcreteReportToActivity(
+        dailyLogContext.dailyLogId,
+        dailyLogContext.activityId,
+        buildDailyLogConcreteReportSummary(logId, 'Completed')
+      );
+      window.location.assign(dailyLogContext.returnTo || `/technician/daily-log/${dailyLogContext.dailyLogId}`);
+    } catch (error) {
+      console.error('Daily Log report completion failed', error);
+      const message = error.message || 'Concrete report could not be completed.';
+      setErrors([message]);
+    }
+  }
+
   async function submitReport() {
     if (!canSubmit) {
       const unlockErrors = getReviewUnlockErrors();
@@ -2875,7 +2913,7 @@ function ConcreteTestLog() {
       setShowSubmitConfirmation(false);
       return;
     }
-    if (!technicianSignature) {
+    if (!technicianSignature && !technicianSignatureUrl) {
       setErrors(['Field engineer digital signature is required before submitting for quality review.']);
       return;
     }
@@ -2885,7 +2923,13 @@ function ConcreteTestLog() {
         ? REPORT_STATUS.RESUBMITTED
         : REPORT_STATUS.SUBMITTED_FOR_QC;
       const logId = await saveReportData(REPORT_STATUS.GENERATED);
-      const { signatureUrl, signaturePath } = await uploadTechnicianSignature(logId);
+      let signatureUrl = technicianSignatureUrl;
+      let signaturePath = technicianSignatureStoragePath;
+      if (technicianSignature) {
+        const uploadedSignature = await uploadTechnicianSignature(logId);
+        signatureUrl = uploadedSignature.signatureUrl;
+        signaturePath = uploadedSignature.signaturePath;
+      }
       setPdfGenerationStatus('Generating quality review PDF...');
       const { pdfBlob, pdfFileName } = await createEngineeringPdfDocument(submittingStatus, {
         technicianSignatureUrl: signatureUrl
@@ -2919,6 +2963,8 @@ function ConcreteTestLog() {
             .update(nextPayload)
             .eq('id', logId)
       );
+      setTechnicianSignatureUrl(signatureUrl);
+      setTechnicianSignatureStoragePath(signaturePath);
       await addReviewHistory({
         reportId: logId,
         action: submittingStatus,
@@ -3008,8 +3054,8 @@ function ConcreteTestLog() {
 
   async function createEngineeringPdfDocument(targetStatus = status, overrides = {}) {
     const normalizedTargetStatus = normalizeReportStatus(targetStatus);
-    const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'letter' });
-    const margins = { top: 36, right: 40, bottom: 50, left: 40 };
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'letter' });
+    const margins = { top: 28, right: 32, bottom: 36, left: 32 };
     const specifications = getValues();
     const generatedAt = formatPdfTimestamp(new Date());
     const isFinalApproved = [REPORT_STATUS.APPROVED, REPORT_STATUS.FINALIZED].includes(normalizedTargetStatus);
@@ -3026,8 +3072,6 @@ function ConcreteTestLog() {
       statusTone: getStatusTone(normalizedTargetStatus),
       projectName: projectInfo.project_name,
       technicianName: projectInfo.technician_name,
-      technicianSignatureUrl: overrides.technicianSignatureUrl || '',
-      qcSignatureUrl: overrides.qcSignatureUrl || qcSignatureUrl,
       reviewerName: projectInfo.qc_rep || WORKFLOW_LABELS.validationReviewer,
       approvalBy: approvalBy || projectInfo.qc_rep || WORKFLOW_LABELS.validationReviewer,
       approvedAt: approvedAt ? new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'short', day: '2-digit' }).format(new Date(approvedAt)) : '',
@@ -3041,12 +3085,15 @@ function ConcreteTestLog() {
       companyName: COMPANY_NAME,
       revision: revisionNo || 1,
       companyLogoUrl: projectInfo.company_logo_url || companyLogoStorageData?.signedUrl || COMPANY_LOGO_URL,
-      clientLogoUrl: projectInfo.client_logo_url || ''
+      clientLogoUrl: projectInfo.client_logo_url || '',
+      skipProjectInfo: isDailyLogReportContext
     };
 
       let cursor = { y: margins.top };
       cursor = await renderHeader(doc, pdfContext, cursor, margins);
-      cursor = renderProjectInfo(doc, pdfContext, cursor, margins);
+      if (!pdfContext.skipProjectInfo) {
+        cursor = renderProjectInfo(doc, pdfContext, cursor, margins);
+      }
       cursor = renderSpecifications(doc, pdfContext, cursor, margins);
       cursor = renderDeliveryRecords(doc, pdfContext, cursor, margins);
       if (isFinalApproved || normalizedTargetStatus === REPORT_STATUS.SUBMITTED_FOR_QC || normalizedTargetStatus === REPORT_STATUS.UNDER_REVIEW || normalizedTargetStatus === REPORT_STATUS.RESUBMITTED) {
@@ -3057,9 +3104,6 @@ function ConcreteTestLog() {
       renderFooter(doc, pdfContext, margins);
 
       let pdfBlob = await mergePdfAttachments(doc.output('blob'), attachments);
-    if (isFinalApproved || normalizedTargetStatus === REPORT_STATUS.SUBMITTED_FOR_QC || normalizedTargetStatus === REPORT_STATUS.UNDER_REVIEW || normalizedTargetStatus === REPORT_STATUS.RESUBMITTED) {
-      pdfBlob = await appendSignaturePage(pdfBlob, pdfContext);
-    }
     const pdfFileName = `${pdfContext.dfrNumber || 'field-operations-record'}.pdf`;
     return { pdfBlob, pdfFileName };
   }
@@ -3143,6 +3187,45 @@ function ConcreteTestLog() {
     }
   }
 
+  function renderSpecificationInput(key, label, className = '') {
+    const field = specificationFieldByKey[key];
+    if (!field) return null;
+    const readOnly = isLocked || field.readOnly;
+    const error = formErrors[field.key]?.message;
+    return (
+      <label key={field.key} className={`block min-w-0 ${className}`}>
+        <span className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-slate-500">{label || field.label}</span>
+        <input
+          type={field.type === 'number' ? 'text' : field.type}
+          step={field.type === 'number' ? undefined : field.step}
+          min={field.type === 'number' ? undefined : field.validation?.min}
+          max={field.type === 'number' ? undefined : field.validation?.max}
+          readOnly={readOnly}
+          {...register(field.key, getSpecificationRules(field))}
+          className={`h-11 w-full rounded-2xl border px-3 text-sm font-semibold text-slate-900 outline-none transition ${
+            readOnly
+              ? 'border-slate-200 bg-slate-100 text-slate-600'
+              : error
+              ? 'border-red-500 bg-white focus:border-red-700 focus:ring-4 focus:ring-red-100'
+              : 'border-slate-300 bg-white focus:border-blue-700 focus:ring-4 focus:ring-blue-100'
+          }`}
+        />
+        {error && <span className="mt-1 block text-xs font-semibold text-red-700">{error}</span>}
+      </label>
+    );
+  }
+
+  function renderDfrBadge(className = '') {
+    return (
+      <div className={`block min-w-0 ${className}`}>
+        <span className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-slate-500">DFR Number</span>
+        <div className="flex min-h-11 w-full items-center rounded-2xl border border-slate-200 bg-slate-100 px-4 text-sm font-bold text-slate-800">
+          {getValues('dfr_number') || 'Pending'}
+        </div>
+      </div>
+    );
+  }
+
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-100 text-sm font-semibold text-slate-700">
@@ -3164,11 +3247,11 @@ function ConcreteTestLog() {
           <div className="flex flex-wrap items-center gap-2 text-sm text-slate-600 sm:gap-3">
             <button
               type="button"
-              onClick={() => navigate(`/project/${projectId}`)}
+              onClick={() => navigate(isDailyLogReportContext ? dailyLogContext.returnTo : `/project/${projectId}`)}
               className="inline-flex min-h-11 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-800 shadow-sm hover:bg-slate-50"
             >
               <FolderKanban className="h-4 w-4" />
-              {MODULE_NAMES.projectHub}
+              {isDailyLogReportContext ? 'Back To Daily Log' : MODULE_NAMES.projectHub}
             </button>
             <StatusBadge status={status} />
             <span>Autosave: {saving ? 'Saving...' : hasUnsavedChanges ? 'Pending' : formatTimestamp(lastSavedAt)}</span>
@@ -3202,7 +3285,7 @@ function ConcreteTestLog() {
         <div className="space-y-5">
           <div className="sticky top-[76px] z-20 mb-4 rounded-3xl bg-white/95 px-3 py-3 shadow-sm shadow-slate-200/10 ring-1 ring-slate-200/70">
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:flex lg:flex-wrap">
-              {workflowSections.map((step, index) => {
+              {visibleWorkflowSections.map((step, index) => {
                 const { status, unlocked } = stepState[step.id] || { status: 'locked', unlocked: false };
                 const isActive = status === 'active';
                 const isComplete = status === 'completed';
@@ -3287,33 +3370,29 @@ function ConcreteTestLog() {
             <section className="rounded-3xl bg-white p-5 shadow-sm">
               <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
                 <div>
-                  <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Material Specifications</p>
+                  <p className="text-xs font-bold uppercase tracking-[0.28em] text-slate-500">Material Specifications</p>
                   <h2 className="mt-2 text-lg font-semibold text-slate-950">Inspection requirements</h2>
                 </div>
               </div>
-              <div className="grid gap-4 sm:grid-cols-2">
-                {visibleSpecificationFields.map((field) => (
-                  <Field
-                    key={field.key}
-                    label={field.label}
-                    type={field.type}
-                    step={field.step}
-                    min={field.validation?.min}
-                    max={field.validation?.max}
-                    register={register}
-                    name={field.key}
-                    rules={getSpecificationRules(field)}
-                    readOnly={isLocked || field.readOnly}
-                    error={formErrors[field.key]?.message}
-                  />
-                ))}
+              <div className="grid grid-cols-1 gap-x-5 gap-y-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(180px,0.4fr)]">
+                {renderSpecificationInput('air_content_percent', 'Air Content (%)')}
+                {renderSpecificationInput('unit_weight_lbs_ft3', 'Unit Weight (lbs/ft³)')}
+                {renderSpecificationInput('spread_in', 'Spread (in)')}
+                {renderSpecificationInput('slump_in', 'Slump (in)')}
+                {renderSpecificationInput('concrete_temp_f', 'Material Temp (°F)')}
+                {renderSpecificationInput('mix_number', 'Mix No.')}
+                {renderSpecificationInput('j_ring_in', 'J-Ring (in)')}
+                {renderSpecificationInput('speed_of_stress_psi', 'Specified Strength (PSI)')}
+                {renderDfrBadge()}
                 {specificationCommentsField && (
-                  <TextAreaField
-                    label={specificationCommentsField.label}
-                    register={register}
-                    name={specificationCommentsField.key}
-                    readOnly={isLocked}
-                  />
+                  <label className="block min-w-0 md:col-span-3">
+                    <span className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-slate-500">Comments</span>
+                    <textarea
+                      readOnly={isLocked}
+                      {...register(specificationCommentsField.key)}
+                      className="h-[120px] w-full resize-y rounded-2xl border border-slate-300 bg-white px-3 py-3 text-sm font-semibold text-slate-900 outline-none transition focus:border-blue-700 focus:ring-4 focus:ring-blue-100 disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-600"
+                    />
+                  </label>
                 )}
               </div>
               <div className="mt-6 flex justify-between">
@@ -3352,7 +3431,11 @@ function ConcreteTestLog() {
               <div className="space-y-4">
                 {deliveryRecords.map((record, recordIndex) => {
                   const collapsed = collapsedRecords[record.id];
-                  const recordStatus = getRecordStatus(record, status);
+                  const rawRecordStatus = getRecordStatus(record, status);
+                  const hasRecordResultError = Boolean(recordFieldErrors[record.id]?.row_status);
+                  const recordStatus = rawRecordStatus.label === 'Missing Result' && !hasRecordResultError
+                    ? { label: 'Draft', tone: 'slate', severity: 0, messages: [] }
+                    : rawRecordStatus;
                   return (
                     <article key={record.id} className="rounded-3xl bg-slate-50 shadow-sm">
                       <div className="flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
@@ -3401,16 +3484,9 @@ function ConcreteTestLog() {
                               <div className="mb-3 text-sm font-semibold uppercase tracking-[0.2em] text-slate-500">{group.title}</div>
                               <div className="grid gap-4 sm:grid-cols-2">
                                 {deliveryRecordFields
-                                  .filter((field) => field.section === group.key)
-                                  .map((field) =>
-                                    field.type === 'select' ? (
-                                      <RecordStatusField
-                                        key={field.key}
-                                        value={record[field.key]}
-                                        readOnly={isLocked}
-                                        onChange={(value) => updateDeliveryRecord(record.id, field.key, value)}
-                                      />
-                                    ) : field.type === 'textarea' ? (
+                                  .filter((field) => field.section === group.key && field.key !== 'strength_verification_required')
+                                  .map((field) => (
+                                    field.type === 'textarea' ? (
                                       <TextAreaField
                                         key={field.key}
                                         label={field.label}
@@ -3433,10 +3509,77 @@ function ConcreteTestLog() {
                                         error={recordFieldErrors[record.id]?.[field.key]}
                                       />
                                     )
-                                  )}
+                                  ))}
                               </div>
                             </div>
                           ))}
+                          <div className="rounded-3xl bg-white px-4 py-4 shadow-sm">
+                            <div className="grid gap-4 sm:grid-cols-2">
+                              {(() => {
+                                const strengthRequiredField = deliveryRecordFields.find((field) => field.key === 'strength_verification_required');
+                                const strengthFields = deliveryRecordFields.filter((field) => field.section === 'cylinder_tracking');
+                                return (
+                                  <>
+                                    <label className="block min-w-0">
+                                      <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
+                                        {strengthRequiredField.label}
+                                      </span>
+                                      <select
+                                        value={record.strength_verification_required || strengthRequiredField.defaultValue || 'no'}
+                                        onChange={(event) => updateDeliveryRecord(record.id, strengthRequiredField.key, event.target.value)}
+                                        disabled={isLocked}
+                                        className="h-11 w-full rounded-2xl border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-900 outline-none transition focus:border-blue-700 focus:ring-4 focus:ring-blue-100 disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-600"
+                                      >
+                                        {(strengthRequiredField.options || []).map((option) => (
+                                          <option key={option.value} value={option.value}>{option.label}</option>
+                                        ))}
+                                      </select>
+                                    </label>
+                                    {isStrengthVerificationRequired(record) && strengthFields.map((field) => (
+                                      <Field
+                                        key={field.key}
+                                        label={field.label}
+                                        type={field.type}
+                                        step={field.step}
+                                        min={field.validation?.min}
+                                        max={field.validation?.max}
+                                        value={record[field.key]}
+                                        readOnly={isLocked || field.readOnly}
+                                        onChange={(value) => updateDeliveryRecord(record.id, field.key, value)}
+                                        error={recordFieldErrors[record.id]?.[field.key]}
+                                      />
+                                    ))}
+                                  </>
+                                );
+                              })()}
+                            </div>
+                          </div>
+                          <div className="rounded-3xl bg-white px-4 py-4 shadow-sm">
+                            <div className="grid gap-4 md:grid-cols-2">
+                              <RecordStatusField
+                                value={record.row_status}
+                                readOnly={isLocked}
+                                onChange={(value) => updateDeliveryRecord(record.id, 'row_status', value)}
+                                error={recordFieldErrors[record.id]?.row_status}
+                              />
+                              <label className="block min-w-0 md:col-span-2">
+                                <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Inspector Notes</span>
+                                <textarea
+                                  readOnly={isLocked}
+                                  value={record.comments || ''}
+                                  onChange={(event) => updateDeliveryRecord(record.id, 'comments', event.target.value)}
+                                  className={`min-h-[100px] max-h-[140px] w-full resize-y rounded-2xl border px-3 py-3 text-sm font-medium text-slate-900 outline-none transition ${
+                                    isLocked
+                                      ? 'border-slate-200 bg-slate-100 text-slate-600'
+                                      : recordFieldErrors[record.id]?.comments
+                                      ? 'border-red-500 bg-white focus:border-red-700 focus:ring-4 focus:ring-red-100'
+                                      : 'border-slate-300 bg-white focus:border-blue-700 focus:ring-4 focus:ring-blue-100'
+                                  }`}
+                                />
+                                {recordFieldErrors[record.id]?.comments && <span className="mt-1 block text-xs font-semibold text-red-700">{recordFieldErrors[record.id].comments}</span>}
+                              </label>
+                            </div>
+                          </div>
                           {recordIndex === deliveryRecords.length - 1 && (
                             <div className="flex justify-end">
                               <button
@@ -3470,7 +3613,7 @@ function ConcreteTestLog() {
                   disabled={saving}
                   className="rounded-2xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:bg-slate-300 disabled:text-slate-500 disabled:cursor-not-allowed disabled:opacity-70"
                 >
-                  Next: Attachments
+                  Next: {nextWorkflowStepLabel || 'Review'}
                 </button>
               </div>
             </section>
@@ -3659,21 +3802,23 @@ function ConcreteTestLog() {
                   </div>
                 ))}
               </div>
-              <div className="mt-6 grid gap-4 lg:grid-cols-2">
-                <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-                  <div className="border-b border-slate-200 bg-slate-50 px-3 py-2">
-                    <p className="text-[10px] uppercase tracking-[0.24em] text-slate-500">PDF project preview</p>
-                    <h3 className="mt-0.5 text-sm font-semibold text-slate-950">Project Information</h3>
+              <div className={`mt-6 grid gap-4 ${isDailyLogReportContext ? 'lg:grid-cols-1' : 'lg:grid-cols-2'}`}>
+                {!isDailyLogReportContext && (
+                  <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+                    <div className="border-b border-slate-200 bg-slate-50 px-3 py-2">
+                      <p className="text-[10px] uppercase tracking-[0.24em] text-slate-500">PDF project preview</p>
+                      <h3 className="mt-0.5 text-sm font-semibold text-slate-950">Project Information</h3>
+                    </div>
+                    <dl className="grid sm:grid-cols-2">
+                      {projectInfoFields.map((field) => (
+                        <div key={field.key} className="border-b border-slate-100 px-3 py-2 last:border-b-0 sm:border-r sm:last:border-r-0">
+                          <dt className="text-[9px] font-semibold uppercase tracking-[0.16em] text-slate-500">{field.label}</dt>
+                          <dd className="mt-0.5 break-words text-xs font-semibold leading-5 text-slate-950">{pdfValue(projectInfo[field.key])}</dd>
+                        </div>
+                      ))}
+                    </dl>
                   </div>
-                  <dl className="grid sm:grid-cols-2">
-                    {projectInfoFields.map((field) => (
-                      <div key={field.key} className="border-b border-slate-100 px-3 py-2 last:border-b-0 sm:border-r sm:last:border-r-0">
-                        <dt className="text-[9px] font-semibold uppercase tracking-[0.16em] text-slate-500">{field.label}</dt>
-                        <dd className="mt-0.5 break-words text-xs font-semibold leading-5 text-slate-950">{pdfValue(projectInfo[field.key])}</dd>
-                      </div>
-                    ))}
-                  </dl>
-                </div>
+                )}
                 <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
                   <div className="border-b border-slate-200 bg-slate-50 px-3 py-2">
                     <p className="text-[10px] uppercase tracking-[0.24em] text-slate-500">PDF specifications preview</p>
@@ -3715,11 +3860,11 @@ function ConcreteTestLog() {
                 </div>
                 {deliveryReviewRows.length > 0 ? (
                   <>
-                  <div className="hidden rounded-2xl border border-slate-200 bg-white lg:block">
-                    <table className="w-full table-fixed border-collapse text-left text-[10px] text-slate-800 xl:text-[11px]">
+                  <div className="hidden overflow-x-auto rounded-2xl border border-slate-200 bg-white lg:block">
+                    <table className="min-w-[1680px] border-collapse text-left text-[10px] text-slate-800 xl:text-[11px]">
                       <thead className="bg-slate-950 text-white">
                         <tr>
-                          {DELIVERY_REVIEW_COLUMNS.map((column) => (
+                          {deliveryReviewColumns.map((column) => (
                             <th key={column.key} scope="col" className="whitespace-nowrap border-r border-slate-700 px-2 py-2 font-semibold last:border-r-0">
                               {column.label}
                             </th>
@@ -3729,8 +3874,8 @@ function ConcreteTestLog() {
                       <tbody>
                         {deliveryReviewRows.map((row, rowIndex) => (
                           <tr key={row.id} className={rowIndex % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
-                            {DELIVERY_REVIEW_COLUMNS.map((column) => (
-                              <td key={`${row.id}-${column.key}`} className="max-w-[160px] border-r border-t border-slate-200 px-2 py-2 align-top font-medium last:border-r-0">
+                            {deliveryReviewColumns.map((column) => (
+                              <td key={`${row.id}-${column.key}`} className="min-w-[70px] max-w-[180px] border-r border-t border-slate-200 px-2 py-2 align-top font-medium last:border-r-0">
                                 {column.key === 'status' ? (
                                   <span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em] ${badgeClass(row.status.tone)}`}>
                                     {row.values[column.key]}
@@ -3898,8 +4043,8 @@ function ConcreteTestLog() {
               <p className="mt-3 text-xs font-medium text-slate-500">
                 Signature file: {toSafeStorageName(projectInfo.technician_name)}_technician_digital_signature_{toSafeStorageName(getValues('dfr_number'))}.png
               </p>
-                  <p className={`mt-2 text-sm font-semibold ${technicianSignature ? 'text-emerald-700' : 'text-amber-700'}`}>
-                    {technicianSignature
+                  <p className={`mt-2 text-sm font-semibold ${technicianSignature || technicianSignatureUrl ? 'text-emerald-700' : 'text-amber-700'}`}>
+                    {technicianSignature || technicianSignatureUrl
                   ? `${WORKFLOW_LABELS.submitForValidation} is now available.`
                   : `Complete and save the field engineer signature to unlock ${WORKFLOW_LABELS.submitForValidation}.`}
               </p>
@@ -3915,7 +4060,7 @@ function ConcreteTestLog() {
                 icon={Send}
                 intent="neutral"
                 onClick={confirmSubmitReport}
-                disabled={!technicianSignature || saving}
+                disabled={(!technicianSignature && !technicianSignatureUrl) || saving}
                 loading={saving}
               />
             </div>
@@ -3964,6 +4109,16 @@ function ConcreteTestLog() {
               disabled={saving || isLocked}
               loading={saving}
             />
+            {isDailyLogReportContext && (
+              <ActionButton
+                label="Submit & Return To Daily Log"
+                icon={Send}
+                intent="neutral"
+                onClick={submitReportToDailyLog}
+                disabled={!canSubmit || saving || isLocked}
+                loading={saving}
+              />
+            )}
             {[REPORT_STATUS.APPROVED, REPORT_STATUS.FINALIZED].includes(status) && (
               <ActionButton
                 label="Generate Final PDF"
@@ -3973,14 +4128,16 @@ function ConcreteTestLog() {
                 disabled={!canGeneratePdf || saving}
               />
             )}
-            <ActionButton
-              label={WORKFLOW_LABELS.submitForValidation}
-              icon={Send}
-              intent="neutral"
-              onClick={submitReport}
-              disabled={!canSubmit || saving || isLocked}
-              loading={saving}
-            />
+            {!isDailyLogReportContext && (
+              <ActionButton
+                label={WORKFLOW_LABELS.submitForValidation}
+                icon={Send}
+                intent="neutral"
+                onClick={submitReport}
+                disabled={!canSubmit || saving || isLocked}
+                loading={saving}
+              />
+            )}
           </div>
         </div>
       </div>

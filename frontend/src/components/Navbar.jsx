@@ -1,5 +1,5 @@
 import { useLocation, useNavigate } from "react-router-dom";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   BarChart3,
   Bell,
@@ -11,7 +11,6 @@ import {
   FolderKanban,
   Home,
   LayoutDashboard,
-  LogOut,
   Menu,
   ShieldCheck,
   Users,
@@ -31,6 +30,8 @@ function Navbar() {
   const location = useLocation();
   const [profileOpen, setProfileOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const profileButtonRef = useRef(null);
+  const [profileMenuPosition, setProfileMenuPosition] = useState({ top: 76, right: 16 });
 
   const {
     session,
@@ -99,6 +100,43 @@ function Navbar() {
     setMobileMenuOpen(false);
     setProfileOpen(false);
   }
+
+  function openProfileMenu() {
+    const rect = profileButtonRef.current?.getBoundingClientRect();
+    if (rect) {
+      setProfileMenuPosition({
+        top: Math.min(rect.bottom + 8, window.innerHeight - 16),
+        right: Math.max(16, window.innerWidth - rect.right)
+      });
+    }
+    setProfileOpen((previous) => !previous);
+  }
+
+  useEffect(() => {
+    if (!profileOpen) return undefined;
+
+    function handleKeyDown(event) {
+      if (event.key === "Escape") setProfileOpen(false);
+    }
+
+    function handleViewportChange() {
+      const rect = profileButtonRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      setProfileMenuPosition({
+        top: Math.min(rect.bottom + 8, window.innerHeight - 16),
+        right: Math.max(16, window.innerWidth - rect.right)
+      });
+    }
+
+    document.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("resize", handleViewportChange);
+    window.addEventListener("scroll", handleViewportChange, true);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("resize", handleViewportChange);
+      window.removeEventListener("scroll", handleViewportChange, true);
+    };
+  }, [profileOpen]);
 
   async function handleLogout() {
 
@@ -199,40 +237,6 @@ function Navbar() {
           )}
 
         </div>
-
-        {/* ROLE BADGE */}
-
-        <div className="
-          hidden
-          rounded-2xl
-          bg-slate-100
-          px-4
-          py-2
-          border
-          border-slate-200
-          md:block
-        ">
-
-          <p className="
-            text-xs
-            uppercase
-            tracking-wide
-            text-slate-500
-            mb-1
-          ">
-            Assigned Role
-          </p>
-
-          <p className="
-            text-sm
-            font-semibold
-            text-slate-800
-          ">
-            {roleLabel || "Loading..."}
-          </p>
-
-        </div>
-
       </div>
 
       {/* RIGHT SECTION */}
@@ -249,8 +253,11 @@ function Navbar() {
         </button>
 
         <button
+          ref={profileButtonRef}
           type="button"
-          onClick={() => setProfileOpen((previous) => !previous)}
+          onClick={openProfileMenu}
+          aria-expanded={profileOpen}
+          aria-haspopup="menu"
           className="
             inline-flex
             items-center
@@ -293,63 +300,80 @@ function Navbar() {
         </button>
 
         {profileOpen && (
-          <div className="
-            absolute
-            right-0
-            top-14
-            z-50
-            w-[calc(100vw-2rem)]
-            max-w-80
-            rounded-3xl
-            border
-            border-slate-200
-            bg-white
-            p-4
-            text-sm
-            shadow-xl
-            shadow-slate-950/10
-          ">
-            <div className="flex items-center gap-3 border-b border-slate-100 pb-3">
-              <span className="flex h-11 w-11 items-center justify-center rounded-full bg-blue-700 font-bold text-white">
-                {initials}
-              </span>
-              <div className="min-w-0">
-                <p className="truncate font-semibold text-slate-950">{displayName}</p>
-                <p className="truncate text-xs text-slate-500">{session?.user?.email || "No email available"}</p>
+          <div className="fixed inset-0 z-[1000]">
+            <button
+              type="button"
+              className="absolute inset-0 cursor-default bg-transparent"
+              onClick={() => setProfileOpen(false)}
+              aria-label="Close profile menu"
+            />
+            <div
+              role="menu"
+              className="
+                fixed
+                left-4
+                right-4
+                max-h-[calc(100vh-6rem)]
+                overflow-y-auto
+                rounded-2xl
+                border
+                border-slate-200
+                bg-white
+                p-2
+                text-sm
+                shadow-2xl
+                shadow-slate-950/20
+                sm:left-auto
+                sm:w-72
+              "
+              style={{
+                top: `${profileMenuPosition.top}px`,
+                right: `${profileMenuPosition.right}px`
+              }}
+            >
+              <div className="border-b border-slate-100 px-3 py-3">
+                <p className="truncate text-sm font-bold text-slate-950">{displayName}</p>
+                <p className="truncate text-xs font-semibold text-slate-500">{session?.user?.email || "No email available"}</p>
+                <p className="mt-2 truncate text-xs font-bold uppercase tracking-[0.14em] text-slate-400">{roleLabel || "Field User"}</p>
+                <p className="mt-1 truncate text-xs font-semibold text-slate-600">{companyName || "Dulles Engineering"}</p>
               </div>
-            </div>
-            <div className="mt-3 space-y-2 text-slate-700">
-              <div className="flex justify-between gap-3">
-                <span className="font-medium text-slate-500">Role</span>
-                <span className="font-semibold text-slate-950">{roleLabel || "Viewer"}</span>
-              </div>
-              <div className="flex justify-between gap-3">
-                <span className="font-medium text-slate-500">Company</span>
-                <span className="truncate font-semibold text-slate-950">{companyName || "Dulles Engineering"}</span>
-              </div>
+              <nav className="mt-2 space-y-1">
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => handleNavigate(normalizedRole === ROLES.TECHNICIAN ? "/technician/dashboard?view=profile" : "/profile")}
+                  className="flex min-h-11 w-full items-center rounded-xl px-3 text-left text-sm font-bold text-slate-800 hover:bg-slate-100"
+                >
+                  My Profile
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => handleNavigate(normalizedRole === ROLES.TECHNICIAN ? "/technician/dashboard?view=notifications" : `${getRoleHomeRoute(role)}?view=notifications`)}
+                  className="flex min-h-11 w-full items-center rounded-xl px-3 text-left text-sm font-bold text-slate-800 hover:bg-slate-100"
+                >
+                  Notifications
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => handleNavigate(normalizedRole === ROLES.TECHNICIAN ? "/technician/dashboard?view=profile" : "/profile")}
+                  className="flex min-h-11 w-full items-center rounded-xl px-3 text-left text-sm font-bold text-slate-800 hover:bg-slate-100"
+                >
+                  Change Password
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={handleLogout}
+                  className="flex min-h-11 w-full items-center rounded-xl px-3 text-left text-sm font-bold text-rose-700 hover:bg-rose-50"
+                >
+                  Logout
+                </button>
+              </nav>
             </div>
           </div>
         )}
-
-        <button
-          onClick={handleLogout}
-          className="
-            hidden
-            rounded-2xl
-            bg-slate-900
-            px-5
-            py-2.5
-            text-sm
-            font-semibold
-            text-white
-            transition
-            hover:bg-slate-800
-            active:scale-95
-            sm:inline-flex
-          "
-        >
-          Logout
-        </button>
 
       </div>
 
@@ -377,29 +401,31 @@ function Navbar() {
               </button>
             </div>
 
-            <nav className="mt-5 space-y-2">
-              {mobileLinks.map(({ label, icon: Icon, path }) => (
-                <button
-                  key={path}
-                  type="button"
-                  onClick={() => handleNavigate(path)}
-                  className="flex min-h-[48px] w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-bold text-slate-800 hover:bg-slate-100"
-                >
-                  <Icon className="h-5 w-5 text-slate-500" />
-                  {label}
-                </button>
-              ))}
+            <nav className="mt-5 space-y-1 overflow-y-auto">
+              {mobileLinks.map(({ label, icon: Icon, path, section }) => {
+                if (section) {
+                  return (
+                    <p key={section} className="px-4 pt-4 pb-2 text-[11px] font-bold uppercase tracking-[0.22em] text-slate-400 first:pt-0">
+                      {section}
+                    </p>
+                  );
+                }
+                return (
+                  <button
+                    key={path}
+                    type="button"
+                    onClick={() => handleNavigate(path)}
+                    className="flex min-h-[48px] w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-bold text-slate-800 hover:bg-slate-100"
+                  >
+                    <Icon className="h-5 w-5 text-slate-500" />
+                    {label}
+                  </button>
+                );
+              })}
             </nav>
 
             <div className="mt-auto border-t border-slate-100 pt-4">
-              <button
-                type="button"
-                onClick={handleLogout}
-                className="flex min-h-[48px] w-full items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 py-3 text-sm font-bold text-white"
-              >
-                <LogOut className="h-5 w-5" />
-                Logout
-              </button>
+              <p className="px-4 text-xs font-semibold text-slate-500">Account actions are available from the profile menu.</p>
             </div>
           </aside>
         </div>

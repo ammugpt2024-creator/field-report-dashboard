@@ -66,20 +66,21 @@ function getNavKey(role) {
 }
 
 function Sidebar() {
-  const { role, roleLabel } = useAuth();
+  const { role } = useAuth();
   const location = useLocation();
   const navItems = navByRole[getNavKey(role)] || navByRole.client;
 
   return (
-    <aside className="sticky top-[73px] hidden h-[calc(100vh-73px)] w-72 shrink-0 overflow-y-auto border-r border-slate-200 bg-white px-4 py-5 lg:block">
-      <div className="rounded-3xl bg-slate-950 p-4 text-white">
-        <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-400">Workspace</p>
-        <p className="mt-2 text-lg font-bold">{roleLabel || "Operations"}</p>
-        <p className="mt-1 text-xs text-slate-300">Role-based command center</p>
-      </div>
-
-      <nav className="mt-5 space-y-1">
-        {navItems.map(({ label, path, icon: Icon, nested }) => {
+    <aside className="sticky top-[73px] hidden h-[calc(100vh-73px)] w-64 shrink-0 overflow-y-auto border-r border-slate-200 bg-white px-3 py-4 lg:block">
+      <nav className="space-y-1">
+        {navItems.map(({ label, path, icon: Icon, nested, section }) => {
+          if (section) {
+            return (
+              <p key={section} className="px-3 pt-4 pb-2 text-[11px] font-bold uppercase tracking-[0.22em] text-slate-400 first:pt-0">
+                {section}
+              </p>
+            );
+          }
           const basePath = path.split("?")[0];
           const active = location.pathname === basePath && (!path.includes("?") || `${location.pathname}${location.search}` === path);
           return (

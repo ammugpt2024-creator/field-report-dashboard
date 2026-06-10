@@ -1,7 +1,13 @@
+import { useEffect } from "react";
 import Navbar from "../components/Navbar";
 import Sidebar from "../components/Sidebar";
+import { validateRequiredStorageBuckets } from "../services/storageDiagnosticsService";
 
 function MainLayout({ children }) {
+  useEffect(() => {
+    validateRequiredStorageBuckets();
+  }, []);
+
   return (
     <div className="min-h-screen w-full max-w-full overflow-x-hidden bg-slate-100">
       <Navbar />

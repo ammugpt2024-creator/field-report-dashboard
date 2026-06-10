@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { supabase } from "../services/supabase";
 import { useAuth } from "../context/AuthContext";
 import FieldEngineerWorkspace from "../modules/field-engineer/FieldEngineerWorkspace";
@@ -14,7 +14,8 @@ import { ACTION_IDS, REPORT_STATUS } from "../workflow/workflowEngine";
 function TechnicianDashboard() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { session, profile, role } = useAuth();
+  const { logId, activityId, reportId } = useParams();
+  const { session, profile, role, companyName } = useAuth();
   const [reports, setReports] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -61,7 +62,35 @@ function TechnicianDashboard() {
   const collections = useMemo(() => getFieldEngineerCollections(enrichedReports), [enrichedReports]);
   const defaultProjectId = getDefaultProjectId(enrichedReports);
   const projectLabel = getCurrentProjectLabel(enrichedReports);
-  const view = new URLSearchParams(location.search).get("view") || "command-center";
+  const assignedProjects = useMemo(() => {
+    const map = new Map();
+    enrichedReports.forEach((report) => {
+      const id = report.project_id || defaultProjectId;
+      const name = report.project_name || report.projectLabel || projectLabel;
+      if (!id || !name) return;
+      map.set(String(id), {
+        id,
+        name,
+        number: report.project_number || String(id),
+        location: report.project_location || report.location || ""
+      });
+    });
+    if (!map.size && defaultProjectId && projectLabel) {
+      map.set(String(defaultProjectId), {
+        id: defaultProjectId,
+        name: projectLabel,
+        number: String(defaultProjectId),
+        location: ""
+      });
+    }
+    return Array.from(map.values());
+  }, [defaultProjectId, enrichedReports, projectLabel]);
+  const routeView = location.pathname === "/technician/activity-history"
+    ? "activity-history"
+    : location.pathname.includes("/concrete-report/")
+      ? "concrete-report"
+      : null;
+  const view = routeView || (logId ? "create-daily-log" : new URLSearchParams(location.search).get("view") || "command-center");
 
   function getFieldEngineerActions(report) {
     if ([REPORT_STATUS.DRAFT, REPORT_STATUS.GENERATED].includes(report.normalizedStatus)) {
@@ -127,10 +156,16 @@ function TechnicianDashboard() {
       collections={collections}
       defaultProjectId={defaultProjectId}
       projectLabel={projectLabel}
+      assignedProjects={assignedProjects}
+      companyName={companyName}
+      userId={session?.user?.id}
       loading={loading}
       error={error}
       discardingId={discardingId}
       navigate={navigate}
+      activeDailyLogId={logId}
+      activeActivityId={activityId}
+      activeReportId={reportId || new URLSearchParams(location.search).get("reportId") || ""}
       getActions={getFieldEngineerActions}
       onAction={handleReportAction}
       onDiscardDraft={discardDraft}

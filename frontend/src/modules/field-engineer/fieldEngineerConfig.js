@@ -4,32 +4,24 @@ import {
   Camera,
   ClipboardCheck,
   ClipboardList,
-  FileClock,
   FileText,
   Gauge,
   HardHat,
   Layers3,
   Mic,
   PenLine,
-  Plus,
-  RotateCcw,
   ShieldAlert,
+  User,
   Upload,
   Wrench
 } from "lucide-react";
-import { MODULE_NAMES } from "../../config/branding";
 
 export const FIELD_ENGINEER_NAV = [
-  { label: MODULE_NAMES.commandCenter, path: "/technician/dashboard", icon: Gauge },
-  { label: MODULE_NAMES.fieldOps, path: "/technician/dashboard?view=field-operations", icon: HardHat },
-  { label: "Assigned Work", path: "/technician/dashboard?view=assigned-work", icon: ClipboardList, nested: true },
-  { label: "Create Inspection Record", path: "/technician/dashboard?view=create-inspection", icon: Plus, nested: true },
-  { label: "Active Tasks", path: "/technician/dashboard?view=active-tasks", icon: ClipboardCheck, nested: true },
-  { label: "Work In Progress", path: "/technician/dashboard?view=work-in-progress", icon: FileClock, nested: true },
-  { label: "Revisions", path: "/technician/dashboard?view=revisions", icon: RotateCcw, nested: true },
-  { label: "Upload Center", path: "/technician/dashboard?view=upload-center", icon: Upload, nested: true },
-  { label: "Site Records", path: "/technician/dashboard?view=site-records", icon: Layers3 },
-  { label: MODULE_NAMES.activityStream, path: "/technician/dashboard?view=activity-stream", icon: Bell }
+  { label: "Command Center", path: "/technician/dashboard", icon: Gauge },
+  { label: "Daily Logs", path: "/technician/dashboard?view=daily-logs", icon: ClipboardList },
+  { label: "Timesheets", path: "/technician/dashboard?view=time-cards", icon: FileText },
+  { label: "Profile", path: "/technician/dashboard?view=profile", icon: User },
+  { label: "Notifications", path: "/technician/dashboard?view=notifications", icon: Bell }
 ];
 
 export const INSPECTION_TEMPLATES = [

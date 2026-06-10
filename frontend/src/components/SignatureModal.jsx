@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import SignaturePad from './SignaturePad';
 
 export default function SignatureModal({
@@ -13,9 +14,16 @@ export default function SignatureModal({
   autoConfirmOnSave = false,
   signatureActionLabel = 'Save Signature'
 }) {
+  const [savedValue, setSavedValue] = useState(value || '');
+
+  useEffect(() => {
+    if (open) setSavedValue(value || '');
+  }, [open, value]);
+
   if (!open) return null;
 
   const handleSignatureSave = (nextValue) => {
+    setSavedValue(nextValue);
     onSave(nextValue);
     if (autoConfirmOnSave && nextValue) {
       onConfirm?.(nextValue);
@@ -41,7 +49,7 @@ export default function SignatureModal({
         <div className="p-6">
           <SignaturePad
             label="Draw your signature"
-            value={value}
+            value={savedValue}
             onSave={handleSignatureSave}
             disabled={disabled}
             saveLabel={signatureActionLabel}
@@ -52,7 +60,10 @@ export default function SignatureModal({
         <div className="flex flex-wrap items-center justify-end gap-3 border-t border-slate-200 bg-slate-50 px-6 py-4">
           {!autoConfirmOnSave && (
             <button
-              onClick={onClear}
+              onClick={() => {
+                setSavedValue('');
+                onClear?.();
+              }}
               disabled={disabled}
               className="rounded-2xl bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-900 hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
             >
@@ -67,7 +78,7 @@ export default function SignatureModal({
           </button>
           {!autoConfirmOnSave && (
             <button
-              onClick={onConfirm}
+              onClick={() => onConfirm?.(savedValue)}
               disabled={disabled}
               className="rounded-2xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
             >

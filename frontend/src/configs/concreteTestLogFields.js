@@ -127,7 +127,7 @@ export const specificationFields = [
 
   {
     key: 'concrete_temp_f',
-    label: 'Material Temp (°F)',
+    label: 'Allowable Temp (°F)',
     dbColumn: 'concrete_temp',
     type: 'text',
     valueType: 'text',
@@ -199,19 +199,21 @@ export const deliveryRecordFields = [
   { key: 'unit_weight_lbs_ft3', dbColumn: 'unit_weight_lbs_ft3', label: 'Unit Weight (lbs/ft³)', type: 'text', valueType: 'text', required: false, section: 'field_test_results', defaultValue: '', validation: null },
   { key: 'j_ring_in', dbColumn: 'j_ring_in', label: 'J-Ring (in)', type: 'text', valueType: 'text', required: false, section: 'field_test_results', defaultValue: '', validation: null },
   { key: 'spread_in', dbColumn: 'spread_in', label: 'Spread (in)', type: 'text', valueType: 'text', required: false, section: 'field_test_results', defaultValue: '', validation: null },
+  { key: 'strength_verification_required', dbColumn: 'strength_verification_required', label: 'Strength Verification Required?', type: 'select', valueType: 'boolean', required: false, section: 'field_test_results', defaultValue: 'no', options: [
+    { value: 'no', label: 'No' },
+    { value: 'yes', label: 'Yes' }
+  ] },
   { key: 'set_number', dbColumn: 'set_number', label: 'Set Number', type: 'text', valueType: 'text', readOnly: true, required: false, section: 'cylinder_tracking', defaultValue: '' },
   { key: 'lab_cylinders', dbColumn: 'lab_cylinders', label: 'Lab Samples', type: 'text', valueType: 'text', required: false, section: 'cylinder_tracking', defaultValue: '', validation: null },
   { key: 'field_cylinders', dbColumn: 'field_cylinders', label: 'Field Samples', type: 'text', valueType: 'text', required: false, section: 'cylinder_tracking', defaultValue: '', validation: null },
-  { key: 'comments', dbColumn: 'comments', label: 'Comments', type: 'textarea', valueType: 'text', required: false, section: 'inspector_notes', defaultValue: '' },
-  { key: 'row_status', dbColumn: 'row_status', label: 'Record Result', type: 'select', valueType: 'text', required: false, section: 'inspector_notes', defaultValue: '' }
+  { key: 'row_status', dbColumn: 'row_status', label: 'Record Result', type: 'select', valueType: 'text', required: true, section: 'strength_result', defaultValue: '' },
+  { key: 'comments', dbColumn: 'comments', label: 'Inspector Notes', type: 'textarea', valueType: 'text', required: false, section: 'strength_result', defaultValue: '' }
 ];
 
 export const deliveryRecordGroups = [
   { key: 'delivery_details', title: 'Delivery Details' },
   { key: 'time_tracking', title: 'Time Tracking' },
-  { key: 'field_test_results', title: 'Field Test Results' },
-  { key: 'cylinder_tracking', title: 'Strength Verification' },
-  { key: 'inspector_notes', title: 'Inspector Notes' }
+  { key: 'field_test_results', title: 'Field Test Results' }
 ];
 
 export const recordSummaryFields = ['truck_number', 'ticket_number', 'cubic_yards'];
