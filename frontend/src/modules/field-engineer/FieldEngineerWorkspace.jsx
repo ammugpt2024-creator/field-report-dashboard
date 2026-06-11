@@ -1972,40 +1972,40 @@ function TimeCardListRow({ card, activeTab, onOpen, onDelete, onRecall, onDownlo
       tabIndex={0}
       onClick={onOpen}
       onKeyDown={handleKeyDown}
-      className="cursor-pointer rounded-xl border border-stone-200 bg-white px-4 py-3 transition hover:border-stone-300 hover:bg-stone-50/70"
+      className="cursor-pointer rounded-xl border border-slate-200 bg-white px-4 py-3 transition hover:border-slate-300 hover:bg-slate-50/70"
     >
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-[140px_minmax(0,1fr)_190px_60px_60px_70px_130px_140px_200px] lg:items-center">
-        <p className="text-[15px] font-semibold text-stone-900">{getTimesheetNumber(card)}</p>
+        <p className="text-[15px] font-semibold text-slate-900">{getTimesheetNumber(card)}</p>
         <div className="min-w-0">
-          <p className="truncate text-sm font-semibold text-stone-900" title={projectSummary}>{projectSummary || "Assignment"}</p>
+          <p className="truncate text-sm font-semibold text-slate-900" title={projectSummary}>{projectSummary || "Assignment"}</p>
         </div>
-        <p className="whitespace-nowrap text-sm font-medium text-stone-700">{weekPeriod}</p>
-        <p className="text-sm font-semibold text-stone-900 lg:text-right">{card.totalRegularHours || card.total_regular_hours || "0.00"}</p>
-        <p className="text-sm font-semibold text-stone-900 lg:text-right">{card.totalOvertimeHours || card.total_overtime_hours || "0.00"}</p>
-        <p className="text-sm font-bold text-stone-900 lg:text-right">{card.totalHours || card.total_hours || "0.00"}</p>
+        <p className="whitespace-nowrap text-sm font-medium text-slate-700">{weekPeriod}</p>
+        <p className="text-sm font-semibold text-slate-900 lg:text-right">{card.totalRegularHours || card.total_regular_hours || "0.00"}</p>
+        <p className="text-sm font-semibold text-slate-900 lg:text-right">{card.totalOvertimeHours || card.total_overtime_hours || "0.00"}</p>
+        <p className="text-sm font-bold text-slate-900 lg:text-right">{card.totalHours || card.total_hours || "0.00"}</p>
         <p className="lg:pl-4">
           <span className={`inline-flex whitespace-nowrap rounded-full px-2.5 py-0.5 text-[13px] font-semibold ${getTimesheetStatusPillClass(card.status)}`}>
             {formatTimeCardStatus(card.status)}
           </span>
         </p>
-        <p className="whitespace-nowrap text-[13px] font-medium text-stone-500">{statusDate ? formatDateTime(statusDate) : "-"}</p>
+        <p className="whitespace-nowrap text-[13px] font-medium text-slate-500">{statusDate ? formatDateTime(statusDate) : "-"}</p>
 
         <div className="flex shrink-0 flex-nowrap items-center gap-2 whitespace-nowrap lg:justify-end" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
-          <button type="button" onClick={onOpen} className="inline-flex h-9 items-center justify-center rounded-lg bg-stone-900 px-4 text-[13px] font-semibold text-white transition hover:bg-stone-800">
+          <button type="button" onClick={onOpen} className="inline-flex h-9 items-center justify-center rounded-lg bg-slate-900 px-4 text-[13px] font-semibold text-white transition hover:bg-slate-800">
             {primaryLabel}
           </button>
           {activeTab === "draft" && (
-            <button type="button" onClick={onDelete} className="inline-flex h-9 items-center justify-center rounded-lg border border-stone-300 bg-white px-4 text-[13px] font-semibold text-rose-700 transition hover:border-rose-300 hover:bg-rose-50">
+            <button type="button" onClick={onDelete} className="inline-flex h-9 items-center justify-center rounded-lg border border-slate-300 bg-white px-4 text-[13px] font-semibold text-rose-700 transition hover:border-rose-300 hover:bg-rose-50">
               Delete
             </button>
           )}
           {activeTab === "submitted" && (
-            <button type="button" onClick={onRecall} className="inline-flex h-9 items-center justify-center rounded-lg border border-stone-300 bg-white px-4 text-[13px] font-semibold text-stone-700 transition hover:border-stone-400 hover:bg-stone-50">
+            <button type="button" onClick={onRecall} className="inline-flex h-9 items-center justify-center rounded-lg border border-slate-300 bg-white px-4 text-[13px] font-semibold text-slate-700 transition hover:border-slate-400 hover:bg-slate-50">
               Recall
             </button>
           )}
           {activeTab === "approved" && (
-            <button type="button" onClick={onDownloadPdf} disabled={!canDownloadPdf} className="inline-flex h-9 items-center justify-center rounded-lg border border-stone-300 bg-white px-4 text-[13px] font-semibold text-stone-700 transition hover:border-stone-400 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50">
+            <button type="button" onClick={onDownloadPdf} disabled={!canDownloadPdf} className="inline-flex h-9 items-center justify-center rounded-lg border border-slate-300 bg-white px-4 text-[13px] font-semibold text-slate-700 transition hover:border-slate-400 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50">
               Download PDF
             </button>
           )}
@@ -2034,14 +2034,14 @@ function WeekNavigator({ weekStartDate, weekEndDate, onNavigate, variant = "ligh
   const isDark = variant === "dark";
   const arrowClass = isDark
     ? "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-600 bg-slate-800/80 text-slate-200 shadow-sm transition hover:border-slate-500 hover:bg-slate-700 hover:text-white disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none disabled:hover:border-slate-600 disabled:hover:bg-slate-800/80 disabled:hover:text-slate-200"
-    : "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-stone-300 bg-white text-stone-600 transition hover:border-stone-400 hover:bg-stone-50 hover:text-stone-900 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-stone-300 disabled:hover:bg-white disabled:hover:text-stone-600";
+    : "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-600 transition hover:border-slate-400 hover:bg-slate-50 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-slate-300 disabled:hover:bg-white disabled:hover:text-slate-600";
   return (
     <div className={`flex items-center gap-2 ${isDark ? "rounded-xl border border-slate-700 bg-slate-800/60 px-2 py-1.5" : ""}`}>
       <button type="button" onClick={() => onNavigate(-1)} aria-label="Previous week" title="Previous week" className={arrowClass}>
         <ChevronLeft className="h-4 w-4" />
       </button>
-      <span className={`inline-flex min-w-[176px] items-center justify-center gap-2 text-sm font-semibold ${isDark ? "text-white" : "text-stone-900"}`}>
-        <CalendarDays className={`h-4 w-4 shrink-0 ${isDark ? "text-slate-400" : "text-stone-400"}`} />
+      <span className={`inline-flex min-w-[176px] items-center justify-center gap-2 text-sm font-semibold ${isDark ? "text-white" : "text-slate-900"}`}>
+        <CalendarDays className={`h-4 w-4 shrink-0 ${isDark ? "text-slate-400" : "text-slate-400"}`} />
         {formatWeekRange(weekStartDate, weekEndDate)}
       </span>
       <button type="button" onClick={() => onNavigate(1)} disabled={nextDisabled} aria-label="Next week" title={nextDisabled ? "Future weeks are not available" : "Next week"} className={arrowClass}>
@@ -2098,7 +2098,7 @@ const TIMESHEET_STATUS_PILL_CLASS = {
 };
 
 function getTimesheetStatusPillClass(status) {
-  return TIMESHEET_STATUS_PILL_CLASS[status] || "bg-stone-100 text-stone-700";
+  return TIMESHEET_STATUS_PILL_CLASS[status] || "bg-slate-100 text-slate-700";
 }
 
 function timesheetDayDate(weekStartDate, dayIndex) {
@@ -2361,15 +2361,15 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, assignedProj
     : "";
 
   return (
-    <section className="w-full rounded-2xl border border-stone-200 bg-[#fdfcf9] px-6 py-6 sm:px-8">
+    <section className="w-full rounded-2xl border border-slate-200 bg-white px-6 py-6 sm:px-8">
 
       {/* ── Header ── */}
       <header>
-        <p className="text-[13px] font-medium text-stone-500">
-          Timesheets <span aria-hidden="true">›</span> <span className="font-semibold text-stone-700">{getTimesheetNumber(card)}</span>
+        <p className="text-[13px] font-medium text-slate-500">
+          Timesheets <span aria-hidden="true">›</span> <span className="font-semibold text-slate-700">{getTimesheetNumber(card)}</span>
         </p>
         <div className="mt-2 flex flex-wrap items-center gap-3">
-          <h1 className="text-[28px] font-bold leading-tight tracking-tight text-stone-900">Weekly timesheet</h1>
+          <h1 className="text-[28px] font-bold leading-tight tracking-tight text-slate-900">Weekly timesheet</h1>
           <span className={`rounded-full px-3 py-1 text-[13px] font-semibold ${getTimesheetStatusPillClass(card.status)}`}>
             {formatTimeCardStatus(card.status)}
           </span>
@@ -2379,14 +2379,14 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, assignedProj
             </div>
           )}
         </div>
-        <dl className="mt-4 flex flex-wrap gap-x-10 gap-y-2 border-b border-stone-200 pb-5">
+        <dl className="mt-4 flex flex-wrap gap-x-10 gap-y-2 border-b border-slate-200 pb-5">
           <div>
-            <dt className="text-[13px] font-medium text-stone-500">Employee</dt>
-            <dd className="mt-0.5 text-[15px] font-semibold text-stone-900">{card.technicianName || card.technician_name || "-"}</dd>
+            <dt className="text-[13px] font-medium text-slate-500">Employee</dt>
+            <dd className="mt-0.5 text-[15px] font-semibold text-slate-900">{card.technicianName || card.technician_name || "-"}</dd>
           </div>
           <div>
-            <dt className="text-[13px] font-medium text-stone-500">Role</dt>
-            <dd className="mt-0.5 text-[15px] font-semibold text-stone-900">{card.technicianRole || card.technician_role || "Field Engineer"}</dd>
+            <dt className="text-[13px] font-medium text-slate-500">Role</dt>
+            <dd className="mt-0.5 text-[15px] font-semibold text-slate-900">{card.technicianRole || card.technician_role || "Field Engineer"}</dd>
           </div>
         </dl>
       </header>
@@ -2401,19 +2401,19 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, assignedProj
       )}
 
       {futureHoursCleared && (
-        <div className="mt-4 rounded-xl border border-stone-200 bg-stone-50 px-4 py-2.5 text-sm font-medium text-stone-600">
+        <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm font-medium text-slate-600">
           Hours logged on future dates were cleared — time can only be recorded for today or earlier.
         </div>
       )}
 
       {/* ── Hours by project ── */}
       <div className="mt-6 flex items-center justify-between">
-        <h2 className="text-xl font-bold tracking-tight text-stone-900">Hours by project</h2>
+        <h2 className="text-xl font-bold tracking-tight text-slate-900">Hours by project</h2>
         {canEditHours && (
           <button
             type="button"
             onClick={handleAddProject}
-            className="inline-flex min-h-10 items-center gap-1.5 rounded-xl border border-stone-300 bg-white px-4 text-sm font-semibold text-stone-800 transition hover:border-stone-400 hover:bg-stone-50"
+            className="inline-flex min-h-10 items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-800 transition hover:border-slate-400 hover:bg-slate-50"
           >
             <Plus className="h-4 w-4" /> Add project
           </button>
@@ -2421,10 +2421,10 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, assignedProj
       </div>
 
       {projectRows.length === 0 ? (
-        <div className="mt-4 rounded-2xl border border-dashed border-stone-300 bg-stone-50 px-4 py-10 text-center">
-          <p className="text-sm font-semibold text-stone-600">No projects added for this week.</p>
+        <div className="mt-4 rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-10 text-center">
+          <p className="text-sm font-semibold text-slate-600">No projects added for this week.</p>
           {canEditHours && (
-            <button type="button" onClick={handleAddProject} className="mt-3 inline-flex min-h-10 items-center gap-1.5 rounded-xl bg-stone-900 px-4 text-sm font-semibold text-white transition hover:bg-stone-800">
+            <button type="button" onClick={handleAddProject} className="mt-3 inline-flex min-h-10 items-center gap-1.5 rounded-xl bg-slate-900 px-4 text-sm font-semibold text-white transition hover:bg-slate-800">
               <Plus className="h-4 w-4" /> Add project
             </button>
           )}
@@ -2442,27 +2442,27 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, assignedProj
                 <col className="w-[11%]" />
               </colgroup>
               <thead>
-                <tr>
-                  <th className="px-2 pb-3 text-left text-base font-medium text-stone-500">Project</th>
+                <tr className="bg-slate-50">
+                  <th className="rounded-l-xl px-3 py-2 text-left text-[11px] font-bold uppercase tracking-[0.12em] text-slate-500">Project</th>
                   {TIMESHEET_DAY_COLUMNS.map((dayName, dayIndex) => {
                     const dayDate = dayDates[dayIndex];
                     const isToday = Boolean(dayDate) && dayDate.toDateString() === todayKey;
                     const isMuted = TIMESHEET_WEEKEND_DAYS.has(dayName) || isFutureTimesheetDay(dayDate);
                     return (
-                      <th key={dayName} className="px-1 pb-3 text-center align-bottom">
-                        <div className={`mx-auto rounded-t-lg px-1 pb-1 pt-2 text-base font-medium leading-tight ${isToday ? "bg-blue-100 text-blue-800" : isMuted ? "text-stone-400" : "text-stone-500"}`}>
+                      <th key={dayName} className="border-l border-slate-200/70 px-0.5 py-2 text-center align-middle">
+                        <div className={`mx-auto w-12 rounded-lg py-1 text-xs font-bold leading-tight ${isToday ? "bg-blue-700 text-white" : isMuted ? "text-slate-400" : "text-slate-600"}`}>
                           {TIMESHEET_DAY_LABELS[dayName]}
-                          <span className="block text-sm">{dayDate ? dayDate.getDate() : " "}</span>
+                          <span className={`block text-[11px] font-semibold ${isToday ? "text-blue-100" : "text-slate-400"}`}>{dayDate ? dayDate.getDate() : " "}</span>
                         </div>
                       </th>
                     );
                   })}
-                  <th className="px-2 pb-3 text-right text-base font-medium text-stone-500">Total</th>
+                  <th className="rounded-r-xl border-l border-slate-200/70 px-3 py-2 text-right text-[11px] font-bold uppercase tracking-[0.12em] text-slate-500">Total</th>
                 </tr>
               </thead>
               <tbody>
                 {projectRows.map((row) => (
-                  <tr key={row.id} className="group border-t border-stone-200">
+                  <tr key={row.id} className="group border-t border-slate-200">
                     <td className="px-2 py-3 align-middle">
                       {canEditHours ? (
                         <div className="min-w-0">
@@ -2472,31 +2472,31 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, assignedProj
                                 value={String(row.projectId || row.project_id || "")}
                                 onChange={(event) => handleProjectChange(row.id, event.target.value)}
                                 title={row.projectName || row.project_name || "Select project"}
-                                className="h-11 w-full appearance-none overflow-hidden text-ellipsis whitespace-nowrap rounded-xl border border-stone-300 bg-white pl-3 pr-8 text-[15px] font-semibold text-stone-900 outline-none transition hover:border-stone-400 focus:border-amber-500 focus:ring-2 focus:ring-amber-200"
+                                className="h-11 w-full appearance-none overflow-hidden text-ellipsis whitespace-nowrap rounded-xl border border-slate-300 bg-white pl-3 pr-8 text-[15px] font-semibold text-slate-900 outline-none transition hover:border-slate-400 focus:border-blue-700 focus:ring-2 focus:ring-blue-100"
                               >
                                 <option value="">Select project…</option>
                                 {projectOptionsFor(row).map((option) => (
                                   <option key={option.id} value={option.id}>{option.name}{option.number ? ` (#${option.number})` : ""}</option>
                                 ))}
                               </select>
-                              <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400" />
+                              <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                             </div>
-                            <button type="button" onClick={() => handleRemoveProject(row.id)} className="shrink-0 rounded-lg p-1 text-stone-400 opacity-0 transition-opacity hover:bg-stone-100 hover:text-rose-600 focus-visible:opacity-100 group-focus-within:opacity-100 group-hover:opacity-100" aria-label="Remove project">
+                            <button type="button" onClick={() => handleRemoveProject(row.id)} className="shrink-0 rounded-lg p-1 text-slate-400 opacity-0 transition-opacity hover:bg-slate-100 hover:text-rose-600 focus-visible:opacity-100 group-focus-within:opacity-100 group-hover:opacity-100" aria-label="Remove project">
                               <X className="h-4 w-4" />
                             </button>
                           </div>
                           {managerByProject[String(row.projectId || row.project_id || "")] && (
-                            <p className="mt-1 pl-1 text-xs font-medium text-stone-400" title={managerByProject[String(row.projectId || row.project_id || "")]?.email || ""}>
-                              Approver: <span className="text-stone-600">{managerByProject[String(row.projectId || row.project_id || "")]?.name}</span>
+                            <p className="mt-1 pl-1 text-xs font-medium text-slate-400" title={managerByProject[String(row.projectId || row.project_id || "")]?.email || ""}>
+                              Approver: <span className="text-slate-600">{managerByProject[String(row.projectId || row.project_id || "")]?.name}</span>
                             </p>
                           )}
                         </div>
                       ) : (
                         <div className="min-w-0">
-                          <p className="truncate text-[15px] font-semibold text-stone-900" title={row.projectName || row.project_name || ""}>
-                            {row.projectName || row.project_name || <span className="font-medium text-stone-400">No project</span>}
+                          <p className="truncate text-[15px] font-semibold text-slate-900" title={row.projectName || row.project_name || ""}>
+                            {row.projectName || row.project_name || <span className="font-medium text-slate-400">No project</span>}
                           </p>
-                          <p className="text-[13px] font-medium text-stone-500">
+                          <p className="text-[13px] font-medium text-slate-500">
                             {(row.projectNumber || row.project_number) ? `#${row.projectNumber || row.project_number}` : ""}
                             {managerByProject[String(row.projectId || row.project_id || "")] ? `${(row.projectNumber || row.project_number) ? " · " : ""}Approver: ${managerByProject[String(row.projectId || row.project_id || "")]?.name}` : ""}
                           </p>
@@ -2508,7 +2508,7 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, assignedProj
                       const isFutureDay = isFutureTimesheetDay(dayDate);
                       const isToday = Boolean(dayDate) && dayDate.toDateString() === todayKey;
                       return (
-                        <td key={dayName} className={`px-1 py-3 text-center align-middle ${isToday ? "bg-blue-100/60" : ""}`}>
+                        <td key={dayName} className={`border-l border-slate-100 px-0.5 py-2 text-center align-middle ${isToday ? "bg-blue-50/70" : ""}`}>
                           {canEditHours ? (
                             <input
                               type="text"
@@ -2519,28 +2519,28 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, assignedProj
                               title={isFutureDay ? "Hours cannot be logged for future dates" : undefined}
                               onChange={(event) => handleHoursChange(row.id, dayName, event.target.value)}
                               onBlur={() => handleHoursBlur(row.id, dayName)}
-                              className={`mx-auto h-11 w-full max-w-[52px] rounded-xl border text-center text-[15px] font-semibold outline-none transition ${isFutureDay ? "cursor-not-allowed border-dashed border-stone-300 bg-transparent text-stone-400 placeholder:text-stone-400" : isToday ? "border-amber-400 bg-amber-50 text-stone-900 focus:border-amber-500 focus:ring-2 focus:ring-amber-200" : "border-stone-300 bg-white text-stone-900 hover:border-stone-400 focus:border-amber-500 focus:ring-2 focus:ring-amber-200"}`}
+                              className={`mx-auto h-10 w-12 rounded-lg border text-center text-sm font-semibold outline-none transition ${isFutureDay ? "cursor-not-allowed border-dashed border-slate-200 bg-transparent text-slate-400 placeholder:text-slate-400" : isToday ? "border-blue-300 bg-white text-slate-900 focus:border-blue-700 focus:ring-2 focus:ring-blue-100" : "border-slate-200 bg-white text-slate-900 hover:border-slate-400 focus:border-blue-700 focus:ring-2 focus:ring-blue-100"}`}
                             />
                           ) : (
-                            <span className="text-[15px] font-semibold text-stone-900">{formatHours(row.hours?.[dayName])}</span>
+                            <span className="text-sm font-semibold text-slate-900">{formatHours(row.hours?.[dayName])}</span>
                           )}
                         </td>
                       );
                     })}
-                    <td className="px-2 py-3 text-right align-middle text-[15px] font-bold text-stone-900">{formatHours(getRowTotal(row))}</td>
+                    <td className="px-2 py-3 text-right align-middle text-[15px] font-bold text-slate-900">{formatHours(getRowTotal(row))}</td>
                   </tr>
                 ))}
-                <tr className="border-t-2 border-stone-300 bg-stone-100">
-                  <td className="rounded-l-xl px-2 py-3 text-sm font-semibold text-stone-600">Daily total</td>
+                <tr className="border-t-2 border-slate-200 bg-slate-50">
+                  <td className="rounded-l-xl px-3 py-2.5 text-xs font-bold uppercase tracking-[0.1em] text-slate-500">Daily total</td>
                   {TIMESHEET_DAY_COLUMNS.map((dayName, dayIndex) => {
                     const muted = (TIMESHEET_WEEKEND_DAYS.has(dayName) || isFutureTimesheetDay(dayDates[dayIndex])) && !Number(dailyTotals[dayName]);
                     return (
-                      <td key={dayName} className={`px-1 py-3 text-center text-[15px] font-semibold ${muted ? "text-stone-400" : "text-stone-900"}`}>
+                      <td key={dayName} className={`border-l border-slate-200/70 px-0.5 py-2.5 text-center text-sm font-bold ${muted ? "text-slate-400" : "text-slate-900"}`}>
                         {formatHours(dailyTotals[dayName])}
                       </td>
                     );
                   })}
-                  <td className="rounded-r-xl px-2 py-3 text-right text-[15px] font-bold text-stone-900">{totalHours}</td>
+                  <td className="rounded-r-xl border-l border-slate-200/70 px-3 py-2.5 text-right text-sm font-bold text-slate-950">{totalHours}</td>
                 </tr>
               </tbody>
             </table>
@@ -2553,19 +2553,19 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, assignedProj
               const isFutureDay = isFutureTimesheetDay(dayDate);
               const isToday = Boolean(dayDate) && dayDate.toDateString() === todayKey;
               return (
-                <div key={dayName} className={`rounded-2xl border ${isToday ? "border-blue-200 bg-blue-50/60" : "border-stone-200 bg-white"}`}>
+                <div key={dayName} className={`rounded-2xl border ${isToday ? "border-blue-200 bg-blue-50/60" : "border-slate-200 bg-white"}`}>
                   <div className="flex items-center justify-between px-4 py-2.5">
-                    <span className={`text-sm font-semibold ${isFutureDay ? "text-stone-400" : isToday ? "text-blue-900" : "text-stone-900"}`}>
+                    <span className={`text-sm font-semibold ${isFutureDay ? "text-slate-400" : isToday ? "text-blue-900" : "text-slate-900"}`}>
                       {dayName}{dayDate ? ` ${dayDate.getDate()}` : ""}
                     </span>
-                    <span className={`text-sm font-bold ${isFutureDay ? "text-stone-400" : "text-stone-900"}`}>{isFutureDay ? "–" : `${formatHours(dailyTotals[dayName])} hrs`}</span>
+                    <span className={`text-sm font-bold ${isFutureDay ? "text-slate-400" : "text-slate-900"}`}>{isFutureDay ? "–" : `${formatHours(dailyTotals[dayName])} hrs`}</span>
                   </div>
                   {!isFutureDay && (
                     <div className="space-y-2 px-4 pb-3">
                       {projectRows.map((row) => (
                         <label key={row.id} className="flex items-center justify-between gap-3 text-sm">
-                          <span className="min-w-0 flex-1 truncate font-medium text-stone-600">{row.projectName || row.project_name || "No project"}</span>
-                          <input type="text" inputMode="decimal" value={hourCellValue(row, dayName)} placeholder="" disabled={!canEditHours} onChange={(event) => handleHoursChange(row.id, dayName, event.target.value)} onBlur={() => handleHoursBlur(row.id, dayName)} className="h-10 w-20 rounded-xl border border-stone-300 px-2 text-center text-[15px] font-semibold text-stone-900 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-200 disabled:cursor-not-allowed disabled:bg-stone-50" />
+                          <span className="min-w-0 flex-1 truncate font-medium text-slate-600">{row.projectName || row.project_name || "No project"}</span>
+                          <input type="text" inputMode="decimal" value={hourCellValue(row, dayName)} placeholder="" disabled={!canEditHours} onChange={(event) => handleHoursChange(row.id, dayName, event.target.value)} onBlur={() => handleHoursBlur(row.id, dayName)} className="h-10 w-20 rounded-xl border border-slate-300 px-2 text-center text-[15px] font-semibold text-slate-900 outline-none transition focus:border-blue-700 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-slate-50" />
                         </label>
                       ))}
                     </div>
@@ -2578,29 +2578,29 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, assignedProj
       )}
 
       {/* ── Summary bar ── */}
-      <div className="mt-4 flex flex-wrap items-baseline gap-x-10 gap-y-2 rounded-xl bg-stone-100 px-5 py-3">
+      <div className="mt-4 flex flex-wrap items-center gap-x-8 gap-y-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5">
         <p className="flex items-baseline gap-2">
-          <span className="text-[13px] font-medium text-stone-500">Regular hours</span>
-          <span className="text-base font-bold text-stone-900">{totalRegular}</span>
+          <span className="text-[11px] font-bold uppercase tracking-[0.1em] text-slate-500">Regular</span>
+          <span className="text-base font-bold text-slate-950">{totalRegular}</span>
         </p>
         <p className="flex items-baseline gap-2">
-          <span className={`text-[13px] font-medium ${Number(totalOvertime) > 0 ? "text-amber-700" : "text-stone-500"}`}>Overtime</span>
+          <span className={`text-[11px] font-bold uppercase tracking-[0.1em] ${Number(totalOvertime) > 0 ? "text-amber-700" : "text-slate-500"}`}>Overtime</span>
           {(card.overtimeExempt || card.overtime_exempt) ? (
-            <span className="text-[13px] font-semibold text-stone-400" title="Office-based employees are overtime exempt; all hours are recorded as regular time.">Exempt</span>
+            <span className="text-[13px] font-semibold text-slate-400" title="Office-based employees are overtime exempt; all hours are recorded as regular time.">Exempt</span>
           ) : (
-            <span className={`text-base font-bold ${Number(totalOvertime) > 0 ? "text-amber-800" : "text-stone-900"}`}>{totalOvertime}</span>
+            <span className={`text-base font-bold ${Number(totalOvertime) > 0 ? "text-amber-800" : "text-slate-950"}`}>{totalOvertime}</span>
           )}
         </p>
-        <p className="ml-auto flex items-baseline gap-2">
-          <span className="text-[13px] font-medium text-stone-500">Total hours</span>
-          <span className="text-lg font-bold text-stone-900">{totalHours}</span>
+        <p className="ml-auto flex items-center gap-2 rounded-xl bg-slate-950 px-3 py-1.5">
+          <span className="text-[11px] font-bold uppercase tracking-[0.1em] text-slate-300">Total hours</span>
+          <span className="text-base font-bold text-white">{totalHours}</span>
         </p>
       </div>
 
       {/* ── Weekly comments ── */}
       <label className="mt-6 block">
-        <span className="text-base font-semibold text-stone-800">
-          Weekly comments <span className="font-medium text-stone-400">(optional)</span>
+        <span className="text-base font-semibold text-slate-800">
+          Weekly comments <span className="font-medium text-slate-400">(optional)</span>
         </span>
         <textarea
           value={comments}
@@ -2609,7 +2609,7 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, assignedProj
           onBlur={() => persistCard(card)}
           onChange={(event) => updateComments(event.target.value)}
           rows={3}
-          className="mt-2 w-full resize-y rounded-xl border border-stone-300 bg-white px-4 py-3 text-[15px] font-normal text-stone-900 outline-none transition placeholder:text-stone-400 hover:border-stone-400 focus:border-amber-500 focus:ring-2 focus:ring-amber-200 disabled:cursor-not-allowed disabled:bg-stone-50"
+          className="mt-2 w-full resize-y rounded-xl border border-slate-300 bg-white px-4 py-3 text-[15px] font-normal text-slate-900 outline-none transition placeholder:text-slate-400 hover:border-slate-400 focus:border-blue-700 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-slate-50"
         />
       </label>
 
@@ -2619,9 +2619,9 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, assignedProj
       {!card.validationError && card.validationWarning && <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-700">{card.validationWarning}</p>}
 
       {/* ── Action footer ── */}
-      <div className="sticky bottom-0 z-10 -mx-6 mt-6 flex flex-col gap-2 border-t border-stone-200 bg-[#fdfcf9]/95 px-6 py-3 backdrop-blur sm:static sm:mx-0 sm:flex-row sm:items-center sm:justify-end sm:border-t sm:bg-transparent sm:px-0 sm:pb-0 sm:pt-4 sm:backdrop-blur-0">
+      <div className="sticky bottom-0 z-10 -mx-6 mt-6 flex flex-col gap-2 border-t border-slate-200 bg-white/95 px-6 py-3 backdrop-blur sm:static sm:mx-0 sm:flex-row sm:items-center sm:justify-end sm:border-t sm:bg-transparent sm:px-0 sm:pb-0 sm:pt-4 sm:backdrop-blur-0">
         {lastSaved && (
-          <p className="text-center text-sm font-medium text-stone-400 sm:mr-auto sm:text-left">
+          <p className="text-center text-sm font-medium text-slate-400 sm:mr-auto sm:text-left">
             Last saved {lastSaved.label}
           </p>
         )}
@@ -2633,7 +2633,7 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, assignedProj
         <button
           type="button"
           onClick={() => persistCard(card)}
-          className="inline-flex h-12 items-center justify-center gap-2 rounded-xl border border-stone-300 bg-white px-6 text-sm font-semibold text-stone-800 transition hover:border-stone-400 hover:bg-stone-50"
+          className="inline-flex h-12 items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-6 text-sm font-semibold text-slate-800 transition hover:border-slate-400 hover:bg-slate-50"
         >
           <Save className="h-4 w-4" /> {isReturned ? "Save" : "Save draft"}
         </button>
@@ -2641,7 +2641,7 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, assignedProj
           type="button"
           onClick={submitCard}
           disabled={!canSubmit}
-          className="inline-flex h-12 items-center justify-center gap-2 rounded-xl bg-[#bd5d3a] px-6 text-sm font-semibold text-white transition hover:bg-[#a84f30] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-[#bd5d3a]"
+          className="inline-flex h-12 items-center justify-center gap-2 rounded-xl bg-blue-700 px-6 text-sm font-semibold text-white transition hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-blue-700"
         >
           <Send className="h-4 w-4" /> {isReturned ? "Resubmit" : "Submit for approval"}
         </button>
@@ -2686,15 +2686,15 @@ function TimeCardReadOnlyView({ card, onRecall, onViewPdf, onDownloadPdf, onRege
     Number(totalHours) > 60 ? "Total weekly hours exceed the default company threshold of 60 hours." : null
   ].filter(Boolean);
   return (
-    <section className="w-full rounded-2xl border border-stone-200 bg-[#fdfcf9] px-6 py-6 sm:px-8">
+    <section className="w-full rounded-2xl border border-slate-200 bg-white px-6 py-6 sm:px-8">
 
       {/* ── Header ── */}
       <header>
-        <p className="text-[13px] font-medium text-stone-500">
-          Timesheets <span aria-hidden="true">›</span> <span className="font-semibold text-stone-700">{timesheetNumber}</span>
+        <p className="text-[13px] font-medium text-slate-500">
+          Timesheets <span aria-hidden="true">›</span> <span className="font-semibold text-slate-700">{timesheetNumber}</span>
         </p>
         <div className="mt-2 flex flex-wrap items-center gap-3">
-          <h1 className="text-[28px] font-bold leading-tight tracking-tight text-stone-900">Weekly timesheet</h1>
+          <h1 className="text-[28px] font-bold leading-tight tracking-tight text-slate-900">Weekly timesheet</h1>
           <span className={`rounded-full px-3 py-1 text-[13px] font-semibold ${getTimesheetStatusPillClass(card.status)}`}>
             {formatTimeCardStatus(card.status)}
           </span>
@@ -2702,38 +2702,38 @@ function TimeCardReadOnlyView({ card, onRecall, onViewPdf, onDownloadPdf, onRege
             {onNavigateWeek ? (
               <WeekNavigator weekStartDate={weekStart} weekEndDate={weekEnd} onNavigate={onNavigateWeek} />
             ) : (
-              <p className="text-sm font-semibold text-stone-900">{formatWeekRange(weekStart, weekEnd)}</p>
+              <p className="text-sm font-semibold text-slate-900">{formatWeekRange(weekStart, weekEnd)}</p>
             )}
           </div>
         </div>
-        <div className="mt-4 flex flex-wrap items-end justify-between gap-4 border-b border-stone-200 pb-5">
+        <div className="mt-4 flex flex-wrap items-end justify-between gap-4 border-b border-slate-200 pb-5">
           <dl className="flex flex-wrap gap-x-10 gap-y-2">
             <div>
-              <dt className="text-[13px] font-medium text-stone-500">Employee</dt>
-              <dd className="mt-0.5 text-[15px] font-semibold text-stone-900">{card.technicianName || card.technician_name || "-"}</dd>
+              <dt className="text-[13px] font-medium text-slate-500">Employee</dt>
+              <dd className="mt-0.5 text-[15px] font-semibold text-slate-900">{card.technicianName || card.technician_name || "-"}</dd>
             </div>
             <div>
-              <dt className="text-[13px] font-medium text-stone-500">Submitted</dt>
-              <dd className="mt-0.5 text-[15px] font-semibold text-stone-900">{submittedAt ? formatDateTime(submittedAt) : "-"}</dd>
+              <dt className="text-[13px] font-medium text-slate-500">Submitted</dt>
+              <dd className="mt-0.5 text-[15px] font-semibold text-slate-900">{submittedAt ? formatDateTime(submittedAt) : "-"}</dd>
             </div>
           </dl>
           <div className="flex flex-wrap items-center gap-2">
             {canUsePdf && (
-              <button type="button" onClick={onViewPdf} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-stone-900 px-4 text-sm font-semibold text-white transition hover:bg-stone-800">
+              <button type="button" onClick={onViewPdf} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 text-sm font-semibold text-white transition hover:bg-slate-800">
                 <FileText className="h-4 w-4" /> View PDF
               </button>
             )}
             <details className="relative">
-              <summary className="inline-flex h-10 cursor-pointer list-none items-center justify-center rounded-xl border border-stone-300 bg-white px-4 text-sm font-semibold text-stone-700 transition hover:border-stone-400 hover:bg-stone-50">Actions</summary>
-              <div className="absolute right-0 z-20 mt-2 w-52 rounded-xl border border-stone-200 bg-white p-2 shadow-lg">
-                <button type="button" onClick={onDownloadPdf || onViewPdf} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-medium text-stone-700 transition hover:bg-stone-100">
+              <summary className="inline-flex h-10 cursor-pointer list-none items-center justify-center rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:border-slate-400 hover:bg-slate-50">Actions</summary>
+              <div className="absolute right-0 z-20 mt-2 w-52 rounded-xl border border-slate-200 bg-white p-2 shadow-lg">
+                <button type="button" onClick={onDownloadPdf || onViewPdf} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-medium text-slate-700 transition hover:bg-slate-100">
                   <Download className="h-4 w-4" /> Download PDF
                 </button>
-                <button type="button" onClick={() => window.print()} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-medium text-stone-700 transition hover:bg-stone-100">
+                <button type="button" onClick={() => window.print()} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-medium text-slate-700 transition hover:bg-slate-100">
                   <FileText className="h-4 w-4" /> Print
                 </button>
                 {canRecall && (
-                  <button type="button" onClick={onRecall} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-medium text-stone-700 transition hover:bg-stone-100">
+                  <button type="button" onClick={onRecall} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-medium text-slate-700 transition hover:bg-slate-100">
                     <RotateCcw className="h-4 w-4" /> Recall timesheet
                   </button>
                 )}
@@ -2744,7 +2744,7 @@ function TimeCardReadOnlyView({ card, onRecall, onViewPdf, onDownloadPdf, onRege
       </header>
 
       {(isSubmitted || isApproved || isCompleted) && pdfStatus === "pending" && (
-        <p className="mt-5 rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm font-medium text-stone-600">
+        <p className="mt-5 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-600">
           PDF is still being generated. Please try again in a few seconds.
         </p>
       )}
@@ -2788,7 +2788,7 @@ function TimeCardReadOnlyView({ card, onRecall, onViewPdf, onDownloadPdf, onRege
       )}
 
       {/* ── Hours by project (read-only) ── */}
-      <h2 className="mt-6 text-xl font-bold tracking-tight text-stone-900">Hours by project</h2>
+      <h2 className="mt-6 text-xl font-bold tracking-tight text-slate-900">Hours by project</h2>
 
       <div className="mt-4 overflow-x-auto">
         <table className="w-full min-w-[760px] table-fixed border-collapse text-sm">
@@ -2801,64 +2801,64 @@ function TimeCardReadOnlyView({ card, onRecall, onViewPdf, onDownloadPdf, onRege
           </colgroup>
           <thead>
             <tr>
-              <th className="px-2 pb-2 text-left text-[15px] font-medium text-stone-500">Project</th>
+              <th className="px-2 pb-2 text-left text-[15px] font-medium text-slate-500">Project</th>
               {TIMESHEET_DAY_COLUMNS.map((dayName) => (
-                <th key={dayName} className="px-1 pb-2 text-center text-[15px] font-medium text-stone-500">{TIMESHEET_DAY_LABELS[dayName]}</th>
+                <th key={dayName} className="px-1 pb-2 text-center text-[15px] font-medium text-slate-500">{TIMESHEET_DAY_LABELS[dayName]}</th>
               ))}
-              <th className="px-2 pb-2 text-right text-[15px] font-medium text-stone-500">Total</th>
+              <th className="px-2 pb-2 text-right text-[15px] font-medium text-slate-500">Total</th>
             </tr>
           </thead>
           <tbody>
             {projectRows.map((row) => (
-              <tr key={row.id} className="border-t border-stone-200">
+              <tr key={row.id} className="border-t border-slate-200">
                 <td className="px-2 py-3">
-                  <p className="truncate text-[15px] font-semibold text-stone-900" title={row.projectName || row.project_name || ""}>{row.projectName || row.project_name || "-"}</p>
-                  <p className="text-[13px] font-medium text-stone-500">
+                  <p className="truncate text-[15px] font-semibold text-slate-900" title={row.projectName || row.project_name || ""}>{row.projectName || row.project_name || "-"}</p>
+                  <p className="text-[13px] font-medium text-slate-500">
                     {(row.projectNumber || row.project_number) ? `#${row.projectNumber || row.project_number}` : ""}
                     {managerByProject[String(row.projectId || row.project_id || "")] ? `${(row.projectNumber || row.project_number) ? " · " : ""}Approver: ${managerByProject[String(row.projectId || row.project_id || "")]?.name}` : ""}
                   </p>
                 </td>
                 {TIMESHEET_DAY_COLUMNS.map((dayName) => (
-                  <td key={dayName} className="px-1 py-3 text-center text-[15px] font-medium text-stone-900">{formatHours(row.hours?.[dayName])}</td>
+                  <td key={dayName} className="px-1 py-3 text-center text-[15px] font-medium text-slate-900">{formatHours(row.hours?.[dayName])}</td>
                 ))}
-                <td className="px-2 py-3 text-right text-[15px] font-bold text-stone-900">{formatHours(getRowTotal(row))}</td>
+                <td className="px-2 py-3 text-right text-[15px] font-bold text-slate-900">{formatHours(getRowTotal(row))}</td>
               </tr>
             ))}
-            <tr className="border-t-2 border-stone-300 bg-stone-100">
-              <td className="rounded-l-xl px-2 py-3 text-sm font-semibold text-stone-600">Daily total</td>
+            <tr className="border-t-2 border-slate-300 bg-slate-100">
+              <td className="rounded-l-xl px-2 py-3 text-sm font-semibold text-slate-600">Daily total</td>
               {TIMESHEET_DAY_COLUMNS.map((dayName) => (
-                <td key={dayName} className="px-1 py-3 text-center text-[15px] font-semibold text-stone-900">{formatHours(dailyTotals[dayName])}</td>
+                <td key={dayName} className="px-1 py-3 text-center text-[15px] font-semibold text-slate-900">{formatHours(dailyTotals[dayName])}</td>
               ))}
-              <td className="rounded-r-xl px-2 py-3 text-right text-[15px] font-bold text-stone-900">{totalHours}</td>
+              <td className="rounded-r-xl px-2 py-3 text-right text-[15px] font-bold text-slate-900">{totalHours}</td>
             </tr>
           </tbody>
         </table>
       </div>
 
       {/* ── Summary bar ── */}
-      <div className="mt-4 flex flex-wrap items-baseline gap-x-10 gap-y-2 rounded-xl bg-stone-100 px-5 py-3">
+      <div className="mt-4 flex flex-wrap items-center gap-x-8 gap-y-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5">
         <p className="flex items-baseline gap-2">
-          <span className="text-[13px] font-medium text-stone-500">Regular hours</span>
-          <span className="text-base font-bold text-stone-900">{totalRegular}</span>
+          <span className="text-[11px] font-bold uppercase tracking-[0.1em] text-slate-500">Regular</span>
+          <span className="text-base font-bold text-slate-950">{totalRegular}</span>
         </p>
         <p className="flex items-baseline gap-2">
-          <span className={`text-[13px] font-medium ${Number(totalOvertime) > 0 ? "text-amber-700" : "text-stone-500"}`}>Overtime</span>
+          <span className={`text-[11px] font-bold uppercase tracking-[0.1em] ${Number(totalOvertime) > 0 ? "text-amber-700" : "text-slate-500"}`}>Overtime</span>
           {(card.overtimeExempt || card.overtime_exempt) ? (
-            <span className="text-[13px] font-semibold text-stone-400" title="Office-based employees are overtime exempt; all hours are recorded as regular time.">Exempt</span>
+            <span className="text-[13px] font-semibold text-slate-400" title="Office-based employees are overtime exempt; all hours are recorded as regular time.">Exempt</span>
           ) : (
-            <span className={`text-base font-bold ${Number(totalOvertime) > 0 ? "text-amber-800" : "text-stone-900"}`}>{totalOvertime}</span>
+            <span className={`text-base font-bold ${Number(totalOvertime) > 0 ? "text-amber-800" : "text-slate-950"}`}>{totalOvertime}</span>
           )}
         </p>
-        <p className="ml-auto flex items-baseline gap-2">
-          <span className="text-[13px] font-medium text-stone-500">Total hours</span>
-          <span className="text-lg font-bold text-stone-900">{totalHours}</span>
+        <p className="ml-auto flex items-center gap-2 rounded-xl bg-slate-950 px-3 py-1.5">
+          <span className="text-[11px] font-bold uppercase tracking-[0.1em] text-slate-300">Total hours</span>
+          <span className="text-base font-bold text-white">{totalHours}</span>
         </p>
       </div>
 
       {String(comments).trim() && (
         <div className="mt-6">
-          <p className="text-base font-semibold text-stone-800">Weekly comments</p>
-          <p className="mt-2 whitespace-pre-line rounded-xl border border-stone-200 bg-white px-4 py-3 text-[15px] font-normal leading-6 text-stone-900">{comments}</p>
+          <p className="text-base font-semibold text-slate-800">Weekly comments</p>
+          <p className="mt-2 whitespace-pre-line rounded-xl border border-slate-200 bg-white px-4 py-3 text-[15px] font-normal leading-6 text-slate-900">{comments}</p>
         </div>
       )}
     </section>
@@ -2912,25 +2912,25 @@ function TimeCardsPage({
   const label = TIME_CARD_TABS.find((tab) => tab.id === activeTab)?.label || "Draft";
 
   return (
-    <section className="w-full rounded-2xl border border-stone-200 bg-[#fdfcf9] px-6 py-6 sm:px-8">
+    <section className="w-full rounded-2xl border border-slate-200 bg-white px-6 py-6 sm:px-8">
 
       {/* Header */}
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <h1 className="text-[28px] font-bold leading-tight tracking-tight text-stone-900">Timesheets</h1>
-          <p className="mt-1 text-[13px] font-medium text-stone-500">Track labor records by status.</p>
+          <h1 className="text-[28px] font-bold leading-tight tracking-tight text-slate-900">Timesheets</h1>
+          <p className="mt-1 text-[13px] font-medium text-slate-500">Track labor records by status.</p>
         </div>
         <button
           type="button"
           onClick={onCreateTimeCard}
-          className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl bg-[#bd5d3a] px-5 text-sm font-semibold text-white transition hover:bg-[#a84f30]"
+          className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl bg-blue-700 px-5 text-sm font-semibold text-white transition hover:bg-blue-600"
         >
           <Plus className="h-4 w-4" /> Open current timesheet
         </button>
       </div>
 
       {/* Status tabs */}
-      <div className="mt-5 flex flex-wrap gap-1.5 border-b border-stone-200 pb-px">
+      <div className="mt-5 flex flex-wrap gap-1.5 border-b border-slate-200 pb-px">
         {TIME_CARD_TABS.map((tab) => {
           const isActive = tab.id === activeTab;
           return (
@@ -2938,10 +2938,10 @@ function TimeCardsPage({
               key={tab.id}
               type="button"
               onClick={() => setActiveTab(tab.id)}
-              className={`relative -mb-px inline-flex h-10 items-center gap-2 rounded-t-lg border-b-2 px-4 text-sm font-semibold transition ${isActive ? "border-[#bd5d3a] text-stone-900" : "border-transparent text-stone-500 hover:bg-stone-100/70 hover:text-stone-800"}`}
+              className={`relative -mb-px inline-flex h-10 items-center gap-2 rounded-t-lg border-b-2 px-4 text-sm font-semibold transition ${isActive ? "border-blue-700 text-slate-900" : "border-transparent text-slate-500 hover:bg-slate-100/70 hover:text-slate-800"}`}
             >
               {tab.label}
-              <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${isActive ? "bg-[#bd5d3a]/10 text-[#a84f30]" : "bg-stone-100 text-stone-500"}`}>
+              <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${isActive ? "bg-blue-700/10 text-[#a84f30]" : "bg-slate-100 text-slate-500"}`}>
                 {tabCounts[tab.id] || 0}
               </span>
             </button>
@@ -2956,13 +2956,13 @@ function TimeCardsPage({
           value={searchTerm}
           onChange={(event) => setSearchTerm(event.target.value)}
           placeholder="Search project, project number, or date…"
-          className="h-11 w-full rounded-xl border border-stone-300 bg-white px-4 text-sm font-medium text-stone-900 outline-none transition placeholder:text-stone-400 hover:border-stone-400 focus:border-amber-500 focus:ring-2 focus:ring-amber-200 sm:max-w-md"
+          className="h-11 w-full rounded-xl border border-slate-300 bg-white px-4 text-sm font-medium text-slate-900 outline-none transition placeholder:text-slate-400 hover:border-slate-400 focus:border-blue-700 focus:ring-2 focus:ring-blue-100 sm:max-w-md"
         />
       </div>
 
       {/* Column headers (desktop) */}
       {cards.length > 0 && (
-        <div className="mt-5 hidden grid-cols-[140px_minmax(0,1fr)_190px_60px_60px_70px_130px_140px_200px] items-center gap-3 px-4 pb-2 text-[13px] font-medium text-stone-500 lg:grid">
+        <div className="mt-5 hidden grid-cols-[140px_minmax(0,1fr)_190px_60px_60px_70px_130px_140px_200px] items-center gap-3 px-4 pb-2 text-[13px] font-medium text-slate-500 lg:grid">
           <span>Timesheet</span>
           <span>Project</span>
           <span>Week period</span>
@@ -2991,9 +2991,9 @@ function TimeCardsPage({
       </div>
 
       {!cards.length && (
-        <div className="mt-4 rounded-2xl border border-dashed border-stone-300 bg-stone-50 px-4 py-12 text-center">
-          <p className="text-base font-semibold text-stone-700">No {label.toLowerCase()} timesheets</p>
-          <p className="mx-auto mt-1 max-w-md text-sm font-medium text-stone-500">
+        <div className="mt-4 rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-12 text-center">
+          <p className="text-base font-semibold text-slate-700">No {label.toLowerCase()} timesheets</p>
+          <p className="mx-auto mt-1 max-w-md text-sm font-medium text-slate-500">
             Use Open current timesheet to create or reopen the weekly draft for the selected project and week.
           </p>
         </div>
