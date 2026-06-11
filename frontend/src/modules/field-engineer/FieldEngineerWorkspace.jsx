@@ -1,20 +1,25 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+﻿import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Bell,
+  CalendarDays,
   Camera,
   Calculator,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Download,
   FileText,
   KeyRound,
+  Plus,
   RotateCcw,
   Save,
   Send,
-  ShieldCheck
+  ShieldCheck,
+  X
 } from "lucide-react";
 import DailyLogEditor from "../../components/daily-log/DailyLogEditor";
 import DailyLogSummaryView from "../../components/daily-log/DailyLogSummaryView";
 import PhotosAttachmentsSection, { isAllowedDailyLogAttachment } from "../../components/daily-log/PhotosAttachmentsSection";
-import SignatureModal from "../../components/SignatureModal";
 import {
   DAILY_LOG_STATUS,
   createConcreteReport,
@@ -29,19 +34,27 @@ import {
 } from "../../services/dailyLogService";
 import { openDailyLogPdf, regenerateDailyLogPdf } from "../../services/dailyLogPdfService";
 import { generateAndUploadConcreteReportPdf, openConcreteReportPdf } from "../../services/concreteReportPdfService";
-import { openTimeCardPdf, regenerateTimeCardPdf } from "../../services/timeCardPdfService";
+import { generateTimeCardPdfBlob, openTimeCardPdf, regenerateTimeCardPdf } from "../../services/timeCardPdfService";
 import {
-  createWeeklyEntries,
+  WEEK_DAYS,
   createTimeCard,
   deleteTimeCard,
   formatTimeCardStatus,
   getTimeCardCollections,
   getTimeCards,
+  normalizeWeeklyCard,
   saveTimeCard,
   submitTimeCard,
+  addProjectRow,
+  removeProjectRow,
+  setRowProject,
+  setRowHours,
+  getRowTotal,
   TIME_CARD_STATUS
 } from "../../services/timeCardService";
 import { formatDateTime } from "./fieldEngineerData";
+import { resolveFallbackManager, resolveManagerForProject, sendTimesheetApprovalEmail } from "../../services/notificationService";
+import { fetchTimesheetStatusUpdates, fetchTimesheetsForTechnician } from "../../services/timesheetSyncService";
 
 function cardClass(extra = "") {
   return `rounded-2xl border border-slate-200 bg-white p-3 shadow-sm sm:p-4 ${extra}`;
@@ -88,10 +101,6 @@ function formatShortDate(value) {
 
 function getTimesheetNumber(card) {
   return card?.timesheetNumber || card?.timesheet_number || `TS-${String(card?.id || "").slice(0, 8).toUpperCase()}`;
-}
-
-function getTimesheetSignature(card) {
-  return card?.technicianSignature || card?.technician_signature || "";
 }
 
 function getRegularAndOvertimeHours(totalHours) {
@@ -1923,7 +1932,10 @@ function SimplePanel({ icon: Icon, kicker, title, description }) {
 function TimeCardListRow({ card, activeTab, onOpen, onDelete, onRecall, onDownloadPdf }) {
   const pdfStatus = card.pdfGenerationStatus || card.pdf_generation_status || (card.pdfStoragePath || card.pdf_storage_path ? "generated" : "pending");
   const canDownloadPdf = pdfStatus === "generated";
-  const projectNumber = card.projectNumber || card.project_number || "";
+  const projectNames = (card.projectRows || []).map((row) => row.projectName || row.project_name).filter(Boolean);
+  const projectSummary = projectNames.length
+    ? (projectNames.length > 1 ? `${projectNames[0]} +${projectNames.length - 1} more` : projectNames[0])
+    : (card.projectName || "");
   const weekStart = card.weekStartDate || card.week_start_date || card.date;
   const weekEnd = card.weekEndDate || card.week_end_date;
   const weekPeriod = `${formatShortDate(weekStart)} - ${formatShortDate(weekEnd)}`;
@@ -1959,185 +1971,353 @@ function TimeCardListRow({ card, activeTab, onOpen, onDelete, onRecall, onDownlo
       tabIndex={0}
       onClick={onOpen}
       onKeyDown={handleKeyDown}
-      className="cursor-pointer rounded-md border border-slate-200 bg-white px-4 py-3 transition hover:border-slate-300 hover:bg-slate-50/60"
+      className="cursor-pointer rounded-xl border border-stone-200 bg-white px-4 py-3 transition hover:border-stone-300 hover:bg-stone-50/70"
     >
-      <div className="grid grid-cols-1 gap-3 lg:grid-cols-[150px_1fr_170px_110px_90px_100px_110px_110px] lg:items-center">
-        <p className="font-semibold text-slate-950">{getTimesheetNumber(card)}</p>
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-[140px_minmax(0,1fr)_190px_60px_60px_70px_130px_140px_200px] lg:items-center">
+        <p className="text-[15px] font-semibold text-stone-900">{getTimesheetNumber(card)}</p>
         <div className="min-w-0">
-          <p className="truncate text-sm font-semibold text-slate-950">{card.technicianName || card.technician_name || "Worker"}</p>
-          <p className="truncate text-xs font-semibold text-slate-500">{card.projectName || "Assignment"}{projectNumber ? ` | ${projectNumber}` : ""}</p>
+          <p className="truncate text-sm font-semibold text-stone-900" title={projectSummary}>{projectSummary || "Assignment"}</p>
         </div>
-        <p className="text-sm font-semibold text-slate-700">{weekPeriod}</p>
-        <p className="text-sm font-semibold text-slate-900">{card.totalRegularHours || card.total_regular_hours || "0.00"}</p>
-        <p className="text-sm font-semibold text-slate-900">{card.totalOvertimeHours || card.total_overtime_hours || "0.00"}</p>
-        <p className="text-sm font-semibold text-slate-900">{card.totalHours || card.total_hours || "0.00"}</p>
-        <p className="text-sm font-semibold text-slate-700">{formatTimeCardStatus(card.status)}</p>
-        <p className="text-xs font-semibold text-slate-500">{statusDate ? formatDateTime(statusDate) : "-"}</p>
+        <p className="whitespace-nowrap text-sm font-medium text-stone-700">{weekPeriod}</p>
+        <p className="text-sm font-semibold text-stone-900 lg:text-right">{card.totalRegularHours || card.total_regular_hours || "0.00"}</p>
+        <p className="text-sm font-semibold text-stone-900 lg:text-right">{card.totalOvertimeHours || card.total_overtime_hours || "0.00"}</p>
+        <p className="text-sm font-bold text-stone-900 lg:text-right">{card.totalHours || card.total_hours || "0.00"}</p>
+        <p className="lg:pl-4">
+          <span className={`inline-flex whitespace-nowrap rounded-full px-2.5 py-0.5 text-[13px] font-semibold ${getTimesheetStatusPillClass(card.status)}`}>
+            {formatTimeCardStatus(card.status)}
+          </span>
+        </p>
+        <p className="whitespace-nowrap text-[13px] font-medium text-stone-500">{statusDate ? formatDateTime(statusDate) : "-"}</p>
 
-        <div className="flex shrink-0 flex-nowrap items-center gap-2 whitespace-nowrap" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
-          <button type="button" onClick={onOpen} className="min-h-10 max-w-[120px] rounded-xl bg-slate-950 px-4 text-sm font-bold text-white lg:min-h-9 lg:w-[110px] lg:px-3 lg:text-xs">
+        <div className="flex shrink-0 flex-nowrap items-center gap-2 whitespace-nowrap lg:justify-end" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
+          <button type="button" onClick={onOpen} className="inline-flex h-9 items-center justify-center rounded-lg bg-stone-900 px-4 text-[13px] font-semibold text-white transition hover:bg-stone-800">
             {primaryLabel}
           </button>
           {activeTab === "draft" && (
-            <button type="button" onClick={onDelete} className="min-h-10 max-w-[100px] rounded-xl border border-rose-200 bg-white px-4 text-sm font-bold text-rose-700 lg:min-h-9 lg:w-[78px] lg:px-3 lg:text-xs">
+            <button type="button" onClick={onDelete} className="inline-flex h-9 items-center justify-center rounded-lg border border-stone-300 bg-white px-4 text-[13px] font-semibold text-rose-700 transition hover:border-rose-300 hover:bg-rose-50">
               Delete
             </button>
           )}
           {activeTab === "submitted" && (
-            <button type="button" onClick={onRecall} className="min-h-10 max-w-[120px] rounded-xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-800 lg:min-h-9 lg:w-[82px] lg:px-3 lg:text-xs">
+            <button type="button" onClick={onRecall} className="inline-flex h-9 items-center justify-center rounded-lg border border-stone-300 bg-white px-4 text-[13px] font-semibold text-stone-700 transition hover:border-stone-400 hover:bg-stone-50">
               Recall
             </button>
           )}
           {activeTab === "approved" && (
-            <button type="button" onClick={onDownloadPdf} disabled={!canDownloadPdf} className="min-h-10 max-w-[120px] rounded-xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-800 disabled:cursor-not-allowed disabled:opacity-50 lg:min-h-9 lg:w-[120px] lg:px-3 lg:text-xs">
+            <button type="button" onClick={onDownloadPdf} disabled={!canDownloadPdf} className="inline-flex h-9 items-center justify-center rounded-lg border border-stone-300 bg-white px-4 text-[13px] font-semibold text-stone-700 transition hover:border-stone-400 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50">
               Download PDF
             </button>
           )}
         </div>
       </div>
       {activeTab === "returned" && (card.managerComment || card.correctionNotes) && (
-        <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-900 lg:text-xs">
-          <span className="font-bold">Correction Notes:</span> {card.managerComment || card.correctionNotes}
+        <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[13px] font-medium text-amber-900">
+          <span className="font-bold">Correction notes:</span> {card.managerComment || card.correctionNotes}
         </div>
       )}
     </article>
   );
 }
 
-function getEntryWarnings(entry) {
-  const warnings = [];
-  const regular = Number(entry.regularHours ?? entry.regular_hours ?? 0) || 0;
-  const overtime = Number(entry.overtimeHours ?? entry.overtime_hours ?? 0) || 0;
-  if (regular < 0 || overtime < 0) warnings.push("Hours cannot be negative");
-  if (regular + overtime > 24) warnings.push("Daily hours exceed 24");
-  return warnings;
-}
-
-function hasEntryHours(entry) {
-  return (Number(entry.regularHours ?? entry.regular_hours ?? 0) || 0) + (Number(entry.overtimeHours ?? entry.overtime_hours ?? 0) || 0) > 0;
-}
-
-function isWeekendEntry(entry) {
-  return ["Saturday", "Sunday"].includes(entry.dayName || entry.day_name);
-}
-
 function formatWeekRange(weekStartDate, weekEndDate) {
   return `${formatShortDate(weekStartDate).replace(/, \d{4}$/, "")} - ${formatShortDate(weekEndDate)}`;
 }
 
-const TIMESHEET_DAY_COLUMNS = ["Saturday", "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
+function WeekNavigator({ weekStartDate, weekEndDate, onNavigate, variant = "light" }) {
+  const weekStart = weekStartDate ? new Date(`${weekStartDate}T00:00:00`) : null;
+  const currentMonday = new Date();
+  currentMonday.setHours(0, 0, 0, 0);
+  currentMonday.setDate(currentMonday.getDate() + (currentMonday.getDay() === 0 ? -6 : 1 - currentMonday.getDay()));
+  // Timesheets cannot be logged ahead of time, so navigation stops at the current week.
+  const nextDisabled = !weekStart || Number.isNaN(weekStart.getTime()) || weekStart >= currentMonday;
+  const isDark = variant === "dark";
+  const arrowClass = isDark
+    ? "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-600 bg-slate-800/80 text-slate-200 shadow-sm transition hover:border-slate-500 hover:bg-slate-700 hover:text-white disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none disabled:hover:border-slate-600 disabled:hover:bg-slate-800/80 disabled:hover:text-slate-200"
+    : "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-stone-300 bg-white text-stone-600 transition hover:border-stone-400 hover:bg-stone-50 hover:text-stone-900 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-stone-300 disabled:hover:bg-white disabled:hover:text-stone-600";
+  return (
+    <div className={`flex items-center gap-2 ${isDark ? "rounded-xl border border-slate-700 bg-slate-800/60 px-2 py-1.5" : ""}`}>
+      <button type="button" onClick={() => onNavigate(-1)} aria-label="Previous week" title="Previous week" className={arrowClass}>
+        <ChevronLeft className="h-4 w-4" />
+      </button>
+      <span className={`inline-flex min-w-[176px] items-center justify-center gap-2 text-sm font-semibold ${isDark ? "text-white" : "text-stone-900"}`}>
+        <CalendarDays className={`h-4 w-4 shrink-0 ${isDark ? "text-slate-400" : "text-stone-400"}`} />
+        {formatWeekRange(weekStartDate, weekEndDate)}
+      </span>
+      <button type="button" onClick={() => onNavigate(1)} disabled={nextDisabled} aria-label="Next week" title={nextDisabled ? "Future weeks are not available" : "Next week"} className={arrowClass}>
+        <ChevronRight className="h-4 w-4" />
+      </button>
+    </div>
+  );
+}
+
+function formatHours(value) {
+  return (Number(value) || 0).toFixed(2);
+}
+
+function isEmptyProjectRow(row) {
+  return !String(row.projectId || row.project_id || row.projectName || row.project_name || "").trim() && getRowTotal(row) === 0;
+}
+
+const TIMESHEET_DAY_COLUMNS = WEEK_DAYS;
 const TIMESHEET_DAY_LABELS = {
-  Saturday: "Sat",
-  Sunday: "Sun",
   Monday: "Mon",
   Tuesday: "Tue",
   Wednesday: "Wed",
   Thursday: "Thu",
-  Friday: "Fri"
+  Friday: "Fri",
+  Saturday: "Sat",
+  Sunday: "Sun"
 };
 
-function TimeCardEditor({ card, onChange, onSubmit }) {
+const TIMESHEET_WEEKEND_DAYS = new Set(["Saturday", "Sunday"]);
+
+const TIMESHEET_STATUS_BADGE_CLASS = {
+  [TIME_CARD_STATUS.DRAFT]: "border-slate-200 bg-slate-100 text-slate-700",
+  [TIME_CARD_STATUS.SUBMITTED]: "border-amber-200 bg-amber-50 text-amber-800",
+  [TIME_CARD_STATUS.PENDING_REVIEW]: "border-amber-200 bg-amber-50 text-amber-800",
+  [TIME_CARD_STATUS.APPROVED]: "border-emerald-200 bg-emerald-50 text-emerald-800",
+  [TIME_CARD_STATUS.COMPLETED]: "border-emerald-200 bg-emerald-50 text-emerald-800",
+  [TIME_CARD_STATUS.REJECTED]: "border-rose-200 bg-rose-50 text-rose-800",
+  [TIME_CARD_STATUS.RETURNED]: "border-rose-200 bg-rose-50 text-rose-800"
+};
+
+function getTimesheetStatusBadgeClass(status) {
+  return TIMESHEET_STATUS_BADGE_CLASS[status] || "border-slate-200 bg-slate-100 text-slate-700";
+}
+
+// Soft rounded pill colors for the warm timesheet editor theme.
+const TIMESHEET_STATUS_PILL_CLASS = {
+  [TIME_CARD_STATUS.DRAFT]: "bg-amber-100 text-amber-900",
+  [TIME_CARD_STATUS.SUBMITTED]: "bg-blue-100 text-blue-900",
+  [TIME_CARD_STATUS.PENDING_REVIEW]: "bg-blue-100 text-blue-900",
+  [TIME_CARD_STATUS.APPROVED]: "bg-emerald-100 text-emerald-900",
+  [TIME_CARD_STATUS.COMPLETED]: "bg-emerald-100 text-emerald-900",
+  [TIME_CARD_STATUS.REJECTED]: "bg-rose-100 text-rose-900",
+  [TIME_CARD_STATUS.RETURNED]: "bg-rose-100 text-rose-900"
+};
+
+function getTimesheetStatusPillClass(status) {
+  return TIMESHEET_STATUS_PILL_CLASS[status] || "bg-stone-100 text-stone-700";
+}
+
+function timesheetDayDate(weekStartDate, dayIndex) {
+  if (!weekStartDate) return null;
+  const parsed = new Date(`${weekStartDate}T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) return null;
+  parsed.setDate(parsed.getDate() + dayIndex);
+  return parsed;
+}
+
+// Hours cannot be logged ahead of time, so days after today stay locked.
+function isFutureTimesheetDay(dayDate) {
+  if (!dayDate) return false;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return dayDate > today;
+}
+
+function lastSavedLabel(savedAt) {
+  const diffMinutes = Math.floor((Date.now() - savedAt.getTime()) / 60000);
+  if (diffMinutes < 1) return "just now";
+  if (diffMinutes < 60) return `${diffMinutes} min ago`;
+  return `at ${savedAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
+}
+
+// Resolve the approving manager for each project row (project record first,
+// org-level fallback second) and group rows by manager — shared by the editor
+// and the read-only view so both show the same routing the emails use.
+function useTimesheetApprovers(projectRows) {
+  const [projectManagers, setProjectManagers] = useState({});
+  const projectIdsKey = projectRows.map((row) => String(row.projectId || row.project_id || "")).filter(Boolean).sort().join(",");
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadManagers() {
+      const ids = projectIdsKey ? projectIdsKey.split(",") : [];
+      const managerMap = {};
+      let fallback = null;
+      for (const projectId of ids) {
+        let manager = null;
+        try {
+          manager = await resolveManagerForProject(projectId);
+        } catch {
+          manager = null;
+        }
+        if (!manager) {
+          if (!fallback) {
+            try {
+              fallback = await resolveFallbackManager();
+            } catch {
+              fallback = null;
+            }
+          }
+          manager = fallback;
+        }
+        managerMap[projectId] = manager;
+      }
+      if (!cancelled) setProjectManagers(managerMap);
+    }
+    loadManagers();
+    return () => { cancelled = true; };
+  }, [projectIdsKey]);
+
+  const byManager = new Map();
+  projectRows.forEach((row) => {
+    const projectId = String(row.projectId || row.project_id || "");
+    const projectName = row.projectName || row.project_name;
+    if (!projectId || !projectName) return;
+    const manager = projectManagers[projectId];
+    const key = manager?.email || "unassigned";
+    if (!byManager.has(key)) byManager.set(key, { manager, projects: [] });
+    byManager.get(key).projects.push({
+      name: projectName,
+      number: row.projectNumber || row.project_number || ""
+    });
+  });
+  return { approvers: Array.from(byManager.values()), managerByProject: projectManagers };
+}
+
+function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, assignedProjects = [] }) {
   const isReturned = [TIME_CARD_STATUS.RETURNED, TIME_CARD_STATUS.REJECTED].includes(card.status);
   const isDraft = card.status === TIME_CARD_STATUS.DRAFT;
   const canEditHours = isDraft || isReturned;
-  const [signatureModalOpen, setSignatureModalOpen] = useState(false);
-  const [technicianSignatureDraft, setTechnicianSignatureDraft] = useState(getTimesheetSignature(card));
-  const entries = Array.isArray(card.entries) ? card.entries : [];
+  // Local buffer so a cell can hold an in-progress value like "8." while typing decimals.
+  const [hourDrafts, setHourDrafts] = useState({});
+  const [lastSaved, setLastSaved] = useState(null);
+  const [futureHoursCleared, setFutureHoursCleared] = useState(false);
+  const projectRows = Array.isArray(card.projectRows) ? card.projectRows : [];
+  const { managerByProject } = useTimesheetApprovers(projectRows);
+  const dailyTotals = card.dailyTotals || {};
   const weekStartDate = card.weekStartDate || card.week_start_date || card.date || "";
   const weekEndDate = card.weekEndDate || card.week_end_date || "";
+  const dayDates = TIMESHEET_DAY_COLUMNS.map((_, dayIndex) => timesheetDayDate(weekStartDate, dayIndex));
+  const todayKey = new Date().toDateString();
   const totalRegular = card.totalRegularHours || card.total_regular_hours || "0.00";
   const totalOvertime = card.totalOvertimeHours || card.total_overtime_hours || "0.00";
   const totalHours = card.totalHours || card.total_hours || "0.00";
-  const missingEntries = entries.filter((entry) => getEntryWarnings(entry).length > 0).length;
-  const hasEntries = entries.length > 0;
   const comments = card.timesheetComments || card.timesheet_comments || card.comments || "";
-  const orderedEntries = TIMESHEET_DAY_COLUMNS
-    .map((dayName) => entries.find((entry) => (entry.dayName || entry.day_name) === dayName))
-    .filter(Boolean);
   const weeklyLimitWarning = Number(totalHours) > 168 ? "Weekly hours cannot exceed 168." : "";
-  const dailyValidationMessages = orderedEntries.flatMap((entry) => (
-    getEntryWarnings(entry).map((warning) => `${entry.dayName || entry.day_name}: ${warning}`)
-  ));
 
   useEffect(() => {
-    setTechnicianSignatureDraft(getTimesheetSignature(card));
+    setHourDrafts({});
+    setLastSaved(null);
+    setFutureHoursCleared(false);
   }, [card.id]);
 
+  function persistCard(nextCard) {
+    onChange(saveTimeCard(nextCard));
+    setLastSaved({ at: new Date(), label: "just now" });
+  }
+
+  // Hours saved on future days (entered before the future-date lock) would silently
+  // count toward totals while their cells render as locked "–". Clear them so the
+  // grid and the totals always agree.
   useEffect(() => {
-    if (!canEditHours || hasEntries) return;
-    onChange(saveTimeCard({
-      ...card,
-      entries: createWeeklyEntries({
-        weekStartDate,
-        projectId: card.projectId || card.project_id || "",
-        projectName: card.projectName || card.project_name || "",
-        dailyLogs: []
-      })
+    if (!canEditHours) return;
+    const futureDays = TIMESHEET_DAY_COLUMNS.filter((_, dayIndex) => isFutureTimesheetDay(dayDates[dayIndex]));
+    if (!futureDays.length) return;
+    const rows = Array.isArray(card.projectRows) ? card.projectRows : [];
+    if (!rows.some((row) => futureDays.some((day) => Number(row.hours?.[day]) > 0))) return;
+    const clearedRows = rows.map((row) => ({
+      ...row,
+      hours: { ...row.hours, ...futureDays.reduce((map, day) => ({ ...map, [day]: 0 }), {}) }
     }));
-  }, [card.id, canEditHours, hasEntries, weekStartDate]);
+    persistCard({ ...card, projectRows: clearedRows });
+    setFutureHoursCleared(true);
+  }, [card.id]);
 
   useEffect(() => {
     if (!canEditHours) return undefined;
     const autosaveId = window.setInterval(() => {
       onChange(saveTimeCard(card));
+      setLastSaved({ at: new Date(), label: "just now" });
     }, 30000);
     return () => window.clearInterval(autosaveId);
   }, [card, canEditHours, onChange]);
 
-  function getTechnicianSignatureStorageKey() {
-    return `qcore-timesheet-technician-signature-${String(card.technicianName || card.technician_name || "technician").trim().toLowerCase()}`;
-  }
+  // Keep the "Last saved … ago" label current between saves.
+  useEffect(() => {
+    if (!lastSaved?.at) return undefined;
+    const tickerId = window.setInterval(() => {
+      setLastSaved((current) => (current ? { ...current, label: lastSavedLabel(current.at) } : current));
+    }, 30000);
+    return () => window.clearInterval(tickerId);
+  }, [lastSaved?.at]);
 
-  function findExistingTechnicianSignature() {
-    const directSignature = getTimesheetSignature(card) || technicianSignatureDraft;
-    if (directSignature) return directSignature;
-    try {
-      return window.localStorage.getItem(getTechnicianSignatureStorageKey()) || "";
-    } catch {
-      return "";
-    }
-  }
-
-  function updateEntry(index, patch) {
-    if (index < 0) return;
-    onChange(saveTimeCard({
-      ...card,
-      entries: entries.map((entry, entryIndex) => (
-        entryIndex === index
-          ? {
-              ...entry,
-              ...patch,
-              regular_hours: patch.regularHours ?? patch.regular_hours ?? entry.regularHours ?? entry.regular_hours,
-              overtime_hours: patch.overtimeHours ?? patch.overtime_hours ?? entry.overtimeHours ?? entry.overtime_hours
-            }
-          : entry
-      ))
+  function handleAddProject() {
+    // Pre-select the first assigned project not already on the card; fall back to a blank row.
+    const used = new Set(projectRows.map((row) => String(row.projectId || row.project_id || "")));
+    const nextProject = assignedProjects.find((project) => !used.has(String(project.id))) || {};
+    persistCard(addProjectRow(card, {
+      projectId: nextProject.id || "",
+      projectName: nextProject.name || "",
+      projectNumber: nextProject.number || String(nextProject.id || ""),
+      overtimeExempt: Boolean(nextProject.overtimeExempt)
     }));
   }
 
-  function updateHourEntry(index, field, value) {
+  function handleRemoveProject(rowId) {
+    persistCard(removeProjectRow(card, rowId));
+  }
+
+  function handleProjectChange(rowId, projectId) {
+    const project = assignedProjects.find((item) => String(item.id) === String(projectId)) || {};
+    persistCard(setRowProject(card, rowId, {
+      projectId: project.id ?? projectId,
+      projectName: project.name ?? "",
+      projectNumber: project.number ?? String(project.id ?? projectId ?? ""),
+      overtimeExempt: Boolean(project.overtimeExempt)
+    }));
+  }
+
+  // Dropdown options per row; include the row's existing project so legacy rows still render.
+  function projectOptionsFor(row) {
+    const options = assignedProjects.map((project) => ({ id: String(project.id), name: project.name, number: project.number }));
+    const currentId = String(row.projectId || row.project_id || "");
+    if (currentId && !options.some((option) => option.id === currentId)) {
+      options.unshift({ id: currentId, name: row.projectName || row.project_name || "Project", number: row.projectNumber || row.project_number || "" });
+    }
+    return options;
+  }
+
+  function handleHoursChange(rowId, day, value) {
+    if (isFutureTimesheetDay(dayDates[TIMESHEET_DAY_COLUMNS.indexOf(day)])) return;
     if (!/^\d{0,2}(\.\d{0,2})?$/.test(value)) return;
     if (Number(value) > 24) return;
-    updateEntry(index, { [field]: value });
+    setHourDrafts((drafts) => ({ ...drafts, [`${rowId}:${day}`]: value }));
+    persistCard(setRowHours(card, rowId, day, value === "" ? 0 : Number(value)));
+  }
+
+  function handleHoursBlur(rowId, day) {
+    setHourDrafts((drafts) => {
+      const next = { ...drafts };
+      delete next[`${rowId}:${day}`];
+      return next;
+    });
+  }
+
+  function hourCellValue(row, day) {
+    const draftKey = `${row.id}:${day}`;
+    if (draftKey in hourDrafts) return hourDrafts[draftKey];
+    const stored = Number(row.hours?.[day]) || 0;
+    return stored === 0 ? "" : String(stored);
   }
 
   function updateComments(value) {
-    onChange(saveTimeCard({
+    persistCard({
       ...card,
       comments: value,
       timesheetComments: value,
       timesheet_comments: value
-    }));
+    });
   }
 
-  async function submitCardWithSignature(signature) {
-    const signedAt = card.signedAt || card.signed_at || new Date().toISOString();
+  async function submitCard() {
+    // Drop rows with no project and no hours so a leftover blank row never reaches the manager.
+    const submittableRows = (card.projectRows || []).filter((row) => !isEmptyProjectRow(row));
     const recalculated = saveTimeCard({
       ...card,
-      technicianSignature: signature,
-      technician_signature: signature,
-      signedAt,
-      signed_at: signedAt
+      projectRows: submittableRows
     });
     onSubmit(recalculated);
     if (recalculated.validationError || Number(recalculated.totalHours || 0) <= 0) return;
@@ -2145,6 +2325,16 @@ function TimeCardEditor({ card, onChange, onSubmit }) {
     onSubmit(submitted);
     const withPdf = await regenerateTimeCardPdf(submitted);
     onSubmit(withPdf);
+    let pdfBlob = null;
+    try {
+      pdfBlob = generateTimeCardPdfBlob(withPdf);
+    } catch (err) {
+      console.warn("Timesheet PDF could not be attached to the approval email:", err);
+    }
+    const pdfFileName = `${withPdf.timesheetNumber || withPdf.timesheet_number || withPdf.id}.pdf`;
+    sendTimesheetApprovalEmail(withPdf, { pdfBlob, pdfFileName }).catch((err) =>
+      console.warn("Approval email could not be sent:", err)
+    );
     if ((withPdf.pdfGenerationStatus || withPdf.pdf_generation_status) === "failed") {
       [60000, 300000, 900000].forEach((delay) => {
         window.setTimeout(async () => {
@@ -2157,195 +2347,305 @@ function TimeCardEditor({ card, onChange, onSubmit }) {
     }
   }
 
-  async function submitCard() {
-    const signature = findExistingTechnicianSignature();
-    if (!signature) {
-      setSignatureModalOpen(true);
-      return;
-    }
-    try {
-      window.localStorage.setItem(getTechnicianSignatureStorageKey(), signature);
-    } catch {
-      // Local storage may be unavailable in hardened/private browser modes.
-    }
-    await submitCardWithSignature(signature);
-  }
-
-  const canSubmit = Boolean(Number(totalHours) > 0 && missingEntries === 0 && !weeklyLimitWarning && !card.validationError && (isDraft || isReturned));
+  // Rows that are fully empty (no project, no hours) are stripped on submit, so they
+  // never block it. Only rows holding hours without a project keep the button locked.
+  const unnamedRowsWithHours = projectRows.filter((row) => !String(row.projectId || row.project_id || row.projectName || row.project_name || "").trim() && getRowTotal(row) > 0);
+  const canSubmit = Boolean(Number(totalHours) > 0 && !unnamedRowsWithHours.length && !weeklyLimitWarning && !card.validationError && (isDraft || isReturned));
+  const submitHint = !canSubmit && (isDraft || isReturned)
+    ? (Number(totalHours) <= 0
+        ? "Enter hours before submitting."
+        : unnamedRowsWithHours.length
+          ? "Select a project for every row with hours before submitting."
+          : "")
+    : "";
 
   return (
-    <section className={cardClass("overflow-hidden !rounded-lg")}>
-      <div className="border-b border-slate-200 bg-white pb-3">
-        <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
-          <div>
-            <div>
-              <h1 className="text-2xl font-semibold text-slate-950">Weekly Timesheet</h1>
-              <p className="mt-1 text-sm font-semibold text-slate-500">Timesheet Number: <span className="text-slate-950">{getTimesheetNumber(card)}</span></p>
-            </div>
-            <div className="mt-3 grid gap-x-6 gap-y-2 text-sm md:grid-cols-3 xl:grid-cols-7">
-              {[
-                ["Project Name", card.projectName || "-"],
-                ["Project Number", card.projectNumber || card.project_number || "-"],
-                ["Client", card.clientName || card.client_name || "Client"],
-                ["Employee Name", card.technicianName || card.technician_name || "-"],
-                ["Approver", card.managerName || card.manager_name || card.reviewedBy || card.reviewed_by || "Project Manager"],
-                ["Week Period", formatWeekRange(weekStartDate, weekEndDate)]
-              ].map(([label, value]) => (
-                <div key={label}>
-                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">{label}</p>
-                  <p className="mt-1 font-semibold text-slate-950">{value}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-          <span className="w-fit rounded-full border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-slate-800">
+    <section className="w-full rounded-2xl border border-stone-200 bg-[#fdfcf9] px-6 py-6 sm:px-8">
+
+      {/* ── Header ── */}
+      <header>
+        <p className="text-[13px] font-medium text-stone-500">
+          Timesheets <span aria-hidden="true">›</span> <span className="font-semibold text-stone-700">{getTimesheetNumber(card)}</span>
+        </p>
+        <div className="mt-2 flex flex-wrap items-center gap-3">
+          <h1 className="text-[28px] font-bold leading-tight tracking-tight text-stone-900">Weekly timesheet</h1>
+          <span className={`rounded-full px-3 py-1 text-[13px] font-semibold ${getTimesheetStatusPillClass(card.status)}`}>
             {formatTimeCardStatus(card.status)}
           </span>
+          {onNavigateWeek && (
+            <div className="ml-auto">
+              <WeekNavigator weekStartDate={weekStartDate} weekEndDate={weekEndDate} onNavigate={onNavigateWeek} />
+            </div>
+          )}
         </div>
-      </div>
+        <dl className="mt-4 flex flex-wrap gap-x-10 gap-y-2 border-b border-stone-200 pb-5">
+          <div>
+            <dt className="text-[13px] font-medium text-stone-500">Employee</dt>
+            <dd className="mt-0.5 text-[15px] font-semibold text-stone-900">{card.technicianName || card.technician_name || "-"}</dd>
+          </div>
+          <div>
+            <dt className="text-[13px] font-medium text-stone-500">Role</dt>
+            <dd className="mt-0.5 text-[15px] font-semibold text-stone-900">{card.technicianRole || card.technician_role || "Field Engineer"}</dd>
+          </div>
+        </dl>
+      </header>
 
       {isReturned && (
-        <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3">
-          <p className="text-sm font-bold text-amber-950">Returned For Correction</p>
-          <p className="mt-2 text-sm font-semibold leading-6 text-amber-900">
-            {card.managerComment || "Manager comments and correction notes will appear here. Update the Timesheet and resubmit when complete."}
+        <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+          <p className="text-sm font-bold text-amber-900">Returned for correction</p>
+          <p className="mt-0.5 text-sm leading-6 text-amber-800">
+            {card.managerComment || "Manager comments and correction notes will appear here. Update the timesheet and resubmit when complete."}
           </p>
         </div>
       )}
 
-      <div className="mt-4 rounded-md border border-slate-200">
-        <div className="hidden lg:block">
-          <table className="w-full table-fixed border-collapse text-left text-sm">
-            <thead className="bg-slate-100 text-xs font-semibold uppercase tracking-[0.08em] text-slate-600">
-              <tr>
-                <th className="border-b border-slate-200 px-3 py-2">Hours Type</th>
-                {TIMESHEET_DAY_COLUMNS.map((dayName) => (
-                  <th key={dayName} className="border-b border-slate-200 px-3 py-2 text-center">{TIMESHEET_DAY_LABELS[dayName]}</th>
-                ))}
-                <th className="border-b border-slate-200 px-3 py-2 text-right">Total</th>
-              </tr>
-            </thead>
-            <tbody>
-              {[
-                ["Regular Hours", "regularHours", totalRegular],
-                ["Overtime Hours", "overtimeHours", totalOvertime]
-              ].map(([rowLabel, field, rowTotal]) => (
-                <tr key={field} className="border-b border-slate-100 last:border-b-0">
-                  <td className="px-3 py-3 font-semibold text-slate-950">{rowLabel}</td>
-                  {TIMESHEET_DAY_COLUMNS.map((dayName) => {
-                    const entry = entries.find((item) => (item.dayName || item.day_name) === dayName);
-                    const entryIndex = entries.findIndex((item) => (item.dayName || item.day_name) === dayName);
-                    return (
-                      <td key={dayName} className="px-2 py-2 text-center">
-                        {canEditHours ? (
-                          <input type="text" inputMode="decimal" value={entry?.[field] ?? entry?.[field === "regularHours" ? "regular_hours" : "overtime_hours"] ?? "0.00"} onBlur={() => onChange(saveTimeCard(card))} onChange={(event) => updateHourEntry(entryIndex, field, event.target.value)} className="h-9 w-full max-w-[72px] rounded-md border border-slate-200 px-2 text-right font-semibold outline-none focus:border-blue-700" />
-                        ) : (
-                          <span className="font-semibold text-slate-950">{entry?.[field] ?? entry?.[field === "regularHours" ? "regular_hours" : "overtime_hours"] ?? "0.00"}</span>
-                        )}
-                      </td>
-                    );
-                  })}
-                  <td className="px-3 py-3 text-right font-bold text-slate-950">{rowTotal}</td>
-                </tr>
-              ))}
-              <tr className="bg-slate-50">
-                <td className="px-3 py-3 font-semibold text-slate-950">Daily Total</td>
-                {TIMESHEET_DAY_COLUMNS.map((dayName) => {
-                  const entry = entries.find((item) => (item.dayName || item.day_name) === dayName);
-                  return (
-                    <td key={dayName} className="px-2 py-3 text-center font-bold text-slate-950">
-                      {entry?.totalHours ?? entry?.total_hours ?? "0.00"}
-                    </td>
-                  );
-                })}
-                <td className="px-3 py-3 text-right font-bold text-slate-950">{totalHours}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-        <div className="grid gap-3 p-3 lg:hidden">
-          {orderedEntries.map((entry) => {
-            const entryIndex = entries.findIndex((item) => (item.id || item.workDate || item.work_date) === (entry.id || entry.workDate || entry.work_date));
-            return (
-              <div key={entry.id || entry.workDate || entry.work_date} className="rounded-md border border-slate-200 bg-white p-3">
-                <p className="font-semibold text-slate-950">{entry.dayName || entry.day_name}</p>
-                <div className="mt-2 grid grid-cols-2 gap-2">
-                  {[
-                    ["Regular", "regularHours"],
-                    ["OT", "overtimeHours"]
-                  ].map(([label, field]) => (
-                    <label key={field} className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
-                      {label}
-                      <input type="text" inputMode="decimal" value={entry?.[field] ?? entry?.[field === "regularHours" ? "regular_hours" : "overtime_hours"] ?? "0.00"} disabled={!canEditHours} onBlur={() => onChange(saveTimeCard(card))} onChange={(event) => updateHourEntry(entryIndex, field, event.target.value)} className="mt-1 h-9 w-full rounded-md border border-slate-200 px-2 text-right text-sm font-semibold text-slate-950 outline-none focus:border-blue-700 disabled:bg-slate-50" />
-                    </label>
-                  ))}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-      {dailyValidationMessages.length > 0 && (
-        <div className="mt-3 rounded-md border border-rose-200 bg-rose-50 p-3 text-sm font-semibold text-rose-700">
-          {dailyValidationMessages.map((message) => <p key={message}>{message}</p>)}
+      {futureHoursCleared && (
+        <div className="mt-4 rounded-xl border border-stone-200 bg-stone-50 px-4 py-2.5 text-sm font-medium text-stone-600">
+          Hours logged on future dates were cleared — time can only be recorded for today or earlier.
         </div>
       )}
 
-      <label className="mt-4 block">
-        <span className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Comments</span>
-        <textarea value={comments} disabled={!canEditHours} onBlur={() => onChange(saveTimeCard(card))} onChange={(event) => updateComments(event.target.value)} rows={3} className="mt-1 w-full rounded-md border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-950 outline-none focus:border-blue-700 disabled:bg-slate-50" />
+      {/* ── Hours by project ── */}
+      <div className="mt-6 flex items-center justify-between">
+        <h2 className="text-xl font-bold tracking-tight text-stone-900">Hours by project</h2>
+        {canEditHours && (
+          <button
+            type="button"
+            onClick={handleAddProject}
+            className="inline-flex min-h-10 items-center gap-1.5 rounded-xl border border-stone-300 bg-white px-4 text-sm font-semibold text-stone-800 transition hover:border-stone-400 hover:bg-stone-50"
+          >
+            <Plus className="h-4 w-4" /> Add project
+          </button>
+        )}
+      </div>
+
+      {projectRows.length === 0 ? (
+        <div className="mt-4 rounded-2xl border border-dashed border-stone-300 bg-stone-50 px-4 py-10 text-center">
+          <p className="text-sm font-semibold text-stone-600">No projects added for this week.</p>
+          {canEditHours && (
+            <button type="button" onClick={handleAddProject} className="mt-3 inline-flex min-h-10 items-center gap-1.5 rounded-xl bg-stone-900 px-4 text-sm font-semibold text-white transition hover:bg-stone-800">
+              <Plus className="h-4 w-4" /> Add project
+            </button>
+          )}
+        </div>
+      ) : (
+        <>
+          {/* Desktop grid — borderless, pill inputs */}
+          <div className="mt-4 hidden overflow-x-auto lg:block">
+            <table className="w-full table-fixed border-collapse text-sm">
+              <colgroup>
+                <col className="w-[26%]" />
+                {TIMESHEET_DAY_COLUMNS.map((dayName) => (
+                  <col key={dayName} className="w-[9%]" />
+                ))}
+                <col className="w-[11%]" />
+              </colgroup>
+              <thead>
+                <tr>
+                  <th className="px-2 pb-3 text-left text-base font-medium text-stone-500">Project</th>
+                  {TIMESHEET_DAY_COLUMNS.map((dayName, dayIndex) => {
+                    const dayDate = dayDates[dayIndex];
+                    const isToday = Boolean(dayDate) && dayDate.toDateString() === todayKey;
+                    const isMuted = TIMESHEET_WEEKEND_DAYS.has(dayName) || isFutureTimesheetDay(dayDate);
+                    return (
+                      <th key={dayName} className="px-1 pb-3 text-center align-bottom">
+                        <div className={`mx-auto rounded-t-lg px-1 pb-1 pt-2 text-base font-medium leading-tight ${isToday ? "bg-blue-100 text-blue-800" : isMuted ? "text-stone-400" : "text-stone-500"}`}>
+                          {TIMESHEET_DAY_LABELS[dayName]}
+                          <span className="block text-sm">{dayDate ? dayDate.getDate() : " "}</span>
+                        </div>
+                      </th>
+                    );
+                  })}
+                  <th className="px-2 pb-3 text-right text-base font-medium text-stone-500">Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {projectRows.map((row) => (
+                  <tr key={row.id} className="group border-t border-stone-200">
+                    <td className="px-2 py-3 align-middle">
+                      {canEditHours ? (
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <div className="relative min-w-0 flex-1">
+                              <select
+                                value={String(row.projectId || row.project_id || "")}
+                                onChange={(event) => handleProjectChange(row.id, event.target.value)}
+                                title={row.projectName || row.project_name || "Select project"}
+                                className="h-11 w-full appearance-none overflow-hidden text-ellipsis whitespace-nowrap rounded-xl border border-stone-300 bg-white pl-3 pr-8 text-[15px] font-semibold text-stone-900 outline-none transition hover:border-stone-400 focus:border-amber-500 focus:ring-2 focus:ring-amber-200"
+                              >
+                                <option value="">Select project…</option>
+                                {projectOptionsFor(row).map((option) => (
+                                  <option key={option.id} value={option.id}>{option.name}{option.number ? ` (#${option.number})` : ""}</option>
+                                ))}
+                              </select>
+                              <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400" />
+                            </div>
+                            <button type="button" onClick={() => handleRemoveProject(row.id)} className="shrink-0 rounded-lg p-1 text-stone-400 opacity-0 transition-opacity hover:bg-stone-100 hover:text-rose-600 focus-visible:opacity-100 group-focus-within:opacity-100 group-hover:opacity-100" aria-label="Remove project">
+                              <X className="h-4 w-4" />
+                            </button>
+                          </div>
+                          {managerByProject[String(row.projectId || row.project_id || "")] && (
+                            <p className="mt-1 pl-1 text-xs font-medium text-stone-400" title={managerByProject[String(row.projectId || row.project_id || "")]?.email || ""}>
+                              Approver: <span className="text-stone-600">{managerByProject[String(row.projectId || row.project_id || "")]?.name}</span>
+                            </p>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="min-w-0">
+                          <p className="truncate text-[15px] font-semibold text-stone-900" title={row.projectName || row.project_name || ""}>
+                            {row.projectName || row.project_name || <span className="font-medium text-stone-400">No project</span>}
+                          </p>
+                          <p className="text-[13px] font-medium text-stone-500">
+                            {(row.projectNumber || row.project_number) ? `#${row.projectNumber || row.project_number}` : ""}
+                            {managerByProject[String(row.projectId || row.project_id || "")] ? `${(row.projectNumber || row.project_number) ? " · " : ""}Approver: ${managerByProject[String(row.projectId || row.project_id || "")]?.name}` : ""}
+                          </p>
+                        </div>
+                      )}
+                    </td>
+                    {TIMESHEET_DAY_COLUMNS.map((dayName, dayIndex) => {
+                      const dayDate = dayDates[dayIndex];
+                      const isFutureDay = isFutureTimesheetDay(dayDate);
+                      const isToday = Boolean(dayDate) && dayDate.toDateString() === todayKey;
+                      return (
+                        <td key={dayName} className={`px-1 py-3 text-center align-middle ${isToday ? "bg-blue-100/60" : ""}`}>
+                          {canEditHours ? (
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              value={isFutureDay ? "" : hourCellValue(row, dayName)}
+                              placeholder={isFutureDay ? "–" : ""}
+                              disabled={isFutureDay}
+                              title={isFutureDay ? "Hours cannot be logged for future dates" : undefined}
+                              onChange={(event) => handleHoursChange(row.id, dayName, event.target.value)}
+                              onBlur={() => handleHoursBlur(row.id, dayName)}
+                              className={`mx-auto h-11 w-full max-w-[52px] rounded-xl border text-center text-[15px] font-semibold outline-none transition ${isFutureDay ? "cursor-not-allowed border-dashed border-stone-300 bg-transparent text-stone-400 placeholder:text-stone-400" : isToday ? "border-amber-400 bg-amber-50 text-stone-900 focus:border-amber-500 focus:ring-2 focus:ring-amber-200" : "border-stone-300 bg-white text-stone-900 hover:border-stone-400 focus:border-amber-500 focus:ring-2 focus:ring-amber-200"}`}
+                            />
+                          ) : (
+                            <span className="text-[15px] font-semibold text-stone-900">{formatHours(row.hours?.[dayName])}</span>
+                          )}
+                        </td>
+                      );
+                    })}
+                    <td className="px-2 py-3 text-right align-middle text-[15px] font-bold text-stone-900">{formatHours(getRowTotal(row))}</td>
+                  </tr>
+                ))}
+                <tr className="border-t-2 border-stone-300 bg-stone-100">
+                  <td className="rounded-l-xl px-2 py-3 text-sm font-semibold text-stone-600">Daily total</td>
+                  {TIMESHEET_DAY_COLUMNS.map((dayName, dayIndex) => {
+                    const muted = (TIMESHEET_WEEKEND_DAYS.has(dayName) || isFutureTimesheetDay(dayDates[dayIndex])) && !Number(dailyTotals[dayName]);
+                    return (
+                      <td key={dayName} className={`px-1 py-3 text-center text-[15px] font-semibold ${muted ? "text-stone-400" : "text-stone-900"}`}>
+                        {formatHours(dailyTotals[dayName])}
+                      </td>
+                    );
+                  })}
+                  <td className="rounded-r-xl px-2 py-3 text-right text-[15px] font-bold text-stone-900">{totalHours}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          {/* Mobile: stacked day cards */}
+          <div className="mt-4 space-y-2.5 lg:hidden">
+            {TIMESHEET_DAY_COLUMNS.map((dayName, dayIndex) => {
+              const dayDate = dayDates[dayIndex];
+              const isFutureDay = isFutureTimesheetDay(dayDate);
+              const isToday = Boolean(dayDate) && dayDate.toDateString() === todayKey;
+              return (
+                <div key={dayName} className={`rounded-2xl border ${isToday ? "border-blue-200 bg-blue-50/60" : "border-stone-200 bg-white"}`}>
+                  <div className="flex items-center justify-between px-4 py-2.5">
+                    <span className={`text-sm font-semibold ${isFutureDay ? "text-stone-400" : isToday ? "text-blue-900" : "text-stone-900"}`}>
+                      {dayName}{dayDate ? ` ${dayDate.getDate()}` : ""}
+                    </span>
+                    <span className={`text-sm font-bold ${isFutureDay ? "text-stone-400" : "text-stone-900"}`}>{isFutureDay ? "–" : `${formatHours(dailyTotals[dayName])} hrs`}</span>
+                  </div>
+                  {!isFutureDay && (
+                    <div className="space-y-2 px-4 pb-3">
+                      {projectRows.map((row) => (
+                        <label key={row.id} className="flex items-center justify-between gap-3 text-sm">
+                          <span className="min-w-0 flex-1 truncate font-medium text-stone-600">{row.projectName || row.project_name || "No project"}</span>
+                          <input type="text" inputMode="decimal" value={hourCellValue(row, dayName)} placeholder="" disabled={!canEditHours} onChange={(event) => handleHoursChange(row.id, dayName, event.target.value)} onBlur={() => handleHoursBlur(row.id, dayName)} className="h-10 w-20 rounded-xl border border-stone-300 px-2 text-center text-[15px] font-semibold text-stone-900 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-200 disabled:cursor-not-allowed disabled:bg-stone-50" />
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      {/* ── Summary bar ── */}
+      <div className="mt-4 flex flex-wrap items-baseline gap-x-10 gap-y-2 rounded-xl bg-stone-100 px-5 py-3">
+        <p className="flex items-baseline gap-2">
+          <span className="text-[13px] font-medium text-stone-500">Regular hours</span>
+          <span className="text-base font-bold text-stone-900">{totalRegular}</span>
+        </p>
+        <p className="flex items-baseline gap-2">
+          <span className={`text-[13px] font-medium ${Number(totalOvertime) > 0 ? "text-amber-700" : "text-stone-500"}`}>Overtime</span>
+          {(card.overtimeExempt || card.overtime_exempt) ? (
+            <span className="text-[13px] font-semibold text-stone-400" title="Office-based employees are overtime exempt; all hours are recorded as regular time.">Exempt</span>
+          ) : (
+            <span className={`text-base font-bold ${Number(totalOvertime) > 0 ? "text-amber-800" : "text-stone-900"}`}>{totalOvertime}</span>
+          )}
+        </p>
+        <p className="ml-auto flex items-baseline gap-2">
+          <span className="text-[13px] font-medium text-stone-500">Total hours</span>
+          <span className="text-lg font-bold text-stone-900">{totalHours}</span>
+        </p>
+      </div>
+
+      {/* ── Weekly comments ── */}
+      <label className="mt-6 block">
+        <span className="text-base font-semibold text-stone-800">
+          Weekly comments <span className="font-medium text-stone-400">(optional)</span>
+        </span>
+        <textarea
+          value={comments}
+          disabled={!canEditHours}
+          placeholder="Add notes for your manager…"
+          onBlur={() => persistCard(card)}
+          onChange={(event) => updateComments(event.target.value)}
+          rows={3}
+          className="mt-2 w-full resize-y rounded-xl border border-stone-300 bg-white px-4 py-3 text-[15px] font-normal text-stone-900 outline-none transition placeholder:text-stone-400 hover:border-stone-400 focus:border-amber-500 focus:ring-2 focus:ring-amber-200 disabled:cursor-not-allowed disabled:bg-stone-50"
+        />
       </label>
 
-      <div className="mt-4 rounded-md border border-slate-200 bg-slate-50 px-3 py-3">
-        <div className="grid gap-3 sm:grid-cols-3">
-          {[
-            ["Regular Hours", totalRegular],
-            ["Overtime Hours", totalOvertime],
-            ["Total Hours", totalHours]
-          ].map(([label, value]) => (
-            <div key={label}>
-              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">{label}</p>
-              <p className="mt-1 text-lg font-bold text-slate-950">{value}</p>
-            </div>
-          ))}
-        </div>
+      {/* Validation messages */}
+      {card.validationError && <p className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">{card.validationError}</p>}
+      {weeklyLimitWarning && <p className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">{weeklyLimitWarning}</p>}
+      {!card.validationError && card.validationWarning && <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-700">{card.validationWarning}</p>}
+
+      {/* ── Action footer ── */}
+      <div className="sticky bottom-0 z-10 -mx-6 mt-6 flex flex-col gap-2 border-t border-stone-200 bg-[#fdfcf9]/95 px-6 py-3 backdrop-blur sm:static sm:mx-0 sm:flex-row sm:items-center sm:justify-end sm:border-t sm:bg-transparent sm:px-0 sm:pb-0 sm:pt-4 sm:backdrop-blur-0">
+        {lastSaved && (
+          <p className="text-center text-sm font-medium text-stone-400 sm:mr-auto sm:text-left">
+            Last saved {lastSaved.label}
+          </p>
+        )}
+        {submitHint && (
+          <p className="self-center text-center text-xs font-semibold text-amber-700 sm:text-right">
+            {submitHint}
+          </p>
+        )}
+        <button
+          type="button"
+          onClick={() => persistCard(card)}
+          className="inline-flex h-12 items-center justify-center gap-2 rounded-xl border border-stone-300 bg-white px-6 text-sm font-semibold text-stone-800 transition hover:border-stone-400 hover:bg-stone-50"
+        >
+          <Save className="h-4 w-4" /> {isReturned ? "Save" : "Save draft"}
+        </button>
+        <button
+          type="button"
+          onClick={submitCard}
+          disabled={!canSubmit}
+          className="inline-flex h-12 items-center justify-center gap-2 rounded-xl bg-[#bd5d3a] px-6 text-sm font-semibold text-white transition hover:bg-[#a84f30] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-[#bd5d3a]"
+        >
+          <Send className="h-4 w-4" /> {isReturned ? "Resubmit" : "Submit for approval"}
+        </button>
       </div>
 
-      {card.validationError && <p className="mt-3 rounded-md border border-rose-200 bg-rose-50 p-3 text-sm font-semibold text-rose-700">{card.validationError}</p>}
-      {weeklyLimitWarning && <p className="mt-3 rounded-md border border-rose-200 bg-rose-50 p-3 text-sm font-semibold text-rose-700">{weeklyLimitWarning}</p>}
-      {!card.validationError && card.validationWarning && <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm font-semibold text-amber-700">{card.validationWarning}</p>}
-
-      <div className="sticky bottom-0 z-10 -mx-3 mt-4 flex flex-col gap-2 border-t border-slate-200 bg-white/95 p-3 backdrop-blur sm:static sm:mx-0 sm:flex-row sm:justify-end sm:border-t-0 sm:bg-transparent sm:p-0 sm:backdrop-blur-0">
-        <button type="button" onClick={() => onChange(saveTimeCard(card))} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-800">
-          <Save className="h-4 w-4" /> {isReturned ? "Save" : "Save Draft"}
-        </button>
-        <button type="button" onClick={submitCard} disabled={!canSubmit} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-slate-950 px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60">
-          <Send className="h-4 w-4" /> {isReturned ? "Resubmit" : "Submit for Approval"}
-        </button>
-      </div>
-      <SignatureModal
-        open={signatureModalOpen}
-        title="Technician Signature"
-        description="Use your saved signature or draw a new signature before submitting this Timesheet for manager review."
-        value={technicianSignatureDraft}
-        onSave={setTechnicianSignatureDraft}
-        onClear={() => setTechnicianSignatureDraft("")}
-        onClose={() => setSignatureModalOpen(false)}
-        onConfirm={() => {
-          if (!technicianSignatureDraft) {
-            window.alert("Please sign before submitting the Timesheet.");
-            return;
-          }
-          try {
-            window.localStorage.setItem(getTechnicianSignatureStorageKey(), technicianSignatureDraft);
-          } catch {
-            // Local storage may be unavailable in hardened/private browser modes.
-          }
-          setSignatureModalOpen(false);
-          submitCardWithSignature(technicianSignatureDraft);
-        }}
-        signatureActionLabel="Save Technician Signature"
-      />
     </section>
   );
 }
@@ -2359,22 +2659,19 @@ function ReadOnlyValue({ label, value }) {
   );
 }
 
-function TimeCardReadOnlyView({ card, onRecall, onViewPdf, onRegeneratePdf }) {
+function TimeCardReadOnlyView({ card, onRecall, onViewPdf, onDownloadPdf, onRegeneratePdf, onNavigateWeek }) {
   const isSubmitted = card.status === TIME_CARD_STATUS.SUBMITTED;
   const isApproved = card.status === TIME_CARD_STATUS.APPROVED;
   const isCompleted = card.status === TIME_CARD_STATUS.COMPLETED;
   const pdfStatus = card.pdfGenerationStatus || card.pdf_generation_status || (card.pdfStoragePath || card.pdf_storage_path ? "generated" : "pending");
   const canUsePdf = pdfStatus === "generated";
-  const statusDetail = isApproved
-    ? `Approved${card.approvedAt ? ` ${formatDateTime(card.approvedAt)}` : ""}`
-    : isCompleted
-      ? "Completed"
-      : "Pending Manager Review";
   const timesheetNumber = getTimesheetNumber(card);
   const submittedAt = card.submittedAt || card.submitted_at;
   const canRecall = isSubmitted;
-  const entries = Array.isArray(card.entries) ? card.entries : [];
-  const displayEntries = entries.filter((entry) => !isWeekendEntry(entry) || hasEntryHours(entry));
+  const projectRows = Array.isArray(card.projectRows) ? card.projectRows : [];
+  const { managerByProject } = useTimesheetApprovers(projectRows);
+  const dailyTotals = card.dailyTotals || {};
+  const comments = card.timesheetComments || card.timesheet_comments || card.comments || "";
   const weekStart = card.weekStartDate || card.week_start_date || card.date;
   const weekEnd = card.weekEndDate || card.week_end_date;
   const totalRegular = card.totalRegularHours || card.total_regular_hours || "0.00";
@@ -2383,178 +2680,187 @@ function TimeCardReadOnlyView({ card, onRecall, onViewPdf, onRegeneratePdf }) {
   const managerName = card.reviewedBy || card.reviewed_by || card.managerName || card.manager_name || "Project Manager";
   const reviewComments = card.reviewComments || card.review_comments || card.managerComment || "";
   const approvedAt = card.approvedAt || card.approved_at;
-  const createdAt = card.createdAt || card.created_at;
   const weeklyWarnings = [
-    Number(totalRegular) > 40 ? "Regular hours exceed 40. Confirm overtime classification before approval." : null,
-    entries.length >= 7 && entries.every(hasEntryHours) ? "Seven consecutive workdays entered. Review fatigue/rest policy." : null,
+    !(card.overtimeExempt || card.overtime_exempt) && Number(totalOvertime) > 0 ? "Weekly hours exceed 40. Overtime hours apply." : null,
     Number(totalHours) > 60 ? "Total weekly hours exceed the default company threshold of 60 hours." : null
   ].filter(Boolean);
-  const timelineItems = [
-    ["Draft Created", createdAt ? formatDateTime(createdAt) : "-"],
-    ["Submitted", submittedAt ? formatDateTime(submittedAt) : "-"],
-    [isApproved || isCompleted ? "Approved" : statusDetail, isApproved || isCompleted ? (approvedAt ? formatDateTime(approvedAt) : "-") : "Current Stage"]
-  ];
-  const statusBadgeClass = {
-    [TIME_CARD_STATUS.DRAFT]: "border-slate-200 bg-slate-100 text-slate-700",
-    [TIME_CARD_STATUS.SUBMITTED]: "border-amber-200 bg-amber-50 text-amber-800",
-    [TIME_CARD_STATUS.PENDING_REVIEW]: "border-amber-200 bg-amber-50 text-amber-800",
-    [TIME_CARD_STATUS.APPROVED]: "border-emerald-200 bg-emerald-50 text-emerald-800",
-    [TIME_CARD_STATUS.COMPLETED]: "border-emerald-200 bg-emerald-50 text-emerald-800",
-    [TIME_CARD_STATUS.REJECTED]: "border-rose-200 bg-rose-50 text-rose-800",
-    [TIME_CARD_STATUS.RETURNED]: "border-rose-200 bg-rose-50 text-rose-800"
-  }[card.status] || "border-slate-200 bg-slate-100 text-slate-700";
-  const showCommentsColumn = displayEntries.some((entry) => String(entry.reviewComments || entry.review_comments || entry.comments || "").trim());
   return (
-    <div className="space-y-3">
-      <section className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm sm:p-4">
-        <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
-          <div className="min-w-0">
-            <h1 className="text-xl font-bold text-slate-950 sm:text-2xl">Timesheet #{timesheetNumber}</h1>
-            <p className="mt-1 text-sm font-bold text-slate-700">{card.projectName || "-"}</p>
-            <div className="mt-2 text-sm">
-              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Week</p>
-              <p className="mt-0.5 font-semibold text-slate-950">{formatWeekRange(weekStart, weekEnd)}</p>
-            </div>
-            <div className="mt-3 grid gap-x-8 gap-y-2 text-sm md:grid-cols-3">
-              {[
-                ["Submitted Date", submittedAt ? formatDateTime(submittedAt) : "-"],
-                ["Assigned Manager", managerName],
-                ["Project Number", card.projectNumber || card.project_number || "-"]
-              ].map(([label, value]) => (
-                <div key={label}>
-                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">{label}</p>
-                  <p className="mt-1 font-semibold text-slate-950">{value}</p>
-                </div>
-              ))}
-            </div>
+    <section className="w-full rounded-2xl border border-stone-200 bg-[#fdfcf9] px-6 py-6 sm:px-8">
+
+      {/* ── Header ── */}
+      <header>
+        <p className="text-[13px] font-medium text-stone-500">
+          Timesheets <span aria-hidden="true">›</span> <span className="font-semibold text-stone-700">{timesheetNumber}</span>
+        </p>
+        <div className="mt-2 flex flex-wrap items-center gap-3">
+          <h1 className="text-[28px] font-bold leading-tight tracking-tight text-stone-900">Weekly timesheet</h1>
+          <span className={`rounded-full px-3 py-1 text-[13px] font-semibold ${getTimesheetStatusPillClass(card.status)}`}>
+            {formatTimeCardStatus(card.status)}
+          </span>
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            {onNavigateWeek ? (
+              <WeekNavigator weekStartDate={weekStart} weekEndDate={weekEnd} onNavigate={onNavigateWeek} />
+            ) : (
+              <p className="text-sm font-semibold text-stone-900">{formatWeekRange(weekStart, weekEnd)}</p>
+            )}
           </div>
-          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-start">
-            <span className={`inline-flex min-h-9 items-center justify-center rounded-full border px-3 text-xs font-bold uppercase tracking-[0.12em] ${statusBadgeClass}`}>{statusDetail}</span>
+        </div>
+        <div className="mt-4 flex flex-wrap items-end justify-between gap-4 border-b border-stone-200 pb-5">
+          <dl className="flex flex-wrap gap-x-10 gap-y-2">
+            <div>
+              <dt className="text-[13px] font-medium text-stone-500">Employee</dt>
+              <dd className="mt-0.5 text-[15px] font-semibold text-stone-900">{card.technicianName || card.technician_name || "-"}</dd>
+            </div>
+            <div>
+              <dt className="text-[13px] font-medium text-stone-500">Submitted</dt>
+              <dd className="mt-0.5 text-[15px] font-semibold text-stone-900">{submittedAt ? formatDateTime(submittedAt) : "-"}</dd>
+            </div>
+          </dl>
+          <div className="flex flex-wrap items-center gap-2">
             {canUsePdf && (
-              <button type="button" onClick={onViewPdf} className="inline-flex min-h-9 items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 text-sm font-bold text-white">
-                <FileText className="h-4 w-4" />
-                View PDF
+              <button type="button" onClick={onViewPdf} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-stone-900 px-4 text-sm font-semibold text-white transition hover:bg-stone-800">
+                <FileText className="h-4 w-4" /> View PDF
               </button>
             )}
             <details className="relative">
-              <summary className="inline-flex min-h-9 cursor-pointer list-none items-center justify-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-800">Actions</summary>
-              <div className="absolute right-0 z-20 mt-2 w-48 rounded-xl border border-slate-200 bg-white p-2 shadow-lg">
-                <button type="button" onClick={onViewPdf} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-semibold text-slate-800 hover:bg-slate-50">
-                  <Download className="h-4 w-4" />
-                  Download PDF
+              <summary className="inline-flex h-10 cursor-pointer list-none items-center justify-center rounded-xl border border-stone-300 bg-white px-4 text-sm font-semibold text-stone-700 transition hover:border-stone-400 hover:bg-stone-50">Actions</summary>
+              <div className="absolute right-0 z-20 mt-2 w-52 rounded-xl border border-stone-200 bg-white p-2 shadow-lg">
+                <button type="button" onClick={onDownloadPdf || onViewPdf} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-medium text-stone-700 transition hover:bg-stone-100">
+                  <Download className="h-4 w-4" /> Download PDF
                 </button>
-                <button type="button" onClick={() => window.print()} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-semibold text-slate-800 hover:bg-slate-50">
-                  <FileText className="h-4 w-4" />
-                  Print
+                <button type="button" onClick={() => window.print()} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-medium text-stone-700 transition hover:bg-stone-100">
+                  <FileText className="h-4 w-4" /> Print
                 </button>
                 {canRecall && (
-                  <button type="button" onClick={onRecall} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-semibold text-slate-800 hover:bg-slate-50">
-                    <RotateCcw className="h-4 w-4" />
-                    Recall Timesheet
+                  <button type="button" onClick={onRecall} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-medium text-stone-700 transition hover:bg-stone-100">
+                    <RotateCcw className="h-4 w-4" /> Recall timesheet
                   </button>
                 )}
               </div>
             </details>
           </div>
         </div>
-        {(isSubmitted || isApproved || isCompleted) && pdfStatus === "pending" && (
-          <p className="mt-4 rounded-2xl border border-blue-200 bg-white/70 p-3 text-sm font-bold">
-            PDF is still being generated. Please try again in a few seconds.
-          </p>
-        )}
-        {(isSubmitted || isApproved || isCompleted) && pdfStatus === "failed" && (
-          <p className="mt-4 rounded-2xl border border-rose-200 bg-rose-50 p-3 text-sm font-bold text-rose-800">
-            Unable to generate Timesheet PDF. Please contact support.
-            {(card.pdfGenerationFailureReason || card.pdf_generation_failure_reason || card.pdfGenerationError) && (
-              <span className="mt-1 block text-xs font-semibold">
-                Reason: {card.pdfGenerationFailureReason || card.pdf_generation_failure_reason || card.pdfGenerationError}
-              </span>
-            )}
-          </p>
-        )}
-      </section>
+      </header>
 
-      {(isApproved || isCompleted) && (
-        <section className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
-          <h2 className="text-sm font-semibold text-slate-950">Approval Details</h2>
-          <div className="mt-2 grid gap-2 text-sm md:grid-cols-3">
-            <p><span className="block text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Approved Date</span><span className="font-semibold text-slate-950">{approvedAt ? formatDateTime(approvedAt) : "-"}</span></p>
-            <p><span className="block text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Approver</span><span className="font-semibold text-slate-950">{managerName}</span></p>
-            <p><span className="block text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Approval Comments</span><span className="font-semibold text-slate-950">{reviewComments || "-"}</span></p>
-          </div>
-        </section>
+      {(isSubmitted || isApproved || isCompleted) && pdfStatus === "pending" && (
+        <p className="mt-5 rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm font-medium text-stone-600">
+          PDF is still being generated. Please try again in a few seconds.
+        </p>
+      )}
+      {(isSubmitted || isApproved || isCompleted) && pdfStatus === "failed" && (
+        <p className="mt-5 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
+          Unable to generate the timesheet PDF. Please contact support.
+          {(card.pdfGenerationFailureReason || card.pdf_generation_failure_reason || card.pdfGenerationError) && (
+            <span className="mt-1 block text-[13px] font-medium">
+              Reason: {card.pdfGenerationFailureReason || card.pdf_generation_failure_reason || card.pdfGenerationError}
+            </span>
+          )}
+        </p>
       )}
 
-      <section className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div className="grid gap-x-8 gap-y-2 text-sm md:grid-cols-3">
-            {[
-              ["Status", statusDetail],
-              ["Submitted Date", submittedAt ? formatDateTime(submittedAt) : "-"],
-              ["Assigned Manager", managerName]
-            ].map(([label, value]) => (
-              <p key={label}><span className="block text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">{label}</span><span className="font-semibold text-slate-950">{value}</span></p>
-            ))}
-          </div>
-          <details className="relative">
-            <summary className="cursor-pointer list-none text-sm font-bold text-blue-700">View History</summary>
-            <div className="absolute right-0 z-20 mt-2 w-72 rounded-xl border border-slate-200 bg-white p-2 shadow-lg">
-              {timelineItems.map(([label, value]) => (
-                <div key={label} className="rounded-md px-3 py-2 hover:bg-slate-50">
-                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">{label}</p>
-                  <p className="mt-1 text-sm font-semibold text-slate-950">{value}</p>
-                </div>
-              ))}
+      {(isApproved || isCompleted) && (
+        <div className="mt-5 rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-4">
+          <p className="text-sm font-bold text-emerald-900">Approval details</p>
+          <dl className="mt-2 flex flex-wrap gap-x-10 gap-y-2">
+            <div>
+              <dt className="text-[13px] font-medium text-emerald-700">Approved</dt>
+              <dd className="mt-0.5 text-[15px] font-semibold text-emerald-950">{approvedAt ? formatDateTime(approvedAt) : "-"}</dd>
             </div>
-          </details>
+            <div>
+              <dt className="text-[13px] font-medium text-emerald-700">Approver</dt>
+              <dd className="mt-0.5 text-[15px] font-semibold text-emerald-950">{managerName}</dd>
+            </div>
+            <div>
+              <dt className="text-[13px] font-medium text-emerald-700">Comments</dt>
+              <dd className="mt-0.5 text-[15px] font-semibold text-emerald-950">{reviewComments || "-"}</dd>
+            </div>
+          </dl>
         </div>
-      </section>
+      )}
 
       {weeklyWarnings.length > 0 && (
-        <section className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-semibold text-amber-900">
+        <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900">
           {weeklyWarnings.map((warning) => (
             <p key={warning}>{warning}</p>
           ))}
-        </section>
+        </div>
       )}
 
-      <section className={cardClass()}>
-        <div className="grid grid-cols-3 gap-0 rounded-md border border-slate-200 bg-slate-50 shadow-sm">
-          {[
-            ["Regular Hours", totalRegular],
-            ["OT Hours", totalOvertime],
-            ["Total Hours", totalHours]
-          ].map(([label, value]) => (
-            <div key={label} className="border-r border-slate-200 px-3 py-2 last:border-r-0">
-              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">{label}</p>
-              <p className="mt-0.5 text-base font-semibold text-slate-950">{value}</p>
-            </div>
-          ))}
-        </div>
-        <div className="mt-3 overflow-x-auto rounded-xl border border-slate-200">
-          <table className="min-w-[560px] w-full border-collapse text-left text-sm">
-            <thead className="bg-slate-950 text-xs font-bold uppercase tracking-[0.08em] text-white">
-              <tr>
-                {["Day", "Date", "Regular Hours", "OT Hours", ...(showCommentsColumn ? ["Comments"] : [])].map((header) => (
-                  <th key={header} className="px-3 py-3">{header}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {displayEntries.map((entry, index) => (
-                <tr key={entry.id || index} className="border-t border-slate-200">
-                  <td className="px-3 py-3 font-bold text-slate-900">{entry.dayName || entry.day_name}</td>
-                  <td className="px-3 py-3 font-semibold">{formatShortDate(entry.workDate || entry.work_date)}</td>
-                  <td className="px-3 py-3 font-bold">{entry.regularHours || entry.regular_hours || "0.00"}</td>
-                  <td className="px-3 py-3 font-bold">{entry.overtimeHours || entry.overtime_hours || "0.00"}</td>
-                  {showCommentsColumn && <td className="px-3 py-3 font-semibold">{entry.reviewComments || entry.review_comments || entry.comments || "-"}</td>}
-                </tr>
+      {/* ── Hours by project (read-only) ── */}
+      <h2 className="mt-6 text-xl font-bold tracking-tight text-stone-900">Hours by project</h2>
+
+      <div className="mt-4 overflow-x-auto">
+        <table className="w-full min-w-[760px] table-fixed border-collapse text-sm">
+          <colgroup>
+            <col className="w-[26%]" />
+            {TIMESHEET_DAY_COLUMNS.map((dayName) => (
+              <col key={dayName} className="w-[9%]" />
+            ))}
+            <col className="w-[11%]" />
+          </colgroup>
+          <thead>
+            <tr>
+              <th className="px-2 pb-2 text-left text-[15px] font-medium text-stone-500">Project</th>
+              {TIMESHEET_DAY_COLUMNS.map((dayName) => (
+                <th key={dayName} className="px-1 pb-2 text-center text-[15px] font-medium text-stone-500">{TIMESHEET_DAY_LABELS[dayName]}</th>
               ))}
-            </tbody>
-          </table>
+              <th className="px-2 pb-2 text-right text-[15px] font-medium text-stone-500">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {projectRows.map((row) => (
+              <tr key={row.id} className="border-t border-stone-200">
+                <td className="px-2 py-3">
+                  <p className="truncate text-[15px] font-semibold text-stone-900" title={row.projectName || row.project_name || ""}>{row.projectName || row.project_name || "-"}</p>
+                  <p className="text-[13px] font-medium text-stone-500">
+                    {(row.projectNumber || row.project_number) ? `#${row.projectNumber || row.project_number}` : ""}
+                    {managerByProject[String(row.projectId || row.project_id || "")] ? `${(row.projectNumber || row.project_number) ? " · " : ""}Approver: ${managerByProject[String(row.projectId || row.project_id || "")]?.name}` : ""}
+                  </p>
+                </td>
+                {TIMESHEET_DAY_COLUMNS.map((dayName) => (
+                  <td key={dayName} className="px-1 py-3 text-center text-[15px] font-medium text-stone-900">{formatHours(row.hours?.[dayName])}</td>
+                ))}
+                <td className="px-2 py-3 text-right text-[15px] font-bold text-stone-900">{formatHours(getRowTotal(row))}</td>
+              </tr>
+            ))}
+            <tr className="border-t-2 border-stone-300 bg-stone-100">
+              <td className="rounded-l-xl px-2 py-3 text-sm font-semibold text-stone-600">Daily total</td>
+              {TIMESHEET_DAY_COLUMNS.map((dayName) => (
+                <td key={dayName} className="px-1 py-3 text-center text-[15px] font-semibold text-stone-900">{formatHours(dailyTotals[dayName])}</td>
+              ))}
+              <td className="rounded-r-xl px-2 py-3 text-right text-[15px] font-bold text-stone-900">{totalHours}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      {/* ── Summary bar ── */}
+      <div className="mt-4 flex flex-wrap items-baseline gap-x-10 gap-y-2 rounded-xl bg-stone-100 px-5 py-3">
+        <p className="flex items-baseline gap-2">
+          <span className="text-[13px] font-medium text-stone-500">Regular hours</span>
+          <span className="text-base font-bold text-stone-900">{totalRegular}</span>
+        </p>
+        <p className="flex items-baseline gap-2">
+          <span className={`text-[13px] font-medium ${Number(totalOvertime) > 0 ? "text-amber-700" : "text-stone-500"}`}>Overtime</span>
+          {(card.overtimeExempt || card.overtime_exempt) ? (
+            <span className="text-[13px] font-semibold text-stone-400" title="Office-based employees are overtime exempt; all hours are recorded as regular time.">Exempt</span>
+          ) : (
+            <span className={`text-base font-bold ${Number(totalOvertime) > 0 ? "text-amber-800" : "text-stone-900"}`}>{totalOvertime}</span>
+          )}
+        </p>
+        <p className="ml-auto flex items-baseline gap-2">
+          <span className="text-[13px] font-medium text-stone-500">Total hours</span>
+          <span className="text-lg font-bold text-stone-900">{totalHours}</span>
+        </p>
+      </div>
+
+      {String(comments).trim() && (
+        <div className="mt-6">
+          <p className="text-base font-semibold text-stone-800">Weekly comments</p>
+          <p className="mt-2 whitespace-pre-line rounded-xl border border-stone-200 bg-white px-4 py-3 text-[15px] font-normal leading-6 text-stone-900">{comments}</p>
         </div>
-      </section>
-    </div>
+      )}
+    </section>
   );
 }
 
@@ -2605,30 +2911,71 @@ function TimeCardsPage({
   const label = TIME_CARD_TABS.find((tab) => tab.id === activeTab)?.label || "Draft";
 
   return (
-    <>
-      <section className={cardClass()}>
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            {commandCenterTitle("Timesheets", "Track labor records by status.")}
-            <div className="mt-3">
-              <StatusTabs tabs={TIME_CARD_TABS} activeTab={activeTab} onChange={setActiveTab} counts={tabCounts} />
-            </div>
-          </div>
-          <button type="button" onClick={onCreateTimeCard} className="sticky top-20 z-10 min-h-11 rounded-2xl bg-slate-950 px-4 text-sm font-bold text-white lg:static">
-            Open Current Timesheet
-          </button>
+    <section className="w-full rounded-2xl border border-stone-200 bg-[#fdfcf9] px-6 py-6 sm:px-8">
+
+      {/* Header */}
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <h1 className="text-[28px] font-bold leading-tight tracking-tight text-stone-900">Timesheets</h1>
+          <p className="mt-1 text-[13px] font-medium text-stone-500">Track labor records by status.</p>
         </div>
-      </section>
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <button
+          type="button"
+          onClick={onCreateTimeCard}
+          className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl bg-[#bd5d3a] px-5 text-sm font-semibold text-white transition hover:bg-[#a84f30]"
+        >
+          <Plus className="h-4 w-4" /> Open current timesheet
+        </button>
+      </div>
+
+      {/* Status tabs */}
+      <div className="mt-5 flex flex-wrap gap-1.5 border-b border-stone-200 pb-px">
+        {TIME_CARD_TABS.map((tab) => {
+          const isActive = tab.id === activeTab;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setActiveTab(tab.id)}
+              className={`relative -mb-px inline-flex h-10 items-center gap-2 rounded-t-lg border-b-2 px-4 text-sm font-semibold transition ${isActive ? "border-[#bd5d3a] text-stone-900" : "border-transparent text-stone-500 hover:bg-stone-100/70 hover:text-stone-800"}`}
+            >
+              {tab.label}
+              <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${isActive ? "bg-[#bd5d3a]/10 text-[#a84f30]" : "bg-stone-100 text-stone-500"}`}>
+                {tabCounts[tab.id] || 0}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Search */}
+      <div className="mt-4">
         <input
           type="search"
           value={searchTerm}
           onChange={(event) => setSearchTerm(event.target.value)}
-          placeholder="Search project, project number, or date"
-          className="min-h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-900 outline-none focus:border-blue-700 focus:ring-4 focus:ring-blue-100 sm:max-w-md"
+          placeholder="Search project, project number, or date…"
+          className="h-11 w-full rounded-xl border border-stone-300 bg-white px-4 text-sm font-medium text-stone-900 outline-none transition placeholder:text-stone-400 hover:border-stone-400 focus:border-amber-500 focus:ring-2 focus:ring-amber-200 sm:max-w-md"
         />
       </div>
-      <section className="space-y-2">
+
+      {/* Column headers (desktop) */}
+      {cards.length > 0 && (
+        <div className="mt-5 hidden grid-cols-[140px_minmax(0,1fr)_190px_60px_60px_70px_130px_140px_200px] items-center gap-3 px-4 pb-2 text-[13px] font-medium text-stone-500 lg:grid">
+          <span>Timesheet</span>
+          <span>Project</span>
+          <span>Week period</span>
+          <span className="text-right">Reg</span>
+          <span className="text-right">OT</span>
+          <span className="text-right">Total</span>
+          <span className="pl-4">Status</span>
+          <span>{ {draft: "Last modified", submitted: "Submitted", returned: "Returned", approved: "Approved"}[activeTab] || "Date" }</span>
+          <span aria-hidden="true"> </span>
+        </div>
+      )}
+
+      {/* Rows */}
+      <div className={`space-y-2 ${cards.length > 0 ? "" : "mt-5"}`}>
         {cards.map((card) => (
           <TimeCardListRow
             key={card.id}
@@ -2640,14 +2987,17 @@ function TimeCardsPage({
             onDownloadPdf={() => onDownloadTimeCardPdf(card)}
           />
         ))}
-      </section>
+      </div>
+
       {!cards.length && (
-        <EmptyState
-          title={`No ${label.toLowerCase()} Timesheets`}
-          description="Use Open Current Timesheet to create or reopen the weekly draft for the selected project and week."
-        />
+        <div className="mt-4 rounded-2xl border border-dashed border-stone-300 bg-stone-50 px-4 py-12 text-center">
+          <p className="text-base font-semibold text-stone-700">No {label.toLowerCase()} timesheets</p>
+          <p className="mx-auto mt-1 max-w-md text-sm font-medium text-stone-500">
+            Use Open current timesheet to create or reopen the weekly draft for the selected project and week.
+          </p>
+        </div>
       )}
-    </>
+    </section>
   );
 }
 
@@ -2961,6 +3311,14 @@ export default function FieldEngineerWorkspace({
       location: ""
     }];
   }, [assignedProjects, defaultProjectId, projectLabel]);
+  // Office-based employees are overtime-exempt: every hour logs as regular time,
+  // so a 9- or 10-hour day never produces OT. Driven by the profile's exempt flag
+  // or an office employment type/role.
+  const isOfficeEmployee = Boolean(
+    profile?.overtime_exempt ||
+    String(profile?.employment_type || "").toLowerCase().includes("office") ||
+    String(profile?.role || "").toLowerCase().includes("office")
+  );
 
   useEffect(() => {
     const logs = getDailyLogs();
@@ -2987,6 +3345,46 @@ export default function FieldEngineerWorkspace({
     const cards = getTimeCards();
     setTimeCards(cards);
     setActiveTimeCard(cards.find((card) => card.status === TIME_CARD_STATUS.DRAFT || card.status === TIME_CARD_STATUS.RETURNED) || null);
+
+    // Sync with the shared timesheets table: restore any timesheet missing from
+    // this browser (new device/profile) and merge approval/return decisions made
+    // on the manager's machine into the local copies.
+    async function syncFromDatabase() {
+      let changed = false;
+      const technicianName = profile?.full_name || "";
+      if (technicianName) {
+        const remoteCards = await fetchTimesheetsForTechnician(technicianName);
+        const localIds = new Set(getTimeCards().map((card) => String(card.id)));
+        remoteCards.forEach((remoteCard) => {
+          if (localIds.has(String(remoteCard.id))) return;
+          changed = true;
+          saveTimeCard(remoteCard);
+        });
+      }
+      const syncableIds = getTimeCards()
+        .filter((card) => card.status !== TIME_CARD_STATUS.DRAFT)
+        .map((card) => String(card.id));
+      if (syncableIds.length) {
+        const updates = await fetchTimesheetStatusUpdates(syncableIds);
+        updates.forEach((update) => {
+          const local = getTimeCards().find((card) => String(card.id) === String(update.id));
+          if (!local || local.status === update.status) return;
+          changed = true;
+          saveTimeCard({
+            ...local,
+            status: update.status,
+            reviewedBy: update.reviewed_by || local.reviewedBy || "",
+            reviewed_by: update.reviewed_by || local.reviewed_by || "",
+            reviewedAt: update.reviewed_at || local.reviewedAt || "",
+            reviewed_at: update.reviewed_at || local.reviewed_at || "",
+            ...(update.status === TIME_CARD_STATUS.APPROVED ? { approvedAt: update.reviewed_at, approved_at: update.reviewed_at } : {}),
+            ...(update.status === TIME_CARD_STATUS.RETURNED ? { returnedAt: update.reviewed_at, returned_at: update.reviewed_at, managerComment: update.manager_comment || "", reviewComments: update.manager_comment || "", review_comments: update.manager_comment || "" } : {})
+          });
+        });
+      }
+      if (changed) setTimeCards(getTimeCards());
+    }
+    syncFromDatabase();
   }, []);
 
   useEffect(() => {
@@ -3158,18 +3556,14 @@ export default function FieldEngineerWorkspace({
       projectNumber: defaultProject.number || String(defaultProject.id || defaultProjectId || ""),
       projectLocation: defaultProject.location || "",
       companyId: profile?.company_id || profile?.organization_id || "",
-      technicianName: profile?.full_name || "Field Technician",
-      dailyLogs: logCollections.approvedLogs || []
+      technicianName: profile?.full_name || "Field Technician"
     });
-    const projectId = String(defaultProject.id || defaultProjectId || "");
+    // One timesheet per employee per week — reopen the editable card for this week if one exists.
     const weekStart = draftCard.weekStartDate || draftCard.week_start_date || draftCard.date;
     const existingCard = getTimeCards()
-      .filter((card) => String(card.projectId || card.project_id || "") === projectId && (card.weekStartDate || card.week_start_date || card.date) === weekStart)
-      .sort((left, right) => {
-        const leftEditable = [TIME_CARD_STATUS.DRAFT, TIME_CARD_STATUS.REJECTED, TIME_CARD_STATUS.RETURNED].includes(left.status) ? 0 : 1;
-        const rightEditable = [TIME_CARD_STATUS.DRAFT, TIME_CARD_STATUS.REJECTED, TIME_CARD_STATUS.RETURNED].includes(right.status) ? 0 : 1;
-        return leftEditable - rightEditable;
-      })[0];
+      .filter((card) => (card.weekStartDate || card.week_start_date || card.date) === weekStart
+        && [TIME_CARD_STATUS.DRAFT, TIME_CARD_STATUS.REJECTED, TIME_CARD_STATUS.RETURNED].includes(card.status))
+      .sort((left, right) => new Date(right.updatedAt || 0) - new Date(left.updatedAt || 0))[0];
     const card = existingCard || saveTimeCard(draftCard);
     refreshTimeCards(card);
     navigate("/technician/dashboard?view=time-card");
@@ -3178,6 +3572,43 @@ export default function FieldEngineerWorkspace({
   function openTimeCard(card) {
     setActiveTimeCard(card);
     navigate("/technician/dashboard?view=time-card");
+  }
+
+  function navigateTimeCardWeek(card, direction) {
+    const currentWeekStart = card.weekStartDate || card.week_start_date || card.date;
+    const parsed = new Date(`${currentWeekStart}T00:00:00`);
+    if (Number.isNaN(parsed.getTime())) return;
+    parsed.setDate(parsed.getDate() + direction * 7);
+    const targetWeekStart = [
+      parsed.getFullYear(),
+      String(parsed.getMonth() + 1).padStart(2, "0"),
+      String(parsed.getDate()).padStart(2, "0")
+    ].join("-");
+    const cardsForWeek = getTimeCards()
+      .filter((item) => (item.weekStartDate || item.week_start_date || item.date) === targetWeekStart)
+      .sort((left, right) => new Date(right.updatedAt || 0) - new Date(left.updatedAt || 0));
+    const existingCard = cardsForWeek.find((item) =>
+      [TIME_CARD_STATUS.DRAFT, TIME_CARD_STATUS.REJECTED, TIME_CARD_STATUS.RETURNED].includes(item.status)
+    ) || cardsForWeek[0];
+    if (existingCard) {
+      setActiveTimeCard(existingCard);
+      return;
+    }
+    const defaultProject = projectOptions[0] || {};
+    // Unsaved template for the target week — persisted only once the technician edits it.
+    setActiveTimeCard(normalizeWeeklyCard({
+      ...createTimeCard({
+        projectName: defaultProject.name || projectLabel,
+        projectId: defaultProject.id || defaultProjectId,
+        projectNumber: defaultProject.number || String(defaultProject.id || defaultProjectId || ""),
+        projectLocation: defaultProject.location || "",
+        companyId: profile?.company_id || profile?.organization_id || "",
+        technicianName: profile?.full_name || "Field Technician"
+      }),
+      date: targetWeekStart,
+      weekStartDate: targetWeekStart,
+      week_start_date: targetWeekStart
+    }));
   }
 
   function removeTimeCard(card) {
@@ -3504,18 +3935,13 @@ export default function FieldEngineerWorkspace({
       projectNumber: projectOptions[0]?.number || String(projectOptions[0]?.id || defaultProjectId || ""),
       projectLocation: projectOptions[0]?.location || "",
       companyId: profile?.company_id || profile?.organization_id || "",
-      technicianName: profile?.full_name || "Field Technician",
-      dailyLogs: logCollections.approvedLogs || []
+      technicianName: profile?.full_name || "Field Technician"
     });
-  const currentTimeCardProjectId = String(currentTimeCardTemplate.projectId || currentTimeCardTemplate.project_id || "");
   const currentTimeCardWeekStart = currentTimeCardTemplate.weekStartDate || currentTimeCardTemplate.week_start_date || currentTimeCardTemplate.date;
   const existingCurrentTimeCard = timeCards
-    .filter((card) => String(card.projectId || card.project_id || "") === currentTimeCardProjectId && (card.weekStartDate || card.week_start_date || card.date) === currentTimeCardWeekStart)
-    .sort((left, right) => {
-      const leftEditable = [TIME_CARD_STATUS.DRAFT, TIME_CARD_STATUS.REJECTED, TIME_CARD_STATUS.RETURNED].includes(left.status) ? 0 : 1;
-      const rightEditable = [TIME_CARD_STATUS.DRAFT, TIME_CARD_STATUS.REJECTED, TIME_CARD_STATUS.RETURNED].includes(right.status) ? 0 : 1;
-      return leftEditable - rightEditable;
-    })[0];
+    .filter((card) => (card.weekStartDate || card.week_start_date || card.date) === currentTimeCardWeekStart
+      && [TIME_CARD_STATUS.DRAFT, TIME_CARD_STATUS.REJECTED, TIME_CARD_STATUS.RETURNED].includes(card.status))
+    .sort((left, right) => new Date(right.updatedAt || 0) - new Date(left.updatedAt || 0))[0];
   const selectedTimeCard = activeTimeCard
     || existingCurrentTimeCard
     || timeCardCollections.openTimeCards[0]
@@ -3611,14 +4037,18 @@ export default function FieldEngineerWorkspace({
               onViewPdf={() => viewTimeCardPdf(selectedTimeCard)}
               onDownloadPdf={() => downloadTimeCardPdf(selectedTimeCard)}
               onRegeneratePdf={() => regenerateTimesheetPdf(selectedTimeCard)}
+              onNavigateWeek={(direction) => navigateTimeCardWeek(selectedTimeCard, direction)}
             />
           ) : (
             <TimeCardEditor
-              card={selectedTimeCard}
+              card={Boolean(selectedTimeCard.overtimeExempt || selectedTimeCard.overtime_exempt) !== isOfficeEmployee
+                ? normalizeWeeklyCard({ ...selectedTimeCard, overtimeExempt: isOfficeEmployee, overtime_exempt: isOfficeEmployee })
+                : selectedTimeCard}
               onChange={refreshTimeCards}
               onSubmit={refreshTimeCards}
               onDelete={() => removeTimeCard(selectedTimeCard)}
               onCancel={() => navigate("/technician/dashboard?view=time-cards")}
+              onNavigateWeek={(direction) => navigateTimeCardWeek(selectedTimeCard, direction)}
               assignedProjects={projectOptions}
               dailyLogs={visibleDailyLogs || []}
             />

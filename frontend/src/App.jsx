@@ -52,6 +52,18 @@ function App() {
     return <Navigate to={getRoleHomeRoute(role)} replace />;
   }
 
+  // Role-gate a route: users outside the allowed roles are sent to their own home.
+  function RequireRole({ roles, children }) {
+    const normalizedRole = String(role || "").toLowerCase();
+    if (!roles.includes(normalizedRole)) {
+      return <Navigate to={getRoleHomeRoute(role)} replace />;
+    }
+    return children;
+  }
+
+  const MANAGER_ROLES = ["project_manager", "manager", "qc_manager", "admin"];
+  const QC_ROLES = ["qc", "qc_approver", "qc_manager", "project_manager", "manager", "admin"];
+
   function ProfileRoute() {
     if (String(role || "").toLowerCase() === "technician") {
       return <Navigate to="/technician/dashboard?view=profile" replace />;
@@ -107,27 +119,27 @@ function App() {
 
         <Route
           path="/qc/dashboard"
-          element={<QCReviewDashboard />}
+          element={<RequireRole roles={QC_ROLES}><QCReviewDashboard /></RequireRole>}
         />
 
         <Route
           path="/manager/dashboard"
-          element={<ManagerDashboard />}
+          element={<RequireRole roles={MANAGER_ROLES}><ManagerDashboard /></RequireRole>}
         />
 
         <Route
           path="/manager/daily-log-review/:logId"
-          element={<DailyLogReview />}
+          element={<RequireRole roles={MANAGER_ROLES}><DailyLogReview /></RequireRole>}
         />
 
         <Route
           path="/admin/dashboard"
-          element={<AdminDashboard />}
+          element={<RequireRole roles={["admin"]}><AdminDashboard /></RequireRole>}
         />
 
         <Route
           path="/client/dashboard"
-          element={<ClientDashboard />}
+          element={<RequireRole roles={["client", "admin"]}><ClientDashboard /></RequireRole>}
         />
 
         <Route

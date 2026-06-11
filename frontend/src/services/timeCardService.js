@@ -1,3 +1,5 @@
+import { syncTimesheet } from "./timesheetSyncService";
+
 const STORAGE_KEY = "imqcore:technician-time-cards";
 
 export const TIME_CARD_STATUS = {
@@ -10,7 +12,13 @@ export const TIME_CARD_STATUS = {
   COMPLETED: "completed"
 };
 
-const WEEK_DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+// Canonical week order for a weekly timesheet (one employee + one week).
+export const WEEK_DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+
+// First 40 weekly hours are Regular; everything above 40 is Overtime.
+export const REGULAR_HOURS_CAP = 40;
+const MAX_WEEKLY_HOURS = 168;
+const MAX_DAILY_HOURS = 24;
 
 function readTimeCards() {
   try {
@@ -21,14 +29,11 @@ function readTimeCards() {
 }
 
 function writeTimeCards(cards) {
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(cards));
-}
-
-function minutesFromTime(value) {
-  if (!value) return null;
-  const [hours, minutes] = String(value).split(":").map(Number);
-  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return null;
-  return hours * 60 + minutes;
+  // PDF data URLs are several MB each and overflow the localStorage quota fast.
+  // They live in the in-memory cache (timeCardPdfService) and Supabase storage,
+  // so strip them before persisting.
+  const slimCards = cards.map(({ pdfDataUrl, pdf_data_url, ...card }) => card);
+  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(slimCards));
 }
 
 function getYearFromDate(value) {
@@ -81,255 +86,234 @@ function withTimesheetNumber(card) {
   };
 }
 
-export function calculateTimesheetEntryDuration(entry = {}) {
-  const start = minutesFromTime(entry.timeIn || entry.time_in);
-  let end = minutesFromTime(entry.timeOut || entry.time_out);
-  const breakValue = Math.max(0, Number(entry.breakMinutes ?? entry.break_minutes) || 0);
-  const manualRegular = Number(entry.regularHours ?? entry.regular_hours);
-  const manualOvertime = Number(entry.overtimeHours ?? entry.overtime_hours);
-  const manualTotal = Number(entry.totalHours ?? entry.total_hours);
-  if (Number.isFinite(manualRegular) || Number.isFinite(manualOvertime)) {
-    const regular = Math.max(0, Number.isFinite(manualRegular) ? manualRegular : Math.min(manualTotal || 0, 8));
-    const overtime = Math.max(0, Number.isFinite(manualOvertime) ? manualOvertime : Math.max((manualTotal || 0) - regular, 0));
-    const total = regular + overtime;
-    return {
-      regularHours: regular.toFixed(2),
-      regular_hours: regular.toFixed(2),
-      overtimeHours: overtime.toFixed(2),
-      overtime_hours: overtime.toFixed(2),
-      totalHours: total.toFixed(2),
-      total_hours: total.toFixed(2),
-      validationError: total > 24 ? "Daily hours cannot exceed 24." : "",
-      validationWarning: ""
-    };
-  }
-  if (start === null || end === null) {
-    if (Number.isFinite(manualTotal)) {
-      const regular = Math.max(0, Number.isFinite(manualRegular) ? manualRegular : Math.min(manualTotal || 0, 8));
-      const overtime = Math.max(0, Number.isFinite(manualOvertime) ? manualOvertime : Math.max((manualTotal || 0) - regular, 0));
-      const total = Number.isFinite(manualTotal) ? manualTotal : regular + overtime;
-      return {
-        regularHours: regular.toFixed(2),
-        regular_hours: regular.toFixed(2),
-        overtimeHours: overtime.toFixed(2),
-        overtime_hours: overtime.toFixed(2),
-        totalHours: total.toFixed(2),
-        total_hours: total.toFixed(2),
-        validationError: "",
-        validationWarning: ""
-      };
-    }
-    return {
-      regularHours: "0.00",
-      overtimeHours: "0.00",
-      totalHours: "0.00",
-      validationError: "",
-      validationWarning: ""
-    };
-  }
-  if (end <= start) end += 24 * 60;
-  const shiftMinutes = end - start;
-  const workMinutes = shiftMinutes - breakValue;
-  let validationError = "";
-  let validationWarning = "";
-  if (breakValue > shiftMinutes) validationError = "Break time cannot exceed shift duration.";
-  if (workMinutes <= 0) validationError = "Please check time in, time out, and break.";
-  if (workMinutes > 24 * 60) validationError = "Daily hours cannot exceed 24.";
-  const total = Math.max(0, workMinutes / 60);
-  const regular = Math.min(total, 8);
-  const overtime = Math.max(total - 8, 0);
+function roundHours(value) {
+  const number = Number(value) || 0;
+  return Math.round(number * 100) / 100;
+}
+
+function emptyHours() {
+  return WEEK_DAYS.reduce((map, day) => ({ ...map, [day]: 0 }), {});
+}
+
+function emptyDayDescriptions() {
+  return WEEK_DAYS.reduce((map, day) => ({ ...map, [day]: "" }), {});
+}
+
+function normalizeHours(hours = {}) {
+  return WEEK_DAYS.reduce((map, day) => {
+    const raw = roundHours(hours[day]);
+    const clamped = Math.min(Math.max(raw, 0), MAX_DAILY_HOURS);
+    return { ...map, [day]: clamped };
+  }, {});
+}
+
+function normalizeDayDescriptions(descriptions = {}) {
+  return WEEK_DAYS.reduce((map, day) => ({ ...map, [day]: String(descriptions[day] ?? "") }), {});
+}
+
+export function createProjectRow({ projectId = "", projectName = "", projectNumber = "", overtimeExempt = false } = {}) {
   return {
-    regularHours: regular.toFixed(2),
-    regular_hours: regular.toFixed(2),
-    overtimeHours: overtime.toFixed(2),
-    overtime_hours: overtime.toFixed(2),
-    totalHours: total.toFixed(2),
-    total_hours: total.toFixed(2),
-    validationError,
-    validationWarning
+    id: crypto.randomUUID(),
+    projectId,
+    project_id: projectId,
+    projectName,
+    project_name: projectName,
+    projectNumber,
+    project_number: projectNumber,
+    // Office/indirect projects: hours on this row never count toward overtime.
+    overtimeExempt: Boolean(overtimeExempt),
+    overtime_exempt: Boolean(overtimeExempt),
+    hours: emptyHours()
   };
 }
 
-export function createWeeklyEntries({
-  weekStartDate,
-  projectId = "",
-  projectName = "",
-  dailyLogs = []
-} = {}) {
-  const start = toDateInputValue(getMonday(weekStartDate));
-  return WEEK_DAYS.map((dayName, index) => {
-    const workDate = addDays(start, index);
-    const sourceLog = dailyLogs.find((log) => {
-      const logDate = log.date || log.reportDate || log.report_date;
-      return logDate === workDate;
-    });
-    const entry = {
-      id: crypto.randomUUID(),
-      workDate,
-      work_date: workDate,
-      dayName,
-      day_name: dayName,
-      projectId: sourceLog?.projectId || sourceLog?.project_id || projectId,
-      project_id: sourceLog?.projectId || sourceLog?.project_id || projectId,
-      projectName: sourceLog?.projectName || sourceLog?.project_name || projectName,
-      project_name: sourceLog?.projectName || sourceLog?.project_name || projectName,
-      costCode: sourceLog?.costCode || sourceLog?.cost_code || "",
-      cost_code: sourceLog?.costCode || sourceLog?.cost_code || "",
-      workDescription: sourceLog?.notes || sourceLog?.comments || sourceLog?.workDescription || sourceLog?.work_description || "",
-      work_description: sourceLog?.notes || sourceLog?.comments || sourceLog?.workDescription || sourceLog?.work_description || "",
-      timeIn: sourceLog?.timeIn || sourceLog?.time_in || "",
-      time_in: sourceLog?.timeIn || sourceLog?.time_in || "",
-      timeOut: sourceLog?.timeOut || sourceLog?.time_out || "",
-      time_out: sourceLog?.timeOut || sourceLog?.time_out || "",
-      breakMinutes: sourceLog?.breakMinutes ?? sourceLog?.break_minutes ?? 30,
-      break_minutes: sourceLog?.breakMinutes ?? sourceLog?.break_minutes ?? 30,
-      sourceDfrId: sourceLog?.id || "",
-      source_dfr_id: sourceLog?.id || "",
-      sourceDfrNumber: sourceLog?.dfrNumber || sourceLog?.dfr_number || sourceLog?.dailyLogNumber || sourceLog?.daily_log_number || "",
-      source_dfr_number: sourceLog?.dfrNumber || sourceLog?.dfr_number || sourceLog?.dailyLogNumber || sourceLog?.daily_log_number || "",
-      notes: ""
-    };
-    return { ...entry, ...calculateTimesheetEntryDuration(entry) };
-  });
+export function getRowTotal(row = {}) {
+  return WEEK_DAYS.reduce((total, day) => total + (Number(row.hours?.[day]) || 0), 0);
 }
 
-function normalizeWeeklyEntries(card) {
+export function calculateDailyTotals(projectRows = []) {
+  return WEEK_DAYS.reduce((map, day) => ({
+    ...map,
+    [day]: roundHours(projectRows.reduce((sum, row) => sum + (Number(row.hours?.[day]) || 0), 0))
+  }), {});
+}
+
+export function calculateWeeklyTotals(projectRows = [], { overtimeExempt = false } = {}) {
+  const total = roundHours(projectRows.reduce((sum, row) => sum + getRowTotal(row), 0));
+  // Overtime-exempt employees (office staff) log all hours as regular time —
+  // the 40-hour split only applies to non-exempt field workers.
+  if (overtimeExempt) {
+    return { total, regular: total, overtime: 0 };
+  }
+  // Hours on overtime-exempt (office/indirect) projects are always regular and
+  // never count toward the 40-hour overtime threshold; only field-project hours
+  // split into regular and overtime.
+  const exemptHours = roundHours(projectRows
+    .filter((row) => row.overtimeExempt || row.overtime_exempt)
+    .reduce((sum, row) => sum + getRowTotal(row), 0));
+  const fieldHours = roundHours(total - exemptHours);
+  const regular = roundHours(Math.min(fieldHours, REGULAR_HOURS_CAP) + exemptHours);
+  const overtime = roundHours(Math.max(fieldHours - REGULAR_HOURS_CAP, 0));
+  return { total, regular, overtime };
+}
+
+export function isOvertimeExemptCard(card = {}) {
+  return Boolean(card.overtimeExempt || card.overtime_exempt);
+}
+
+// Convert a legacy daily-shaped entries[] array into a single weekly project row.
+function migrateLegacyEntries(card) {
+  const entries = Array.isArray(card.entries) ? card.entries : [];
+  const hours = emptyHours();
+  const dayDescriptions = emptyDayDescriptions();
+  entries.forEach((entry) => {
+    const dayName = entry.dayName || entry.day_name;
+    if (!WEEK_DAYS.includes(dayName)) return;
+    const total = Number(entry.totalHours ?? entry.total_hours);
+    const fallback = (Number(entry.regularHours ?? entry.regular_hours) || 0) + (Number(entry.overtimeHours ?? entry.overtime_hours) || 0);
+    hours[dayName] = roundHours(Number.isFinite(total) ? total : fallback);
+    const description = entry.workDescription || entry.work_description || "";
+    if (description) dayDescriptions[dayName] = description;
+  });
+  const row = createProjectRow({
+    projectId: card.projectId || card.project_id || "",
+    projectName: card.projectName || card.project_name || "",
+    projectNumber: card.projectNumber || card.project_number || ""
+  });
+  row.hours = hours;
+  const legacyComment = card.workDescription || card.work_description || "";
+  if (legacyComment && !Object.values(dayDescriptions).some(Boolean)) {
+    dayDescriptions[WEEK_DAYS[0]] = legacyComment;
+  }
+  return { projectRows: [row], dayDescriptions };
+}
+
+// Ensure a card matches the weekly multi-project shape and recompute its totals.
+// Handles lazy migration of legacy daily/single-project cards.
+export function normalizeWeeklyCard(card = {}) {
   const weekStartDate = toDateInputValue(getMonday(card.weekStartDate || card.week_start_date || card.date));
-  const existingEntries = Array.isArray(card.entries) ? card.entries : [];
-  if (!existingEntries.length && (card.timeIn || card.timeOut || card.workDescription)) {
-    const entries = createWeeklyEntries({
-      weekStartDate,
-      projectId: card.projectId || card.project_id,
-      projectName: card.projectName || card.project_name
-    });
-    const dateIndex = Math.max(0, Math.min(6, Math.round((parseLocalDate(card.date) - parseLocalDate(weekStartDate)) / 86400000)));
-    entries[dateIndex] = {
-      ...entries[dateIndex],
-      workDate: card.date || entries[dateIndex].workDate,
-      work_date: card.date || entries[dateIndex].work_date,
-      projectId: card.projectId || card.project_id,
-      project_id: card.projectId || card.project_id,
-      projectName: card.projectName || card.project_name,
-      project_name: card.projectName || card.project_name,
-      timeIn: card.timeIn || card.time_in || "",
-      time_in: card.timeIn || card.time_in || "",
-      timeOut: card.timeOut || card.time_out || "",
-      time_out: card.timeOut || card.time_out || "",
-      breakMinutes: card.breakMinutes ?? card.break_minutes ?? 30,
-      break_minutes: card.breakMinutes ?? card.break_minutes ?? 30,
-      workDescription: card.workDescription || card.work_description || "",
-      work_description: card.workDescription || card.work_description || ""
-    };
-    return entries.map((entry) => ({ ...entry, ...calculateTimesheetEntryDuration(entry) }));
-  }
-  if (!existingEntries.length) return [];
-  const generated = createWeeklyEntries({
-    weekStartDate,
-    projectId: card.projectId || card.project_id,
-    projectName: card.projectName || card.project_name
-  });
-  return generated.map((defaultEntry, index) => {
-    const entry = existingEntries[index] || {};
-    const merged = {
-      ...defaultEntry,
-      ...entry,
-      id: entry.id || defaultEntry.id,
-      dayName: entry.dayName || entry.day_name || defaultEntry.dayName,
-      day_name: entry.dayName || entry.day_name || defaultEntry.day_name,
-      workDate: entry.workDate || entry.work_date || defaultEntry.workDate,
-      work_date: entry.workDate || entry.work_date || defaultEntry.work_date,
-      projectId: entry.projectId || entry.project_id || card.projectId || card.project_id || defaultEntry.projectId,
-      project_id: entry.projectId || entry.project_id || card.projectId || card.project_id || defaultEntry.project_id,
-      projectName: entry.projectName || entry.project_name || card.projectName || card.project_name || defaultEntry.projectName,
-      project_name: entry.projectName || entry.project_name || card.projectName || card.project_name || defaultEntry.project_name,
-      costCode: entry.costCode || entry.cost_code || "",
-      cost_code: entry.costCode || entry.cost_code || "",
-      workDescription: entry.workDescription || entry.work_description || "",
-      work_description: entry.workDescription || entry.work_description || "",
-      timeIn: entry.timeIn || entry.time_in || "",
-      time_in: entry.timeIn || entry.time_in || "",
-      timeOut: entry.timeOut || entry.time_out || "",
-      time_out: entry.timeOut || entry.time_out || "",
-      breakMinutes: entry.breakMinutes ?? entry.break_minutes ?? 30,
-      break_minutes: entry.breakMinutes ?? entry.break_minutes ?? 30,
-      sourceDfrId: entry.sourceDfrId || entry.source_dfr_id || "",
-      source_dfr_id: entry.sourceDfrId || entry.source_dfr_id || "",
-      sourceDfrNumber: entry.sourceDfrNumber || entry.source_dfr_number || "",
-      source_dfr_number: entry.sourceDfrNumber || entry.source_dfr_number || ""
-    };
-    return { ...merged, ...calculateTimesheetEntryDuration(merged) };
-  });
-}
+  const weekEndDate = addDays(weekStartDate, 6);
 
-function calculateWeeklyTotals(entries = []) {
-  return entries.reduce((totals, entry) => ({
-    regular: totals.regular + (Number(entry.regularHours || entry.regular_hours) || 0),
-    overtime: totals.overtime + (Number(entry.overtimeHours || entry.overtime_hours) || 0),
-    total: totals.total + (Number(entry.totalHours || entry.total_hours) || 0)
-  }), { regular: 0, overtime: 0, total: 0 });
-}
-
-export function calculateTimesheetDuration({ timeIn, timeOut, breakMinutes }) {
-  const start = minutesFromTime(timeIn);
-  let end = minutesFromTime(timeOut);
-  const breakValue = Math.max(0, Number(breakMinutes) || 0);
-  if (start === null || end === null) {
-    return {
-      totalHours: "",
-      shiftMinutes: 0,
-      workMinutes: 0,
-      isOvernightShift: false,
-      validationError: "",
-      validationWarning: ""
-    };
+  let projectRows;
+  let dayDescriptions;
+  // An array (even empty) means the card is already in the new weekly shape — respect an
+  // intentionally empty grid. Migration only runs for legacy cards that lack projectRows.
+  if (Array.isArray(card.projectRows)) {
+    projectRows = card.projectRows.map((row) => ({
+      ...createProjectRow({
+        projectId: row.projectId || row.project_id || "",
+        projectName: row.projectName || row.project_name || "",
+        projectNumber: row.projectNumber || row.project_number || "",
+        overtimeExempt: Boolean(row.overtimeExempt || row.overtime_exempt)
+      }),
+      id: row.id || crypto.randomUUID(),
+      hours: normalizeHours(row.hours)
+    }));
+    dayDescriptions = normalizeDayDescriptions(card.dayDescriptions);
+  } else {
+    const migrated = migrateLegacyEntries(card);
+    projectRows = migrated.projectRows;
+    dayDescriptions = normalizeDayDescriptions(migrated.dayDescriptions);
   }
 
-  const isOvernightShift = end <= start;
-  if (isOvernightShift) end += 24 * 60;
+  const dailyTotals = calculateDailyTotals(projectRows);
+  const overtimeExempt = isOvertimeExemptCard(card);
+  const totals = calculateWeeklyTotals(projectRows, { overtimeExempt });
+  const overDailyLimit = WEEK_DAYS.find((day) => dailyTotals[day] > MAX_DAILY_HOURS);
+  const validationError = totals.total > MAX_WEEKLY_HOURS
+    ? `Weekly hours cannot exceed ${MAX_WEEKLY_HOURS}.`
+    : (overDailyLimit ? `${overDailyLimit} hours cannot exceed ${MAX_DAILY_HOURS}.` : "");
 
-  const shiftMinutes = end - start;
-  const workMinutes = shiftMinutes - breakValue;
-  let validationError = "";
-  let validationWarning = "";
+  // Strip legacy daily-only fields.
+  const {
+    entries, timeIn, time_in, timeOut, time_out, breakMinutes, break_minutes,
+    isOvernightShift, is_overnight_shift, workDescription, work_description,
+    ...rest
+  } = card;
 
-  if (breakValue > shiftMinutes) {
-    validationError = "Break time cannot exceed total shift duration.";
-  } else if (workMinutes <= 0) {
-    validationError = "Please check Time In, Time Out, and Break.";
-  } else if (workMinutes > 24 * 60) {
-    validationWarning = "Timesheet exceeds 24 hours. Please verify.";
-  }
-
+  const total = totals.total.toFixed(2);
   return {
-    totalHours: workMinutes > 0 ? (workMinutes / 60).toFixed(2) : "0.00",
-    shiftMinutes,
-    workMinutes,
-    isOvernightShift,
+    ...rest,
+    date: weekStartDate,
+    weekStartDate,
+    week_start_date: weekStartDate,
+    weekEndDate,
+    week_end_date: weekEndDate,
+    projectRows,
+    dayDescriptions,
+    dailyTotals,
+    overtimeExempt,
+    overtime_exempt: overtimeExempt,
+    totalRegularHours: totals.regular.toFixed(2),
+    total_regular_hours: totals.regular.toFixed(2),
+    totalOvertimeHours: totals.overtime.toFixed(2),
+    total_overtime_hours: totals.overtime.toFixed(2),
+    totalHours: total,
+    total_hours: total,
     validationError,
-    validationWarning
+    validationWarning: ""
   };
 }
 
 export function calculateTotalHours(card) {
-  if (Array.isArray(card?.entries)) return calculateWeeklyTotals(normalizeWeeklyEntries(card)).total.toFixed(2);
-  return calculateTimesheetDuration(card).totalHours;
+  return calculateWeeklyTotals(Array.isArray(card?.projectRows) ? card.projectRows : []).total.toFixed(2);
+}
+
+// --- Pure mutation helpers used by the editor (caller persists via saveTimeCard) ---
+
+export function addProjectRow(card, project = {}) {
+  const projectRows = [...(card.projectRows || []), createProjectRow(project)];
+  return { ...card, projectRows };
+}
+
+export function removeProjectRow(card, rowId) {
+  const projectRows = (card.projectRows || []).filter((row) => row.id !== rowId);
+  return { ...card, projectRows };
+}
+
+export function setRowProject(card, rowId, project = {}) {
+  const projectRows = (card.projectRows || []).map((row) => (
+    row.id === rowId
+      ? {
+          ...row,
+          projectId: project.projectId ?? project.id ?? "",
+          project_id: project.projectId ?? project.id ?? "",
+          projectName: project.projectName ?? project.name ?? "",
+          project_name: project.projectName ?? project.name ?? "",
+          projectNumber: project.projectNumber ?? project.number ?? "",
+          project_number: project.projectNumber ?? project.number ?? "",
+          overtimeExempt: Boolean(project.overtimeExempt ?? project.overtime_exempt ?? false),
+          overtime_exempt: Boolean(project.overtimeExempt ?? project.overtime_exempt ?? false)
+        }
+      : row
+  ));
+  return { ...card, projectRows };
+}
+
+export function setRowHours(card, rowId, day, value) {
+  const projectRows = (card.projectRows || []).map((row) => (
+    row.id === rowId ? { ...row, hours: { ...row.hours, [day]: roundHours(value) } } : row
+  ));
+  return { ...card, projectRows };
+}
+
+export function setDayDescription(card, day, value) {
+  return { ...card, dayDescriptions: { ...(card.dayDescriptions || emptyDayDescriptions()), [day]: value } };
 }
 
 export function createTimeCard({
-  projectName = "DC Water Potomac Tunnel",
-  projectId = 1,
+  projectName = "",
+  projectId = "",
   projectNumber = "",
   projectLocation = "",
   companyId = "",
-  technicianName = "Field Technician",
-  dailyLogs = []
+  technicianName = "Field Technician"
 } = {}) {
   const now = new Date();
   const weekStartDate = toDateInputValue(getMonday(now));
   const weekEndDate = addDays(weekStartDate, 6);
   const timesheetNumber = generateTimesheetNumber(weekStartDate);
-  const entries = dailyLogs.length ? createWeeklyEntries({ weekStartDate, projectId, projectName, dailyLogs }) : [];
-  return {
+  return normalizeWeeklyCard({
     id: crypto.randomUUID(),
     timesheetNumber,
     timesheet_number: timesheetNumber,
@@ -338,22 +322,11 @@ export function createTimeCard({
     week_start_date: weekStartDate,
     weekEndDate,
     week_end_date: weekEndDate,
-    projectId,
-    projectName,
-    projectNumber,
     projectLocation,
     companyId,
     technicianName,
-    entries,
-    totalRegularHours: "0.00",
-    total_regular_hours: "0.00",
-    totalOvertimeHours: "0.00",
-    total_overtime_hours: "0.00",
-    totalHours: "0.00",
-    isOvernightShift: false,
-    validationError: "",
-    validationWarning: "",
-    workDescription: "",
+    projectRows: [createProjectRow({ projectId, projectName, projectNumber })],
+    dayDescriptions: emptyDayDescriptions(),
     status: TIME_CARD_STATUS.DRAFT,
     createdAt: now.toISOString(),
     updatedAt: now.toISOString(),
@@ -362,6 +335,8 @@ export function createTimeCard({
     signed_at: "",
     technicianSignature: "",
     technician_signature: "",
+    managerSignature: "",
+    manager_signature: "",
     approvedAt: "",
     returnedAt: "",
     managerComment: "",
@@ -376,38 +351,25 @@ export function createTimeCard({
     pdfGenerationFailureReason: "",
     pdfDataUrl: "",
     pdfStorageMode: ""
-  };
+  });
 }
 
 export function getTimeCards() {
-  return readTimeCards();
+  const raw = readTimeCards();
+  let changed = false;
+  const normalized = raw.map((card) => {
+    const next = normalizeWeeklyCard(card);
+    // Detect legacy cards that needed migrating so we can persist the new shape once.
+    if (!Array.isArray(card.projectRows) || "entries" in card || "time_in" in card) changed = true;
+    return next;
+  });
+  if (changed) writeTimeCards(normalized);
+  return normalized;
 }
 
 export function saveTimeCard(card) {
-  const numberedCard = withTimesheetNumber(card);
-  const entries = normalizeWeeklyEntries(numberedCard);
-  const totals = calculateWeeklyTotals(entries);
-  const weekStartDate = toDateInputValue(getMonday(numberedCard.weekStartDate || numberedCard.week_start_date || numberedCard.date));
-  const weekEndDate = addDays(weekStartDate, 6);
-  const validationError = entries.find((entry) => entry.validationError)?.validationError || "";
-  const validationWarning = entries.find((entry) => entry.validationWarning)?.validationWarning || "";
-  const weeklyTotal = totals.total.toFixed(2);
   const nextCard = {
-    ...numberedCard,
-    date: weekStartDate,
-    weekStartDate,
-    week_start_date: weekStartDate,
-    weekEndDate,
-    week_end_date: weekEndDate,
-    entries,
-    totalRegularHours: totals.regular.toFixed(2),
-    total_regular_hours: totals.regular.toFixed(2),
-    totalOvertimeHours: totals.overtime.toFixed(2),
-    total_overtime_hours: totals.overtime.toFixed(2),
-    totalHours: weeklyTotal,
-    total_hours: weeklyTotal,
-    validationError: validationError || (Number(weeklyTotal) > 168 ? "Weekly hours cannot exceed 168." : ""),
-    validationWarning,
+    ...normalizeWeeklyCard(withTimesheetNumber(card)),
     updatedAt: new Date().toISOString()
   };
   const cards = readTimeCards();
@@ -429,7 +391,7 @@ export function submitTimeCard(card) {
   const submittedAt = new Date().toISOString();
   const signature = card.technicianSignature || card.technician_signature || "";
   const signedAt = card.signedAt || card.signed_at || (signature ? submittedAt : "");
-  return saveTimeCard({
+  const submitted = saveTimeCard({
     ...card,
     status: TIME_CARD_STATUS.SUBMITTED,
     submittedAt,
@@ -439,11 +401,24 @@ export function submitTimeCard(card) {
     technicianSignature: signature,
     technician_signature: signature
   });
+  syncTimesheet(submitted);
+  return submitted;
+}
+
+export function recallTimeCard(card) {
+  const recalled = saveTimeCard({
+    ...card,
+    status: TIME_CARD_STATUS.DRAFT,
+    submittedAt: "",
+    submitted_at: ""
+  });
+  syncTimesheet(recalled);
+  return recalled;
 }
 
 export function approveTimeCard(card, reviewer = "Manager") {
   const reviewedAt = new Date().toISOString();
-  return saveTimeCard({
+  const approved = saveTimeCard({
     ...card,
     status: TIME_CARD_STATUS.APPROVED,
     reviewedBy: reviewer,
@@ -455,13 +430,15 @@ export function approveTimeCard(card, reviewer = "Manager") {
     reviewComments: "",
     review_comments: ""
   });
+  syncTimesheet(approved);
+  return approved;
 }
 
 export function rejectTimeCard(card, comments) {
   const reviewedAt = new Date().toISOString();
-  return saveTimeCard({
+  const rejected = saveTimeCard({
     ...card,
-    status: TIME_CARD_STATUS.REJECTED,
+    status: TIME_CARD_STATUS.RETURNED,
     reviewedAt,
     reviewed_at: reviewedAt,
     returnedAt: reviewedAt,
@@ -470,6 +447,8 @@ export function rejectTimeCard(card, comments) {
     review_comments: comments,
     managerComment: comments
   });
+  syncTimesheet(rejected);
+  return rejected;
 }
 
 export function getTimeCardCollections(cards) {
@@ -489,8 +468,8 @@ export function formatTimeCardStatus(status) {
     [TIME_CARD_STATUS.SUBMITTED]: "Submitted",
     [TIME_CARD_STATUS.PENDING_REVIEW]: "Pending Review",
     [TIME_CARD_STATUS.APPROVED]: "Approved",
-    [TIME_CARD_STATUS.REJECTED]: "Rejected",
-    [TIME_CARD_STATUS.RETURNED]: "Rejected",
+    [TIME_CARD_STATUS.REJECTED]: "Returned",
+    [TIME_CARD_STATUS.RETURNED]: "Returned",
     [TIME_CARD_STATUS.COMPLETED]: "Completed"
   };
   return labels[status] || "Draft";
