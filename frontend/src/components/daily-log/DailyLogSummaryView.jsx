@@ -9,6 +9,14 @@ import CompactionReportInlineContent from "../reports/CompactionReportInlineCont
 
 const DAILY_LOG_ATTACHMENT_BUCKET = "daily-log-attachments";
 
+function getDisplayLogNumber(log = {}) {
+  const explicit = log.logNumber || log.log_number || log.reportNumber || log.report_number;
+  if (explicit && !/^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(String(explicit))) return explicit;
+  const projectPart = String(log.projectNumber || log.project_number || "PROJECT").replace(/[^a-zA-Z0-9_.-]/g, "_");
+  const datePart = String(log.date || "").replace(/-/g, "") || "DATE";
+  return `DL-${projectPart}-${datePart}`;
+}
+
 function Value({ label, value }) {
   return (
     <div className="rounded-2xl bg-slate-50 px-4 py-3">
@@ -63,11 +71,13 @@ function attachmentStoragePath(attachment = {}) {
 }
 
 function attachmentIdentity(attachment = {}) {
-  const explicitId = attachment.id || attachment.attachmentId || attachment.attachment_id;
-  if (explicitId) return `id:${explicitId}`;
-
+  // Storage path is the canonical identity of an uploaded file — the same
+  // attachment can appear with different record ids (local cache vs DB row).
   const storagePath = attachmentStoragePath(attachment);
   if (storagePath) return `path:${storagePath}`;
+
+  const explicitId = attachment.id || attachment.attachmentId || attachment.attachment_id;
+  if (explicitId) return `id:${explicitId}`;
 
   const fileName = attachment.fileName || attachment.file_name || attachment.name || "";
   const createdAt = attachment.createdAt || attachment.created_at || attachment.uploadedAt || attachment.uploaded_at || "";
@@ -785,31 +795,38 @@ export default function DailyLogSummaryView({ log, onEdit, onViewPdf, onDownload
 
       <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
         <h2 className="text-xl font-bold text-slate-950">Daily Log Summary</h2>
-        <dl className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-          <Value label="Daily Log Number" value={log.logNumber || log.id} />
-          <Value label="Project" value={log.projectName} />
+        <dl className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <Value label="Daily Log Number" value={getDisplayLogNumber(log)} />
           <Value label="Date" value={log.date} />
           <Value label="Shift" value={log.shift} />
           <Value label="Technician" value={log.technicianName} />
           <Value label="Status" value={formatLogStatus(log.status)} />
-          <Value label="Submitted Date" value={log.submittedAt ? formatDateTime(log.submittedAt) : ""} />
+          <Value label="Submitted" value={log.submittedAt ? formatDateTime(log.submittedAt) : ""} />
+          <Value
+            label="Weather"
+            value={[
+              log.weatherCondition || log.weatherOverride || "",
+              log.minTemperature || log.maxTemperature
+                ? `Min ${log.minTemperature || "--"}°F / Max ${log.maxTemperature || "--"}°F`
+                : ""
+            ].filter(Boolean).join(" • ")}
+          />
+          <Value
+            label="Activities / Reports"
+            value={`${(hydratedLog.activities || []).length} / ${(hydratedLog.activities || []).reduce((sum, activity) => sum + (activity.concreteReports?.length || activity.reports?.length || 0), 0)}`}
+          />
         </dl>
       </section>
 
       <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
         <h2 className="text-xl font-bold text-slate-950">Project Details</h2>
-        <dl className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
+        <dl className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
           <Value label="Project Name" value={log.projectName} />
           <Value label="Project Number" value={log.projectNumber} />
           <Value label="Project Location" value={log.projectLocation} />
-        </dl>
-      </section>
-
-      <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
-        <h2 className="text-xl font-bold text-slate-950">Weather</h2>
-        <dl className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
-          <Value label="Min Temperature" value={log.minTemperature ? `${log.minTemperature}°F` : ""} />
-          <Value label="Max Temperature" value={log.maxTemperature ? `${log.maxTemperature}°F` : ""} />
+          <Value label="General Contractor" value={log.generalContractor || log.general_contractor || "Not on file"} />
+          <Value label="GC Representative" value={log.gcRepresentative || log.gc_representative || "Not on file"} />
+          <Value label="Technician" value={log.technicianName} />
         </dl>
       </section>
 

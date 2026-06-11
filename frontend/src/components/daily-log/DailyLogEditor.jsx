@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Edit, Plus, Save, Send } from "lucide-react";
+import { Camera, ClipboardList, Edit, FileText, HardHat, MessageSquare, Paperclip, Plus, Save, Send, Trash2 } from "lucide-react";
 import ActivityReportSelector from "../reports/ActivityReportSelector";
 import ConcreteReportInlineContent from "../reports/ConcreteReportInlineContent";
 import CompactionReportInlineContent from "../reports/CompactionReportInlineContent";
@@ -13,13 +13,16 @@ import {
   createActivity,
   DAILY_LOG_STATUS,
   getDailyLogById,
+  persistDailyLogAttachmentRecord,
   saveDailyLog,
+  softDeleteDailyLogAttachmentRecord,
   saveDailyLogSignatureToSupabase,
   submitDailyLog,
   submitDailyLogToSupabase,
   updateDailyLogPdfMetadataInSupabase
 } from "../../services/dailyLogService";
-import { regenerateDailyLogPdf } from "../../services/dailyLogPdfService";
+import { createDailyLogPdfSignedUrl, generateHydratedDailyLogPdfBlob, regenerateDailyLogPdf } from "../../services/dailyLogPdfService";
+import { sendDailyLogReviewEmail } from "../../services/notificationService";
 import DailyLogSubmitPanel from "./DailyLogSubmitPanel";
 
 const PROJECT_OPTIONS = [
@@ -149,13 +152,46 @@ function getActivityAttachedReports(activity) {
   return dedupeReports([...(activity?.concreteReports || []), ...(activity?.reports || [])]);
 }
 
+const concreteRecordContentKeys = [
+  "ticketNumber", "ticket_number",
+  "truckNumber", "truck_number",
+  "cubicYards", "cubic_yards",
+  "timeBatched", "batch_time", "time_batched",
+  "arrivalTime", "arrival_time",
+  "timeTested", "testing_time", "time_tested",
+  "finishUnload", "finish_unload_time", "finish_unload",
+  "actualMinutes", "actual_minutes",
+  "recordResult", "record_result", "row_status",
+  "waterAdded", "water_added_gal",
+  "airTemp", "airTempF", "air_temp_f",
+  "concreteTemp", "concreteTempF", "concrete_temp_f",
+  "slump", "slump_in",
+  "airContent", "air_content_percent",
+  "unitWeight", "unit_weight_lbs_ft3",
+  "spread", "spread_in",
+  "jRing", "j_ring_in",
+  "setNumber", "set_number",
+  "labSamples", "lab_cylinders", "lab_samples",
+  "fieldSamples", "field_cylinders", "field_samples",
+  "inspectorNotes", "comments", "notes"
+];
+
+function concreteRecordHasContent(record = {}) {
+  return concreteRecordContentKeys.some((key) => {
+    const value = record[key];
+    return value !== null && value !== undefined && String(value).trim() !== "";
+  });
+}
+
 function hasConcreteReportContent(report = {}) {
   const specifications = report.specifications || {};
-  const records = Array.isArray(report.deliveryRecords)
+  const allRecords = Array.isArray(report.deliveryRecords)
     ? report.deliveryRecords
     : Array.isArray(report.testRecords)
       ? report.testRecords
       : [];
+  // An empty truck-ticket row added by default does not make the report submit-ready.
+  const records = allRecords.filter(concreteRecordHasContent);
   const specificationKeys = [
     "airContent",
     "airContentPercent",
@@ -284,9 +320,11 @@ function createAttachmentRecord(file, attachmentType, context) {
 }
 
 function getAttachmentIdentityKey(attachment = {}) {
-  if (attachment.id) return `id:${attachment.id}`;
+  // Storage path first: the same uploaded file can carry different record ids
+  // (local cache vs database row).
   const storagePath = attachment.storagePath || attachment.storage_path || attachment.filePath || attachment.file_path || attachment.objectPath || attachment.object_path || attachment.path;
   if (storagePath) return `path:${storagePath}`;
+  if (attachment.id) return `id:${attachment.id}`;
   const fileName = attachment.fileName || attachment.file_name || attachment.name || "";
   const createdAt = attachment.createdAt || attachment.created_at || attachment.uploadedAt || attachment.uploaded_at || "";
   return `file:${fileName}:${createdAt}`;
@@ -404,6 +442,49 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
     };
   }, [log.id, log.updatedAt, onChange]);
 
+  useEffect(() => {
+    let active = true;
+
+    // Derive project number, location, GC, and GC representative from the
+    // projects table — same source the Concrete Test Log and the PDF use.
+    async function deriveProjectInfo() {
+      const projectId = log.projectId || log.project_id;
+      if (!projectId) return;
+      try {
+        const { data, error } = await supabase
+          .from("projects")
+          .select("*")
+          .eq("id", projectId)
+          .maybeSingle();
+        if (!active || error || !data) return;
+        const fromColumns = (keys) => {
+          for (const key of keys) {
+            const value = data?.[key];
+            if (value != null && String(value).trim() !== "") return String(value).trim();
+          }
+          return "";
+        };
+        const derived = {
+          projectNumber: fromColumns(["project_number", "number"]) || log.projectNumber || "",
+          projectName: fromColumns(["project_name", "name"]) || log.projectName || "",
+          projectLocation: fromColumns(["location", "project_location"]) || log.projectLocation || "",
+          generalContractor: fromColumns(["gc", "general_contractor", "client_name"]) || log.generalContractor || "",
+          gcRepresentative: fromColumns(["gc_rep", "gc_representative", "client_representative"]) || log.gcRepresentative || ""
+        };
+        const changed = Object.entries(derived).some(([key, value]) => String(log[key] || "") !== String(value || ""));
+        if (changed) updateLog(derived);
+      } catch (error) {
+        console.warn("Unable to derive project information for the Daily Log", error);
+      }
+    }
+
+    deriveProjectInfo();
+    return () => {
+      active = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [log.projectId, log.project_id]);
+
   function updateLog(patch, { persist = true } = {}) {
     const nextLog = { ...log, ...patch, updatedAt: new Date().toISOString() };
     if (persist) {
@@ -437,7 +518,7 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
 
   function addActivity() {
     const nextActivity = createActivity({
-      title: `Activity ${log.activities.length + 1}`,
+      title: "",
       type: "General Work Log",
       location: ""
     });
@@ -595,6 +676,12 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
 
     if (!attachmentsToSave.length) return;
 
+    // Record metadata in the database (best-effort) so other devices and the
+    // QC reviewer can load these attachments without this browser's cache.
+    attachmentsToSave.forEach((attachment) => {
+      persistDailyLogAttachmentRecord(attachment);
+    });
+
     const currentLog = getDailyLogById(log.id) || log;
     const currentStateActivity = (log.activities || []).find((activity) => activity.id === activityId);
     updateLog({
@@ -617,6 +704,10 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
 
   function removeActivityAttachment(activityId, attachmentId) {
     const currentLog = getDailyLogById(log.id) || log;
+    const removedAttachment = (currentLog.activities || [])
+      .find((activity) => activity.id === activityId)
+      ?.attachments?.find((attachment) => attachment.id === attachmentId);
+    if (removedAttachment) softDeleteDailyLogAttachmentRecord(removedAttachment);
     updateLog({
       ...currentLog,
       activities: (currentLog.activities || []).map((activity) => (
@@ -834,6 +925,33 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
             } catch (error) {
               console.warn("Daily Log PDF metadata update failed", error);
             }
+
+            // Email the QC manager for approval with the signed PDF attached
+            // (the PDF already renders activity reports and attachment content).
+            try {
+              let pdfBlob = null;
+              let pdfUrl = "";
+              const storagePath = withPdf.pdfStoragePath || withPdf.pdf_storage_path;
+              const cachedDataUrl = withPdf.pdfDataUrl || withPdf.pdf_data_url;
+              if (storagePath) {
+                pdfUrl = await createDailyLogPdfSignedUrl(storagePath);
+                pdfBlob = await fetch(pdfUrl).then((response) => (response.ok ? response.blob() : null)).catch(() => null);
+              } else if (cachedDataUrl) {
+                pdfBlob = await fetch(cachedDataUrl).then((response) => response.blob()).catch(() => null);
+              }
+              if (!pdfBlob) {
+                // The review email must carry the PDF — regenerate it in memory
+                // (fully hydrated, attachments rendered) if the stored copy
+                // could not be fetched.
+                pdfBlob = await generateHydratedDailyLogPdfBlob(withPdf).catch((error) => {
+                  console.warn("Daily Log PDF in-memory regeneration for email failed", error);
+                  return null;
+                });
+              }
+              await sendDailyLogReviewEmail(withPdf, { pdfBlob, pdfUrl });
+            } catch (error) {
+              console.warn("Daily Log QC review email could not be sent", error);
+            }
           })
           .catch((error) => {
             console.warn("Daily Log PDF generation failed after submission", error);
@@ -859,6 +977,10 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
     }
     if (!String(log.shift || "").trim()) {
       window.alert("Select a shift before submitting the Daily Log.");
+      return;
+    }
+    if (!log.activities.length) {
+      window.alert("Add at least one activity before submitting the Daily Log.");
       return;
     }
     if (!activitiesComplete) {
@@ -982,30 +1104,49 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
 
   return (
     <div className="pb-24 lg:pb-0">
-      <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div className="min-w-0">
-            <h1 className="break-words text-2xl font-bold text-slate-950 sm:text-3xl">Daily Field Log</h1>
-            <p className="mt-1 text-sm font-semibold text-slate-500">
-              Autosave every 30 seconds {lastAutosavedAt ? `- last saved ${lastAutosavedAt}` : ""}
-            </p>
-          </div>
-          <div className="hidden gap-3 lg:flex">
-            <button type="button" onClick={saveDraft} className="inline-flex min-h-11 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-800">
-              <Save className="h-4 w-4" /> Save Draft
-            </button>
-            <button type="button" onClick={submitLog} className="inline-flex min-h-11 items-center gap-2 rounded-2xl bg-slate-950 px-4 text-sm font-bold text-white">
-              <Send className="h-4 w-4" /> Submit Daily Log
-            </button>
+      <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+        <div className="bg-gradient-to-r from-slate-950 via-slate-900 to-blue-950 px-4 py-5 sm:px-6">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="min-w-0">
+              <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">Field Operations</p>
+              <h1 className="mt-1 break-words text-2xl font-bold text-white sm:text-3xl">Daily Field Log</h1>
+              <p className="mt-1 text-xs font-semibold text-slate-400">
+                Autosave every 30 seconds {lastAutosavedAt ? `• last saved ${lastAutosavedAt}` : ""}
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="inline-flex items-center rounded-full border border-amber-400/40 bg-amber-400/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-amber-300">
+                {String(log.status || "draft").replace(/_/g, " ")}
+              </span>
+              <div className="hidden gap-2 lg:flex">
+                <button type="button" onClick={saveDraft} className="inline-flex min-h-11 items-center gap-2 rounded-2xl border border-slate-700 bg-transparent px-4 text-sm font-bold text-white hover:bg-slate-900">
+                  <Save className="h-4 w-4" /> Save Draft
+                </button>
+                <button
+                  type="button"
+                  onClick={submitLog}
+                  disabled={!canSubmit}
+                  title={canSubmit ? "" : "Add at least one completed activity to submit."}
+                  className="inline-flex min-h-11 items-center gap-2 rounded-2xl bg-blue-600 px-4 text-sm font-bold text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"
+                >
+                  <Send className="h-4 w-4" /> Submit Daily Log
+                </button>
+              </div>
+            </div>
           </div>
         </div>
 
-        <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50/70 p-3">
+        <div className="p-4 sm:p-5">
           <div className="mb-3 flex items-center justify-between gap-3">
-            <h2 className="text-base font-bold text-slate-950">Project Summary</h2>
-            <span className="hidden text-xs font-bold uppercase tracking-[0.14em] text-slate-400 sm:inline">Field Operations</span>
+            <div className="flex items-center gap-2.5">
+              <span className="inline-flex h-8 w-8 items-center justify-center rounded-xl bg-blue-50 text-blue-700">
+                <ClipboardList className="h-4 w-4" />
+              </span>
+              <h2 className="text-base font-bold text-slate-950">Project Summary</h2>
+            </div>
+            <span className="hidden text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400 sm:inline">Derived from project record</span>
           </div>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-6">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <SummaryField label="Project Name">
               <select
                 value={log.projectId || ""}
@@ -1019,6 +1160,12 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
             </SummaryField>
             <SummaryField label="Project Number">
               <div className={summaryValueClass()}>{log.projectNumber || "-"}</div>
+            </SummaryField>
+            <SummaryField label="General Contractor">
+              <div className={summaryValueClass()}>{log.generalContractor || "Not on file"}</div>
+            </SummaryField>
+            <SummaryField label="GC Representative">
+              <div className={summaryValueClass()}>{log.gcRepresentative || "Not on file"}</div>
             </SummaryField>
             <SummaryField label="Location">
               <div className={summaryValueClass()}>{log.projectLocation || "-"}</div>
@@ -1054,19 +1201,83 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
       </section>
 
       <section className="mt-4 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <h2 className="text-xl font-bold text-slate-950">Activities</h2>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <span className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-blue-50 text-blue-700">
+              <HardHat className="h-5 w-5" />
+            </span>
+            <div>
+              <h2 className="text-xl font-bold text-slate-950">Activities</h2>
+              <p className="mt-0.5 text-xs font-semibold text-slate-500">
+                {log.activities.length} {log.activities.length === 1 ? "activity" : "activities"} recorded
+              </p>
+            </div>
+          </div>
         </div>
 
         <div className="mt-5 space-y-4">
-          {log.activities.map((activity) => {
+          {log.activities.length === 0 && (
+            <div className="flex flex-col items-center gap-3 rounded-2xl border border-dashed border-slate-300 bg-slate-50/60 px-4 py-5 text-center sm:flex-row sm:gap-4 sm:px-5 sm:text-left">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-blue-100 bg-blue-50 text-blue-600">
+                <FileText className="h-5 w-5" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-bold text-slate-700">No activities yet</p>
+                <p className="text-xs font-semibold text-slate-500">
+                  Add an activity to document the work performed. Reports, photos, and files are attached inside each activity.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={addActivity}
+                className="inline-flex min-h-10 shrink-0 items-center gap-2 rounded-xl bg-blue-700 px-4 text-xs font-bold text-white hover:bg-blue-600"
+              >
+                <Plus className="h-4 w-4" /> Add Activity
+              </button>
+            </div>
+          )}
+          {log.activities.map((activity, activityIndex) => {
             const concreteReports = getActivityAttachedReports(activity);
             const reportCount = getActivityAttachedReports(activity).length;
             const titleMissing = attemptedSubmit && !String(activity.title || "").trim();
             const locationMissing = attemptedSubmit && !String(activity.location || "").trim();
             const descriptionMissing = attemptedSubmit && !String(activity.description || "").trim();
+            const attachmentList = activity.attachments || [];
+            const photoCount = attachmentList.filter((attachment) => String(attachment.attachmentType || attachment.attachment_type || "").toLowerCase().includes("photo")).length;
+            const fileCount = attachmentList.length - photoCount;
             return (
-              <article key={activity.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <article key={activity.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-slate-950 text-xs font-bold text-white">
+                      {String(activityIndex + 1).padStart(2, "0")}
+                    </span>
+                    <div className="min-w-0">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">Activity {activityIndex + 1}</p>
+                      <p className="truncate text-sm font-bold text-slate-950">{activity.title || "Untitled activity"}</p>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-bold text-slate-600">
+                      <FileText className="h-3.5 w-3.5" /> {reportCount} {reportCount === 1 ? "report" : "reports"}
+                    </span>
+                    <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-bold text-slate-600">
+                      <Camera className="h-3.5 w-3.5" /> {photoCount} {photoCount === 1 ? "photo" : "photos"}
+                    </span>
+                    <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-bold text-slate-600">
+                      <Paperclip className="h-3.5 w-3.5" /> {fileCount} {fileCount === 1 ? "file" : "files"}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => deleteActivity(activity)}
+                      className="inline-flex min-h-9 items-center gap-1.5 rounded-xl border border-rose-200 bg-white px-2.5 text-xs font-bold text-rose-700 hover:bg-rose-50"
+                      aria-label="Delete activity"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" /> Delete
+                    </button>
+                  </div>
+                </div>
+                <div className="p-4">
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                   <Field label="Activity Name *" error={titleMissing ? "Activity Name is required." : ""}>
                     <input
@@ -1089,17 +1300,11 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
                       <textarea
                         value={activity.description || ""}
                         onChange={(event) => updateActivityField(activity.id, { description: event.target.value })}
-                        rows={6}
-                        className={`${inputClass(descriptionMissing)} min-h-40 py-3 leading-6`}
+                        rows={4}
+                        className={`${inputClass(descriptionMissing)} min-h-28 max-w-full resize-y py-3 leading-6`}
                         placeholder="Document work performed, observations, issues, delays, and field notes."
                       />
                     </Field>
-                  </div>
-                </div>
-                <div className="mt-4 flex flex-col gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:items-center sm:justify-between">
-                  <p className="text-sm font-bold text-slate-700">Reports Attached: {reportCount}</p>
-                  <div className="flex flex-wrap gap-2">
-                    <button type="button" onClick={() => deleteActivity(activity)} className="min-h-10 rounded-xl border border-rose-200 bg-white px-3 text-xs font-bold text-rose-700">Delete</button>
                   </div>
                 </div>
                 {concreteReports.map((report) => {
@@ -1148,16 +1353,26 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
                   );
                 })}
                 {reportCount === 0 && (
-                  <div className="mt-4 flex flex-col gap-3 rounded-2xl border border-dashed border-slate-300 bg-white p-4 sm:flex-row sm:items-center sm:justify-between">
-                    <p className="text-sm font-semibold text-slate-600">Attach one report to this activity.</p>
-                    <button
-                      type="button"
-                      onClick={() => setReportPickerActivityId(reportPickerActivityId === activity.id ? "" : activity.id)}
-                      className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 text-xs font-bold text-blue-800"
-                    >
-                      <Plus className="h-4 w-4" />
-                      Add Report
-                    </button>
+                  <div className="mt-4 rounded-2xl border border-dashed border-slate-300 bg-slate-50/60 p-4">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="flex min-w-0 items-center gap-3">
+                        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-400">
+                          <FileText className="h-5 w-5" />
+                        </span>
+                        <div className="min-w-0">
+                          <p className="text-sm font-bold text-slate-900">No report attached</p>
+                          <p className="text-xs font-semibold text-slate-500">Attach a Concrete or Compaction report to document testing for this activity.</p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setReportPickerActivityId(reportPickerActivityId === activity.id ? "" : activity.id)}
+                        className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-xl bg-blue-700 px-4 text-xs font-bold text-white hover:bg-blue-600"
+                      >
+                        <Plus className="h-4 w-4" />
+                        Add Report
+                      </button>
+                    </div>
                   </div>
                 )}
                 {reportPickerActivityId === activity.id && (
@@ -1180,29 +1395,42 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
                   onRetry={(attachmentId) => retryActivityAttachment(activity.id, attachmentId)}
                   onPreview={previewAttachment}
                 />
+                </div>
               </article>
             );
           })}
-          <button
-            type="button"
-            onClick={addActivity}
-            className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-2xl bg-blue-700 px-4 text-sm font-bold text-white sm:w-auto"
-          >
-            <Plus className="h-4 w-4" /> Add Activity
-          </button>
+          {log.activities.length > 0 && (
+            <button
+              type="button"
+              onClick={addActivity}
+              className="flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl border border-dashed border-blue-300 bg-blue-50/50 text-sm font-bold text-blue-700 hover:bg-blue-50"
+            >
+              <Plus className="h-4 w-4" /> Add Another Activity
+            </button>
+          )}
         </div>
       </section>
 
+      {log.activities.length > 0 && (
       <section className="mt-4 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
-          <h2 className="text-xl font-bold text-slate-950">Comments</h2>
+          <div className="flex items-center gap-3">
+            <span className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-blue-50 text-blue-700">
+              <MessageSquare className="h-5 w-5" />
+            </span>
+            <div>
+              <h2 className="text-xl font-bold text-slate-950">Comments</h2>
+              <p className="mt-0.5 text-xs font-semibold text-slate-500">Issues, delays, safety observations, and follow-up items for this reporting period.</p>
+            </div>
+          </div>
           <textarea
             value={log.notes || ""}
             onChange={(event) => updateLog({ notes: event.target.value })}
-            rows={8}
+            rows={5}
             placeholder="Document issues, delays, safety observations, site conditions, follow-up items, and other daily comments."
-            className={`${inputClass()} mt-4 min-h-44 py-3 leading-6`}
+            className={`${inputClass()} mt-4 min-h-32 max-w-full resize-y py-3 leading-6`}
           />
       </section>
+      )}
 
       <div className="mt-4 space-y-4">
         <DailyLogSubmitPanel log={log} canSubmit={canSubmit} onSaveDraft={saveDraft} onSubmit={submitLog} />
@@ -1213,7 +1441,7 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
         primaryLabel="Submit Log"
         onSecondary={saveDraft}
         onPrimary={submitLog}
-        disabled={false}
+        disabled={!canSubmit}
       />
       <SignatureModal
         open={signatureModalOpen}

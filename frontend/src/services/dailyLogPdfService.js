@@ -194,15 +194,20 @@ function recordMatchesLogCompany(record, log) {
 
   if (!expectedIds.length && !expectedNames.length) return true;
 
+  // "company"/"organization" are storage-path placeholders used when the log
+  // had no company id at upload time — they are not real identifiers.
   const recordIds = [record?.companyId, record?.company_id, record?.organizationId, record?.organization_id]
     .filter(Boolean)
-    .map(String);
+    .map(String)
+    .filter((id) => id !== "company" && id !== "organization");
   const recordNames = [record?.companyName, record?.company_name, record?.organizationName, record?.organization_name]
     .map(normalizeOwnerName)
     .filter(Boolean);
 
-  if (recordIds.length) return recordIds.some((id) => expectedIds.includes(id));
-  if (recordNames.length) return recordNames.some((name) => expectedNames.includes(name));
+  // Only compare dimensions both sides actually have; an id on one side and a
+  // name on the other is not evidence of a mismatch.
+  if (expectedIds.length && recordIds.length) return recordIds.some((id) => expectedIds.includes(id));
+  if (expectedNames.length && recordNames.length) return recordNames.some((name) => expectedNames.includes(name));
 
   const storagePath = getAttachmentStoragePath(record);
   return storagePath && expectedIds.length ? expectedIds.some((id) => storagePath.includes(id)) : true;
@@ -245,8 +250,10 @@ function recordMatchesLogTechnician(record, log) {
     record?.created_by_name
   ].map(normalizeOwnerName).filter(Boolean);
 
-  if (recordIds.length) return recordIds.some((id) => expectedIds.includes(id));
-  if (recordNames.length) return recordNames.some((name) => expectedNames.includes(name));
+  // Compare ids with ids and names with names — never reject because one side
+  // only carries the other dimension.
+  if (expectedIds.length && recordIds.length) return recordIds.some((id) => expectedIds.includes(id));
+  if (expectedNames.length && recordNames.length) return recordNames.some((name) => expectedNames.includes(name));
   return true;
 }
 
@@ -322,9 +329,13 @@ function getAllAttachments(log) {
 }
 
 function getWeatherText(log) {
-  const condition = pdfValue(log.weatherCondition || log.weather);
-  const min = log.minTemperature || log.min_temperature;
-  const max = log.maxTemperature || log.max_temperature;
+  // Mirror the Weather Summary card on the daily log screen: auto-captured
+  // condition first, then manual override, plus single-reading temperature fallback.
+  const condition = pdfValue(
+    log.weatherCondition || log.weather_condition || log.weatherOverride || log.weather_override || log.weather
+  );
+  const min = log.minTemperature || log.min_temperature || log.temperature;
+  const max = log.maxTemperature || log.max_temperature || log.temperature;
   const tempText = [min ? `Min ${min}°F` : "", max ? `Max ${max}°F` : ""].filter(Boolean).join(" / ");
   return tempText ? `${condition} (${tempText})` : condition;
 }
@@ -410,10 +421,39 @@ function getReportDfrNumber(report) {
   return specs.dfr_number || report?.dfrNumber || report?.dfr_number || report?.reportNumber || report?.report_number || "Concrete Report";
 }
 
+function getRecordSignature(record) {
+  return CONSOLIDATED_CONCRETE_RECORD_COLUMNS
+    .map((column) => String(getRecordField(record, column.keys) ?? "").trim().toLowerCase())
+    .join("|");
+}
+
+function dedupeReportRecords(records) {
+  const seen = new Set();
+  return records.filter((record) => {
+    const key = getRecordSignature(record);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function recordHasMeaningfulContent(record) {
+  return CONSOLIDATED_CONCRETE_RECORD_COLUMNS.some((column) => {
+    // Test # is auto-assigned and Strength defaults to a boolean, so neither
+    // proves the technician actually entered data for the row.
+    if (column.label === "Test #" || column.label === "Strength") return false;
+    const value = getRecordField(record, column.keys);
+    return value != null && String(value).trim() !== "";
+  });
+}
+
 function getReportRecords(report) {
-  if (Array.isArray(report?.deliveryRecords) && report.deliveryRecords.length) return report.deliveryRecords;
-  if (Array.isArray(report?.testRecords) && report.testRecords.length) return report.testRecords;
-  return [];
+  const records = Array.isArray(report?.deliveryRecords) && report.deliveryRecords.length
+    ? report.deliveryRecords
+    : Array.isArray(report?.testRecords) && report.testRecords.length
+      ? report.testRecords
+      : [];
+  return dedupeReportRecords(records.filter(recordHasMeaningfulContent));
 }
 
 function getAttachmentFileName(attachment) {
@@ -442,11 +482,45 @@ function getAttachmentSource(attachment) {
 function isRenderableImageAttachment(attachment) {
   const source = getAttachmentSource(attachment);
   const type = getAttachmentType(attachment).toLowerCase();
-  return source.startsWith("data:image/") || type.startsWith("image/");
+  const fileName = getAttachmentFileName(attachment);
+  return source.startsWith("data:image/") || type.startsWith("image/") || /\.(png|jpe?g|webp|gif|bmp|heic)$/i.test(fileName);
 }
 
 function isPdfAttachment(attachment) {
   return getAttachmentType(attachment).toLowerCase() === "application/pdf" || /\.pdf$/i.test(getAttachmentFileName(attachment));
+}
+
+function isDocxAttachment(attachment) {
+  const type = getAttachmentType(attachment).toLowerCase();
+  return type.includes("officedocument.wordprocessingml") || /\.docx$/i.test(getAttachmentFileName(attachment));
+}
+
+const ATTACHMENT_BUCKET_ATTEMPTS = ["daily-log-attachments", "report-attachments"];
+
+// Attachments synced through Supabase only carry a storage path — resolve the
+// actual content the same way the web summary view does: recorded bucket first,
+// then the known daily-log/report buckets.
+async function resolveAttachmentSource(attachment) {
+  const existing = getAttachmentSource(attachment);
+  if (existing.startsWith("data:")) return existing;
+
+  const storagePath = getAttachmentStoragePath(attachment);
+  if (storagePath) {
+    const buckets = [
+      attachment?.storageBucket || attachment?.storage_bucket || attachment?.bucketName || attachment?.bucket_name || attachment?.bucket,
+      ...ATTACHMENT_BUCKET_ATTEMPTS
+    ].filter(Boolean).filter((bucket, index, all) => all.indexOf(bucket) === index);
+
+    for (const bucket of buckets) {
+      try {
+        const { data, error } = await supabase.storage.from(bucket).createSignedUrl(storagePath, SIGNED_URL_TTL_SECONDS);
+        if (!error && data?.signedUrl) return data.signedUrl;
+      } catch (error) {
+        console.warn("[Daily Log PDF] Unable to sign attachment URL", { bucket, storagePath, error });
+      }
+    }
+  }
+  return existing;
 }
 
 function getImageFormat(source, attachment) {
@@ -552,6 +626,13 @@ async function hydrateConcreteReportForPdf(report) {
   const linkedReportId = getLinkedReportId(report);
   if (!linkedReportId) return report;
 
+  // Match the submitted-report web view: when the daily log already stores the
+  // delivery records, use them as-is instead of refetching (the DB table can
+  // contain duplicate rows from repeated saves).
+  if (Array.isArray(report?.deliveryRecords) && report.deliveryRecords.length > 1) {
+    return report;
+  }
+
   const [specResponse, rowsResponse] = await Promise.all([
     supabase
       .from("concrete_specifications")
@@ -587,8 +668,157 @@ async function hydrateConcreteReportForPdf(report) {
   };
 }
 
+function getProjectColumnValue(project, keys) {
+  for (const key of keys) {
+    const value = project?.[key];
+    if (value != null && String(value).trim() !== "") return String(value).trim();
+  }
+  return "";
+}
+
+// Derive project fields (GC, GC representative, number, location) from the
+// projects table — same source the Concrete Test Log report uses — so the PDF
+// never shows "Not recorded" for data the project already has on file.
+async function hydrateProjectInfoForPdf(log) {
+  const projectId = log.projectId || log.project_id;
+  if (!projectId) return log;
+  try {
+    const { data, error } = await supabase
+      .from("projects")
+      .select("*")
+      .eq("id", projectId)
+      .maybeSingle();
+    if (error || !data) {
+      if (error) console.warn("[Daily Log PDF] Unable to hydrate project information", error);
+      return log;
+    }
+
+    const projectNumber = getProjectColumnValue(data, ["project_number", "number"]) || getProjectNumber(log);
+    const projectName = getProjectColumnValue(data, ["project_name", "name"]) || getProjectName(log);
+    const generalContractor = getProjectColumnValue(data, ["gc", "general_contractor", "client_name"]) ||
+      log.generalContractor || log.general_contractor || "";
+    const gcRepresentative = getProjectColumnValue(data, ["gc_rep", "gc_representative", "client_representative"]) ||
+      log.gcRepresentative || log.gc_representative || "";
+    const projectLocation = getProjectColumnValue(data, ["location", "project_location"]) || getProjectLocation(log);
+
+    return {
+      ...log,
+      projectNumber,
+      project_number: projectNumber,
+      projectName,
+      project_name: projectName,
+      generalContractor,
+      general_contractor: generalContractor,
+      gcRepresentative,
+      gc_representative: gcRepresentative,
+      projectLocation,
+      project_location: projectLocation
+    };
+  } catch (error) {
+    console.warn("[Daily Log PDF] Project information hydration failed", error);
+    return log;
+  }
+}
+
+async function fetchDailyLogAttachmentRowsForPdf(log) {
+  const localLogId = String(log?.id || "");
+  const numericLogId = log?.supabaseDailyLogId || log?.supabase_daily_log_id || "";
+
+  const runQuery = async (buildQuery) => {
+    try {
+      const withFilter = await buildQuery(true);
+      if (!withFilter.error) return withFilter.data || [];
+      const withoutFilter = await buildQuery(false);
+      return withoutFilter.error ? [] : (withoutFilter.data || []);
+    } catch (error) {
+      console.warn("[Daily Log PDF] Unable to load attachment rows", error);
+      return [];
+    }
+  };
+
+  const queries = [];
+  if (localLogId) {
+    queries.push(runQuery((withDeletedFilter) => {
+      const query = supabase.from("daily_log_attachments").select("*").eq("local_daily_log_id", localLogId);
+      return withDeletedFilter ? query.is("deleted_at", null) : query;
+    }));
+    // Storage paths embed the local uuid ids, so this matches regardless of
+    // how the DB row's id columns map to the local log.
+    queries.push(runQuery((withDeletedFilter) => {
+      const query = supabase.from("daily_log_attachments").select("*").ilike("storage_path", `%${localLogId}%`);
+      return withDeletedFilter ? query.is("deleted_at", null) : query;
+    }));
+  }
+  if (numericLogId) {
+    queries.push(runQuery((withDeletedFilter) => {
+      const query = supabase.from("daily_log_attachments").select("*").eq("daily_log_id", numericLogId);
+      return withDeletedFilter ? query.is("deleted_at", null) : query;
+    }));
+  }
+  if (!queries.length) return [];
+
+  const rowSets = await Promise.all(queries);
+  const seen = new Set();
+  return rowSets.flat().filter((row) => {
+    const key = String(row?.storage_path || row?.id || "");
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function normalizeAttachmentRowForPdf(row = {}) {
+  const fileName = row.file_name || row.fileName || "Attachment";
+  const fileType = row.file_type || row.fileType || "";
+  const storagePath = row.storage_path || row.storagePath || "";
+  const attachmentType = row.attachment_type || row.attachmentType || (fileType.startsWith("image/") ? "photo" : "file");
+  const storageBucket = row.storage_bucket || row.storageBucket || "daily-log-attachments";
+  // The DB rows key daily_log_id/activity_id with numeric ids while the app
+  // works with local uuids, so ownership keys are intentionally omitted —
+  // activity scoping relies on the uuids embedded in storage_path.
+  return {
+    id: row.id || storagePath || fileName,
+    fileName,
+    file_name: fileName,
+    fileType,
+    file_type: fileType,
+    fileSize: row.file_size || row.fileSize || 0,
+    file_size: row.file_size || row.fileSize || 0,
+    attachmentType,
+    attachment_type: attachmentType,
+    storagePath,
+    storage_path: storagePath,
+    storageBucket,
+    storage_bucket: storageBucket,
+    createdAt: row.created_at || row.createdAt || row.uploaded_at || row.uploadedAt || ""
+  };
+}
+
+// The submitted-report web view loads attachments from the daily_log_attachments
+// table; mirror that here so the PDF renders them even when the local log copy
+// is missing the records.
+async function hydrateAttachmentsForPdf(log) {
+  const rows = (await fetchDailyLogAttachmentRowsForPdf(log)).map(normalizeAttachmentRowForPdf);
+  if (!rows.length) return log;
+  const keyOf = (attachment) => String(getAttachmentStoragePath(attachment) || attachment?.id || "");
+
+  return {
+    ...log,
+    activities: (log.activities || []).map((activity) => {
+      const activityId = String(activity?.id || "");
+      if (!activityId) return activity;
+      const existing = Array.isArray(activity.attachments) ? activity.attachments : [];
+      const seen = new Set(existing.map(keyOf).filter(Boolean));
+      const matched = rows.filter((row) => row.storagePath.includes(activityId) && !seen.has(keyOf(row)));
+      return matched.length ? { ...activity, attachments: [...existing, ...matched] } : activity;
+    })
+  };
+}
+
 async function hydrateDailyLogForPdf(log) {
-  const activities = await Promise.all((log.activities || []).map(async (activity) => {
+  const logWithProject = await hydrateProjectInfoForPdf(log);
+  const logWithAttachments = await hydrateAttachmentsForPdf(logWithProject);
+  const activities = await Promise.all((logWithAttachments.activities || []).map(async (activity) => {
     const concreteReports = await Promise.all((activity.concreteReports || []).map(hydrateConcreteReportForPdf));
     const legacyReports = await Promise.all((activity.reports || []).map(hydrateConcreteReportForPdf));
     return {
@@ -597,7 +827,7 @@ async function hydrateDailyLogForPdf(log) {
       reports: legacyReports
     };
   }));
-  return { ...log, activities };
+  return { ...logWithAttachments, activities };
 }
 
 function safePathSegment(value, fallback = "unassigned") {
@@ -885,7 +1115,7 @@ function addImageToPdf(doc, source, attachment, x, y, maxWidth, maxHeight) {
 }
 
 async function renderPdfAttachment(doc, attachment, y) {
-  const source = getAttachmentSource(attachment);
+  const source = await resolveAttachmentSource(attachment);
   const arrayBuffer = await sourceToArrayBuffer(source);
   if (!arrayBuffer) {
     y = ensurePage(doc, y, 22);
@@ -916,7 +1146,10 @@ async function renderPdfAttachment(doc, attachment, y) {
       await page.render({ canvasContext: context, viewport }).promise;
 
       const pageImage = canvas.toDataURL("image/jpeg", 0.72);
-      const ratio = Math.min(getContentWidth(doc) / canvas.width, (getPageHeight(doc) - PAGE_MARGIN * 2) / canvas.height);
+      // Cap attached pages at roughly two-thirds of the printable height so they
+      // read as embedded figures instead of consuming a full page each.
+      const maxAttachedPageHeight = 440;
+      const ratio = Math.min(getContentWidth(doc) / canvas.width, maxAttachedPageHeight / canvas.height);
       const width = canvas.width * ratio;
       const height = canvas.height * ratio;
       y = ensurePage(doc, y, height + 22);
@@ -2001,20 +2234,56 @@ const DAILY_LOG_CONCRETE_RECORD_COLUMNS = [
   { header: "Slump", width: 30 },
   { header: "Air %", width: 28 },
   { header: "Unit Wt", width: 34 },
-  { header: "Spread", width: 30 },
-  { header: "J-Ring", width: 30 },
+  { header: "Spread", width: 34 },
+  { header: "J-Ring", width: 32 },
   { header: "Set #", width: 42 },
   { header: "Lab", width: 28 },
   { header: "Field", width: 30 },
-  { header: "Comments", width: 64, align: "left" }
+  { header: "Comments", width: 58, align: "left" }
 ];
 
-function getDailyLogConcreteColumnStyles(doc) {
-  const totalWidth = DAILY_LOG_CONCRETE_RECORD_COLUMNS.reduce((sum, column) => sum + column.width, 0);
-  const scale = getContentWidth(doc) / totalWidth;
+function getDailyLogConcreteColumnStyles(doc, records = []) {
+  const fontFamily = reportFontsRegistered ? REPORT_FONT_FAMILY : "helvetica";
+  const fontSize = 5.8;
+  const cellPadding = 5.5; // left + right padding plus grid line slack
+  const maxCellWidth = 64; // values longer than this wrap rather than starving other columns
+  const rows = getDailyLogConcreteRecordRows(records);
+
+  // Size each column to its widest single-line value (or longest header word),
+  // so real values like CY and Set # never wrap mid-number.
+  const widths = DAILY_LOG_CONCRETE_RECORD_COLUMNS.map((column, index) => {
+    doc.setFont(fontFamily, "bold");
+    doc.setFontSize(fontSize);
+    const headerMin = Math.max(...String(column.header).split(/\s+/).map((word) => doc.getTextWidth(word)));
+    doc.setFont(fontFamily, "normal");
+    const bodyMax = Math.max(0, ...rows.map((row) => doc.getTextWidth(String(row[index] ?? ""))));
+    return Math.min(Math.max(headerMin, bodyMax) + cellPadding, maxCellWidth);
+  });
+
+  const contentWidth = getContentWidth(doc);
+  const totalWidth = widths.reduce((sum, width) => sum + width, 0);
+  if (totalWidth < contentWidth) {
+    widths[widths.length - 1] += contentWidth - totalWidth;
+  } else {
+    // Over-width: reclaim space only from wide text columns (which wrap
+    // gracefully), so snug-fitting value columns like CY and Set # never wrap.
+    const wrapFloor = 34;
+    const flexible = widths.map((width) => Math.max(0, width - wrapFloor));
+    const flexTotal = flexible.reduce((sum, width) => sum + width, 0);
+    const deficit = totalWidth - contentWidth;
+    if (flexTotal >= deficit) {
+      for (let index = 0; index < widths.length; index += 1) {
+        widths[index] -= flexible[index] * (deficit / flexTotal);
+      }
+    } else {
+      const scale = contentWidth / totalWidth;
+      for (let index = 0; index < widths.length; index += 1) widths[index] *= scale;
+    }
+  }
+
   return DAILY_LOG_CONCRETE_RECORD_COLUMNS.reduce((styles, column, index) => {
     styles[index] = {
-      cellWidth: column.width * scale,
+      cellWidth: widths[index],
       halign: column.align || "center"
     };
     return styles;
@@ -2265,6 +2534,11 @@ function renderReferenceSectionBar(doc, title, y, options = {}) {
   doc.setFontSize(options.size || 9.2);
   doc.setTextColor(...PDF_COLORS.white);
   doc.text(String(title).toUpperCase(), PAGE_MARGIN + 10, y + 13.5);
+  if (options.rightText) {
+    doc.setFontSize(7.4);
+    doc.setTextColor(203, 213, 225);
+    doc.text(String(options.rightText).toUpperCase(), PAGE_MARGIN + getContentWidth(doc) - 10, y + 13.5, { align: "right" });
+  }
   return y + barHeight + (options.afterGap ?? 12);
 }
 
@@ -2276,15 +2550,15 @@ function renderReferenceFieldCard(doc, item, x, y, width, height) {
   doc.roundedRect(x, y, width, height, 6, 6, "FD");
 
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(7.8);
+  doc.setFontSize(7.6);
   doc.setTextColor(50, 74, 104);
-  doc.text(label, x + 10, y + 12);
+  doc.text(label, x + 10, y + 12, { charSpace: 0.5 });
 
   doc.setFont("helvetica", "bold");
   doc.setFontSize(9.4);
   doc.setTextColor(...PDF_COLORS.navy);
   const valueLines = doc.splitTextToSize(value, width - 20);
-  doc.text(valueLines.slice(0, 2), x + 10, y + 26, { lineHeightFactor: 1.1 });
+  doc.text(valueLines.slice(0, 2), x + 10, y + 26, { lineHeightFactor: 1.15 });
 }
 
 function renderReferenceSection(doc, title, items, y, options = {}) {
@@ -2361,69 +2635,332 @@ function renderReferenceActivities(doc, log, y) {
   return (doc.lastAutoTable?.finalY || y) + 12;
 }
 
-function renderReferenceConcreteReportSections(doc, log, y) {
-  const reports = getConcreteReports(log);
-  if (!reports.length) return y;
-  y = renderConcreteSummaries(doc, log, y);
+function renderReferenceSubTitle(doc, title, y, options = {}) {
+  // Sub-section headings share the same navy bar treatment as the main section headings.
+  return renderReferenceSectionBar(doc, title, y, {
+    height: 18,
+    size: 8.6,
+    afterGap: options.afterGap ?? 10,
+    rightText: options.rightText
+  });
+}
 
-  for (const { report } of reports) {
-    const records = getReportRecords(report);
-    if (!records.length) continue;
-    y = ensurePage(doc, y, 84);
-    y = renderReferenceSectionBar(doc, "Concrete Delivery & Testing Records", y, { afterGap: 7 });
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(8);
-    doc.setTextColor(...PDF_COLORS.muted);
-    doc.text("Delivery log format: one row per truck/test record. Headers repeat automatically across pages.", PAGE_MARGIN, y);
-    y += 8;
-
-    autoTable(doc, {
-      startY: y,
-      head: [DAILY_LOG_CONCRETE_RECORD_COLUMNS.map((column) => column.header)],
-      body: getDailyLogConcreteRecordRows(records),
-      theme: "grid",
-      margin: { left: PAGE_MARGIN, right: PAGE_MARGIN, top: PAGE_TOP_MARGIN, bottom: PAGE_BOTTOM_MARGIN + 16 },
-      tableWidth: getContentWidth(doc),
-      showHead: "everyPage",
-      styles: {
-        font: reportFontsRegistered ? REPORT_FONT_FAMILY : "helvetica",
-        fontSize: 5.8,
-        cellPadding: { top: 3.5, right: 2.2, bottom: 3.5, left: 2.2 },
-        lineColor: PDF_COLORS.line,
-        lineWidth: 0.35,
-        textColor: PDF_COLORS.navy,
-        minCellHeight: 16,
-        overflow: "linebreak",
-        valign: "middle"
-      },
-      headStyles: getDarkTableHeadStyles(5.8),
-      columnStyles: getDailyLogConcreteColumnStyles(doc)
+function renderReferenceCardGrid(doc, items, y, options = {}) {
+  const columns = options.columns || 3;
+  const gapX = options.gapX ?? 10;
+  const gapY = options.gapY ?? 8;
+  const cardHeight = options.cardHeight || 36;
+  const cardWidth = (getContentWidth(doc) - gapX * (columns - 1)) / columns;
+  for (let start = 0; start < items.length; start += columns) {
+    y = ensurePage(doc, y, cardHeight + gapY);
+    items.slice(start, start + columns).forEach((item, index) => {
+      renderReferenceFieldCard(doc, item, PAGE_MARGIN + index * (cardWidth + gapX), y, cardWidth, cardHeight);
     });
-    y = (doc.lastAutoTable?.finalY || y) + 14;
+    y += cardHeight + gapY;
+  }
+  return y + (options.afterGap ?? 6);
+}
+
+function renderReferenceTextBox(doc, label, text, y, options = {}) {
+  const width = getContentWidth(doc);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+  const lines = doc.splitTextToSize(String(text || "N/A"), width - 22);
+  const boxHeight = Math.max(40, lines.length * 9 * 1.35 + 28);
+  y = ensurePage(doc, y, boxHeight + 8);
+  doc.setFillColor(...PDF_COLORS.white);
+  doc.setDrawColor(205, 216, 228);
+  doc.roundedRect(PAGE_MARGIN, y, width, boxHeight, 6, 6, "FD");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(7.8);
+  doc.setTextColor(50, 74, 104);
+  doc.text(String(label).toUpperCase(), PAGE_MARGIN + 10, y + 13);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+  doc.setTextColor(...PDF_COLORS.navy);
+  doc.text(lines, PAGE_MARGIN + 10, y + 27, { lineHeightFactor: 1.35 });
+  return y + boxHeight + (options.afterGap ?? 12);
+}
+
+function getInspectionRequirementItems(report) {
+  return [
+    { label: "Air Content (%)", keys: ["air_content_percent", "air_content", "airContent", "airContentPercent"] },
+    { label: "Unit Weight (lbs/ft³)", keys: ["unit_weight_lbs_ft3", "unit_weight", "unitWeight", "unitWeightLbsFt3"] },
+    { label: "Spread (in)", keys: ["spread_in", "spread", "spreadIn"] },
+    { label: "Slump (in)", keys: ["slump_in", "slump", "slumpIn"] },
+    { label: "Material Temp (°F)", keys: ["concrete_temp_f", "concrete_temp", "material_temp_f", "materialTemp", "concreteTemperature"] },
+    { label: "Mix No.", keys: ["mix_number", "mix_no", "mixNumber", "mixNo"] },
+    { label: "Batch Plant", keys: ["batch_plant", "batchPlant", "batch_plant_supplier", "batchPlantSupplier"] },
+    { label: "J-Ring (in)", keys: ["j_ring_in", "j_ring", "jRing", "jRingIn"] },
+    { label: "Specified Strength (PSI)", keys: ["speed_of_stress_psi", "speed_of_stress", "strength_spec", "specified_strength_psi", "specified_strength", "specifiedStrength"] },
+    { label: "DFR Number", value: getReportDfrNumber(report) },
+    { label: "Comments", keys: ["comments", "notes"] }
+  ].map((item) => ({
+    label: item.label,
+    value: item.value ?? pdfValue(getReportSpecificationValue(report, item.keys))
+  }));
+}
+
+function renderReferenceRecordsTable(doc, records, y) {
+  y = ensurePage(doc, y, 110);
+  y = renderReferenceSubTitle(doc, "Material Delivery & Verification Records", y, {
+    rightText: `${records.length} record${records.length === 1 ? "" : "s"}`
+  });
+
+  autoTable(doc, {
+    startY: y,
+    head: [DAILY_LOG_CONCRETE_RECORD_COLUMNS.map((column) => column.header)],
+    body: getDailyLogConcreteRecordRows(records),
+    theme: "grid",
+    margin: { left: PAGE_MARGIN, right: PAGE_MARGIN, top: PAGE_TOP_MARGIN, bottom: PAGE_BOTTOM_MARGIN + 16 },
+    tableWidth: getContentWidth(doc),
+    showHead: "everyPage",
+    styles: {
+      font: reportFontsRegistered ? REPORT_FONT_FAMILY : "helvetica",
+      fontSize: 5.8,
+      cellPadding: { top: 3.5, right: 2.2, bottom: 3.5, left: 2.2 },
+      lineColor: PDF_COLORS.line,
+      lineWidth: 0.35,
+      textColor: PDF_COLORS.navy,
+      minCellHeight: 16,
+      overflow: "linebreak",
+      valign: "middle"
+    },
+    headStyles: getDarkTableHeadStyles(5.8),
+    columnStyles: getDailyLogConcreteColumnStyles(doc, records)
+  });
+  return (doc.lastAutoTable?.finalY || y) + 14;
+}
+
+function renderReferenceComplianceSummary(doc, records, y) {
+  const resultOf = (record) => formatStatus(getRecordField(record, ["record_result", "row_status", "recordResult", "status"])).toLowerCase();
+  const passed = records.filter((record) => resultOf(record).includes("pass")).length;
+  const failed = records.filter((record) => resultOf(record).includes("fail")).length;
+  const retests = records.filter((record) => resultOf(record).includes("retest")).length;
+  const totalCy = records.reduce((sum, record) => sum + (Number(getRecordField(record, ["cubic_yards", "cubicYards"])) || 0), 0);
+  y = renderReferenceSubTitle(doc, "Compliance Summary", y, { minSpace: 60 });
+  return renderReferenceCardGrid(doc, [
+    { label: "Total Records", value: records.length },
+    { label: "Total CY", value: totalCy.toFixed(1) },
+    { label: "Passed", value: passed },
+    { label: "Failed", value: failed },
+    { label: "Retests", value: retests }
+  ], y, { columns: 5, cardHeight: 34, afterGap: 10 });
+}
+
+async function renderReferencePhotoGrid(doc, photos, y) {
+  const gap = 10;
+  const columns = 2;
+
+  for (let index = 0; index < photos.length; index += columns) {
+    const row = photos.slice(index, index + columns);
+    // A lone photo in a row gets the full content width, like the web summary
+    // view, but height-capped so it reads as a figure rather than a full page.
+    const isSingle = row.length === 1;
+    const frameWidth = isSingle ? getContentWidth(doc) : (getContentWidth(doc) - gap) / columns;
+    const maxImageHeight = isSingle ? 240 : 170;
+    const rendered = [];
+    for (const [rowIndex, attachment] of row.entries()) {
+      const x = PAGE_MARGIN + rowIndex * (frameWidth + gap);
+      let source = await sourceToDataUrl(await resolveAttachmentSource(attachment));
+      if (source?.startsWith("data:image/")) {
+        source = await compressImageDataUrl(source, { maxWidth: 1400, maxHeight: 1400, quality: 0.74 });
+        try {
+          const props = doc.getImageProperties(source);
+          const ratio = Math.min((frameWidth - 12) / props.width, maxImageHeight / props.height, 2);
+          rendered.push({ attachment, source, x, width: props.width * ratio, height: props.height * ratio });
+          continue;
+        } catch (error) {
+          console.warn("[Daily Log PDF] Unable to measure attachment image", error);
+        }
+      }
+      rendered.push({ attachment, source: "", x, width: 0, height: 0 });
+    }
+
+    const rowImageHeight = Math.max(...rendered.map((item) => item.height), 60);
+    const frameHeight = rowImageHeight + 30;
+    y = ensurePage(doc, y, frameHeight + 10);
+
+    for (const item of rendered) {
+      doc.setDrawColor(205, 216, 228);
+      doc.setFillColor(...PDF_COLORS.white);
+      doc.roundedRect(item.x, y, frameWidth, frameHeight, 6, 6, "FD");
+      if (item.source) {
+        doc.addImage(item.source, getImageFormat(item.source, item.attachment), item.x + (frameWidth - item.width) / 2, y + 6, item.width, item.height, undefined, "FAST");
+      } else {
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(8.5);
+        doc.setTextColor(...PDF_COLORS.muted);
+        doc.text("Image unavailable", item.x + 10, y + 24);
+      }
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(7.5);
+      doc.setTextColor(...PDF_COLORS.muted);
+      const uploadedAt = item.attachment?.createdAt || item.attachment?.created_at || item.attachment?.uploadedAt || item.attachment?.uploaded_at;
+      const caption = [getAttachmentFileName(item.attachment), uploadedAt ? formatDateTime(uploadedAt) : ""].filter(Boolean).join(" • ");
+      doc.text(doc.splitTextToSize(caption, frameWidth - 20)[0] || "", item.x + 10, y + rowImageHeight + 20);
+    }
+    y += frameHeight + 12;
   }
   return y;
 }
 
-function renderReferenceAttachments(doc, log, y) {
-  const attachments = getAllAttachments(log);
-  y = ensurePage(doc, y, 48);
-  setReportFont(doc, "semibold", 12, PDF_COLORS.navy);
-  doc.text("Attachments", PAGE_MARGIN, y);
-  y += 16;
-  if (!attachments.length) {
-    setReportFont(doc, "regular", 10, PDF_COLORS.navy);
-    doc.text("No attachments uploaded.", PAGE_MARGIN, y);
+async function renderReferenceDocxAttachment(doc, attachment, y) {
+  const fileName = getAttachmentFileName(attachment);
+  try {
+    const source = await resolveAttachmentSource(attachment);
+    const arrayBuffer = await sourceToArrayBuffer(source);
+    if (!arrayBuffer) throw new Error("Document content unavailable.");
+    const mammoth = await import("mammoth/mammoth.browser");
+    const result = await mammoth.extractRawText({ arrayBuffer });
+    const text = String(result?.value || "").replace(/\n{3,}/g, "\n\n").trim();
+    if (!text) throw new Error("Document has no extractable text.");
+
+    y = ensurePage(doc, y, 48);
+    setReportFont(doc, "medium", 9, PDF_COLORS.slate);
+    doc.text(`Attached Document: ${fileName}`, PAGE_MARGIN, y);
+    y += 12;
+    setReportFont(doc, "regular", 9, PDF_COLORS.navy);
+    const lines = doc.splitTextToSize(text.slice(0, 30000), getContentWidth(doc) - 16);
+    for (const line of lines) {
+      y = ensurePage(doc, y, 16);
+      doc.text(line, PAGE_MARGIN + 8, y);
+      y += 11.5;
+    }
+    return y + 10;
+  } catch (error) {
+    console.warn("[Daily Log PDF] Unable to render document attachment", error);
+    y = ensurePage(doc, y, 22);
+    setReportFont(doc, "regular", 9, PDF_COLORS.slate);
+    doc.text(`Document attachment could not be rendered: ${fileName}`, PAGE_MARGIN, y);
     return y + 14;
   }
-  attachments.forEach((attachment) => {
-    y = ensurePage(doc, y, 28);
-    setReportFont(doc, "semibold", 10, PDF_COLORS.navy);
-    doc.text(getAttachmentFileName(attachment), PAGE_MARGIN, y);
-    setReportFont(doc, "regular", 9, PDF_COLORS.muted);
-    doc.text(`Type: ${getAttachmentCategory(attachment)}`, PAGE_MARGIN, y + 12);
-    y += 28;
-  });
+}
+
+async function renderReferenceAttachmentContent(doc, attachments, y, title) {
+  const valid = (attachments || []).filter((attachment) => Boolean(getAttachmentSource(attachment)) || Boolean(getAttachmentStoragePath(attachment)) || Boolean(getAttachmentFileName(attachment)));
+  if (!valid.length) return y;
+
+  const photos = valid.filter(isRenderableImageAttachment);
+  const pdfs = valid.filter((attachment) => !isRenderableImageAttachment(attachment) && isPdfAttachment(attachment));
+  const docs = valid.filter((attachment) => !isRenderableImageAttachment(attachment) && !isPdfAttachment(attachment) && isDocxAttachment(attachment));
+  const otherFiles = valid.filter((attachment) => !isRenderableImageAttachment(attachment) && !isPdfAttachment(attachment) && !isDocxAttachment(attachment));
+
+  // Keep the section bar on the same page as its first content block: a lone
+  // photo frame (~280pt), a photo pair row (~240pt), an attached-PDF page
+  // (up to ~480pt), or a document card row.
+  const firstBlockSpace = photos.length
+    ? (photos.length === 1 ? 320 : 280)
+    : pdfs.length
+      ? 500
+      : 130;
+  y = ensurePage(doc, y, firstBlockSpace);
+  y = renderReferenceSectionBar(doc, title, y, { afterGap: 10, rightText: `${valid.length} item${valid.length === 1 ? "" : "s"}` });
+
+  if (photos.length) {
+    y = await renderReferencePhotoGrid(doc, photos, y);
+  }
+
+  for (const attachment of pdfs) {
+    // Keep the "Attached PDF" label with at least its first rendered page.
+    y = ensurePage(doc, y, 500);
+    y = await renderPdfAttachment(doc, attachment, y);
+  }
+
+  for (const attachment of docs) {
+    y = await renderReferenceDocxAttachment(doc, attachment, y);
+  }
+
+  if (otherFiles.length) {
+    y = renderReferenceSubTitle(doc, "Other Files", y);
+    const gap = 10;
+    const cardWidth = (getContentWidth(doc) - gap) / 2;
+    const cardHeight = 42;
+    for (let index = 0; index < otherFiles.length; index += 2) {
+      y = ensurePage(doc, y, cardHeight + 8);
+      otherFiles.slice(index, index + 2).forEach((attachment, rowIndex) => {
+        renderAttachmentCard(doc, attachment, PAGE_MARGIN + rowIndex * (cardWidth + gap), y, cardWidth, cardHeight);
+      });
+      y += cardHeight + gap;
+    }
+  }
   return y + 6;
+}
+
+async function renderReferenceConcreteReportBlock(doc, report, reportIndex, y, activity, log) {
+  y = ensurePage(doc, y, 160);
+  y = renderReferenceSectionBar(doc, `Concrete Report ${reportIndex + 1} — ${getReportDfrNumber(report)}`, y, {
+    afterGap: 10,
+    rightText: formatStatus(report.status || report.reportStatus || "Draft")
+  });
+
+  y = renderReferenceSubTitle(doc, "Inspection Requirements", y);
+  y = renderReferenceCardGrid(doc, getInspectionRequirementItems(report), y, { columns: 3, afterGap: 10 });
+
+  const records = getReportRecords(report);
+  if (records.length) {
+    y = renderReferenceRecordsTable(doc, records, y);
+    y = renderReferenceComplianceSummary(doc, records, y);
+  } else {
+    y = renderReferenceTextBox(doc, "Test Records", "No delivery or testing records recorded for this report.", y);
+  }
+
+  y = await renderReferenceAttachmentContent(doc, getReportAttachments(report, activity, log), y, `Concrete Report ${reportIndex + 1} Attachments`);
+  return y + 6;
+}
+
+async function renderReferenceActivityDetails(doc, log, y) {
+  const activities = log.activities || [];
+  if (!activities.length) return y;
+
+  for (const [index, activity] of activities.entries()) {
+    // Each activity starts on a fresh page so its reports and attachments stay together
+    // and the next activity never interleaves with the previous one's content.
+    doc.addPage("letter", "portrait");
+    y = PAGE_TOP_MARGIN;
+
+    const reports = getScopedActivityReports(activity, log);
+    const attachments = getActivityAttachments(activity, log);
+    const photoCount = attachments.filter(isRenderableImageAttachment).length;
+    const fileCount = attachments.length - photoCount;
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9.2);
+    const barTitle = doc.splitTextToSize(
+      `Activity ${String(index + 1).padStart(2, "0")} — ${getActivityName(activity, index)}`,
+      getContentWidth(doc) - 160
+    )[0];
+    y = renderReferenceSectionBar(doc, barTitle, y, {
+      afterGap: 10,
+      rightText: `${reports.length} report${reports.length === 1 ? "" : "s"} • ${photoCount} photo${photoCount === 1 ? "" : "s"} • ${fileCount} file${fileCount === 1 ? "" : "s"}`
+    });
+
+    y = renderReferenceCardGrid(doc, [
+      { label: "Location", value: activity.location || "N/A" },
+      { label: "Status", value: formatStatus(activity.status || "In Progress") },
+      { label: "Type", value: getActivityType(activity) }
+    ], y, { columns: 3, afterGap: 8 });
+
+    y = renderReferenceTextBox(doc, "Work Performed", sentenceCase(activity.description || "No description recorded."), y);
+
+    if (!reports.length) {
+      y = renderReferenceTextBox(
+        doc,
+        "Reports",
+        attachments.length
+          ? "No report was selected for this activity. Refer to the activity attachments below for supporting documentation."
+          : "No report was selected for this activity.",
+        y
+      );
+    }
+
+    for (const [reportIndex, report] of reports.entries()) {
+      y = await renderReferenceConcreteReportBlock(doc, report, reportIndex, y, activity, log);
+    }
+
+    y = await renderReferenceAttachmentContent(doc, attachments, y, `Activity ${String(index + 1).padStart(2, "0")} Attachments`);
+  }
+  return y;
 }
 
 function renderReferenceQaqcSummary(doc, log, y) {
@@ -2447,25 +2984,31 @@ function renderReferenceQaqcSummary(doc, log, y) {
 }
 
 async function renderReferenceSignatures(doc, log, y) {
-  y = ensurePage(doc, y, 82);
-  setReportFont(doc, "semibold", 12, PDF_COLORS.navy);
-  doc.text("Signatures", PAGE_MARGIN, y);
-  y += 18;
+  y = ensurePage(doc, y, 130);
+  y += 6;
+  y = renderReferenceSectionBar(doc, "Signatures", y, { afterGap: 16 });
   const width = getContentWidth(doc);
   const columns = [PAGE_MARGIN, PAGE_MARGIN + width * 0.34, PAGE_MARGIN + width * 0.68];
   const labels = ["Technician Signature", "QA Reviewer Signature", "Date Approved"];
   labels.forEach((label, index) => {
-    setReportFont(doc, "semibold", 9, PDF_COLORS.muted);
-    doc.text(label, columns[index], y);
+    setReportFont(doc, "medium", 8, PDF_COLORS.muted);
+    doc.text(label.toUpperCase(), columns[index], y, { charSpace: 0.4 });
     doc.setDrawColor(...PDF_COLORS.line);
-    doc.line(columns[index], y + 26, columns[index] + width * 0.28, y + 26);
+    doc.line(columns[index], y + 40, columns[index] + width * 0.28, y + 40);
   });
-  await renderSignatureImage(doc, log.technicianSignature || log.technician_signature || log.technicianSignatureUrl || log.technician_signature_url, columns[0], y + 4, width * 0.28, 20);
-  await renderSignatureImage(doc, log.qcSignature || log.qc_signature || log.qcSignatureUrl || log.qc_signature_url, columns[1], y + 4, width * 0.28, 20);
+  await renderSignatureImage(doc, log.technicianSignature || log.technician_signature || log.technicianSignatureUrl || log.technician_signature_url, columns[0], y + 8, width * 0.28, 28);
+  await renderSignatureImage(doc, log.qcSignature || log.qc_signature || log.qcSignatureUrl || log.qc_signature_url, columns[1], y + 8, width * 0.28, 28);
   setReportFont(doc, "regular", 10, PDF_COLORS.navy);
-  doc.text(log.approvedAt || log.approved_at ? formatDateOnly(log.approvedAt || log.approved_at) : "", columns[2], y + 20);
-  return y + 44;
+  doc.text(log.approvedAt || log.approved_at ? formatDateOnly(log.approvedAt || log.approved_at) : "", columns[2], y + 32);
+  return y + 56;
 }
+// Fully hydrated generation (project info, DB attachment rows, concrete report
+// records) — guarantees the blob matches what regenerateDailyLogPdf produces.
+// Used as the email-attachment fallback when the stored PDF cannot be fetched.
+export async function generateHydratedDailyLogPdfBlob(log) {
+  return generateDailyLogPdfBlob(await hydrateDailyLogForPdf(log));
+}
+
 export async function generateDailyLogPdfBlob(log) {
   const doc = new JsPDFConstructor({ orientation: "portrait", unit: "pt", format: "letter", compress: true });
   await registerReportFonts(doc);
@@ -2478,21 +3021,15 @@ export async function generateDailyLogPdfBlob(log) {
     { label: "General Contractor", value: log.generalContractor || log.general_contractor || log.project?.general_contractor || "Not recorded" },
     { label: "GC Representative", value: log.gcRepresentative || log.gc_representative || "Not recorded" },
     { label: "Project Location", value: getProjectLocation(log) },
-    { label: "Technician Name", value: getTechnicianName(log) }
-  ], y, { columns: 2, minSpace: 128 });
-  y = renderReferenceSection(doc, "Daily Log", [
-    { label: "Weather", value: log.weatherCondition || log.weather || "Not recorded" },
-    { label: "Shift", value: log.shift || log.shift_name || "Not recorded" },
-    { label: "DFR Number", value: getDailyReportNumber(log) },
-    { label: "Report Time", value: formatTimeOnly(log.submittedAt || log.submitted_at || log.createdAt || log.created_at) },
-    { label: "Inspector Comments", value: log.notes || log.comments || "-" }
-  ], y, { columns: 2, minSpace: 100 });
-  y = renderReferenceExecutiveSummary(doc, log, y);
-  y = renderReferenceActivities(doc, log, y);
-  y = renderReferenceConcreteReportSections(doc, log, y);
-  y = renderReferenceAttachments(doc, log, y);
+    { label: "Technician Name", value: getTechnicianName(log) },
+    { label: "Weather", value: getWeatherText(log) },
+    { label: "Shift", value: log.shift || log.shift_name || "Not recorded" }
+  ], y, { columns: 2, cardHeight: 38, minSpace: 128 });
+  // Front matter: reviewers see the QA/QC totals and sign-off block first;
+  // per-activity details and attachments follow as the supporting record.
   y = renderReferenceQaqcSummary(doc, log, y);
-  await renderReferenceSignatures(doc, log, y);
+  y = await renderReferenceSignatures(doc, log, y);
+  await renderReferenceActivityDetails(doc, log, y);
   PdfFooter(doc, log);
 
   return doc.output("blob");

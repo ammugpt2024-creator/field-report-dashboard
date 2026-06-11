@@ -2,8 +2,10 @@ import { supabase } from './supabase';
 import { getReportStatusLabel } from '../constants/reportWorkflow';
 import { BRAND, MODULE_NAMES } from '../config/branding';
 
-const DEFAULT_QC_REVIEWER_EMAIL = 'ammugpt2024@gmail.com';
-const FORCE_RESEND_TEST_RECIPIENT = true;
+const DEFAULT_QC_REVIEWER_EMAIL = 'notifications@qcoreapp.com';
+// qcoreapp.com is verified in Resend, so emails can go to real recipients;
+// the explicit recipient is honored with the QC reviewer address as fallback.
+const FORCE_RESEND_TEST_RECIPIENT = false;
 
 function formatDateTime(value = new Date()) {
   return new Intl.DateTimeFormat(undefined, {
@@ -85,6 +87,108 @@ export function blobToBase64(blob) {
   });
 }
 
+function getDailyLogNumber(log = {}) {
+  const explicit = log.logNumber || log.log_number || log.reportNumber || log.report_number;
+  if (explicit && !/^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(String(explicit))) return explicit;
+  const projectPart = String(log.projectNumber || log.project_number || 'PROJECT').replace(/[^a-zA-Z0-9_.-]/g, '_');
+  const datePart = String(log.date || log.report_date || '').replace(/-/g, '') || 'DATE';
+  return `DL-${projectPart}-${datePart}`;
+}
+
+export function buildDailyLogReviewEmail({ log, reviewUrl, pdfUrl }) {
+  const logNumber = getDailyLogNumber(log);
+  const projectName = log.projectName || log.project_name || 'Project';
+  const technicianName = log.technicianName || log.technician_name || 'Technician';
+  const activities = log.activities || [];
+  const reportCount = activities.reduce((sum, activity) => sum + (activity.concreteReports?.length || activity.reports?.length || 0), 0);
+  return {
+    subject: `[REVIEW REQUIRED] Daily Field Log ${logNumber} — ${projectName}`,
+    html: baseEmailShell({
+      title: 'Daily Field Log Submitted For Review',
+      intro: `${technicianName} has submitted a Daily Field Log for ${projectName}. The signed PDF — including all activity reports, photos, and attachments — is attached to this email. Please review and approve in ${BRAND.name}.`,
+      rows: [
+        ['Daily Log #', logNumber],
+        ['Project', projectName],
+        ['Report Date', log.date || '-'],
+        ['Shift', log.shift || '-'],
+        ['Technician', technicianName],
+        ['Activities', String(activities.length)],
+        ['Attached Reports', String(reportCount)],
+        ['Submitted On', formatDateTime(log.submittedAt || log.submitted_at || new Date())],
+        ['Signed PDF', 'Attached to this email'],
+        ['Secure Link', pdfUrl || `Available in ${BRAND.name}`]
+      ],
+      ctaLabel: 'Open Daily Log Review',
+      ctaUrl: reviewUrl
+    })
+  };
+}
+
+// Sends the QC manager the review-request email with the generated, signed
+// Daily Log PDF (attachment content already rendered into the PDF body).
+export async function sendDailyLogReviewEmail(log, { pdfBlob = null, pdfUrl = '', recipientEmail = '' } = {}) {
+  const reviewUrl = `${window.location.origin}/manager/daily-log-review/${log.id}`;
+  const { subject, html } = buildDailyLogReviewEmail({ log, reviewUrl, pdfUrl });
+  const projectPart = String(log.projectNumber || log.project_number || 'project').replace(/[^a-zA-Z0-9_.-]/g, '_');
+  const datePart = String(log.date || '').replace(/[^0-9-]/g, '') || 'date';
+  return queueAndSendNotification({
+    reportId: null,
+    recipientEmail,
+    // The QC reviewer is the project manager — resolved from the profiles
+    // table by role at send time rather than hardcoded here.
+    recipientRole: 'qc_manager',
+    subject,
+    html,
+    notificationType: 'daily_log_review_request',
+    pdfBlob,
+    pdfFileName: `Daily-Field-Log-${projectPart}-${datePart}.pdf`
+  });
+}
+
+export function buildDailyLogApprovalEmail({ log, reviewerName, viewUrl, pdfUrl }) {
+  const logNumber = getDailyLogNumber(log);
+  const projectName = log.projectName || log.project_name || 'Project';
+  return {
+    subject: `[APPROVED] Daily Field Log ${logNumber} — ${projectName}`,
+    html: baseEmailShell({
+      title: 'Daily Field Log Approved',
+      intro: `${reviewerName} has approved your Daily Field Log for ${projectName}. The countersigned PDF — including both signatures and the approval date — is attached for your records.`,
+      rows: [
+        ['Daily Log #', logNumber],
+        ['Project', projectName],
+        ['Report Date', log.date || '-'],
+        ['Approved By', reviewerName],
+        ['Approved On', formatDateTime(log.approvedAt || log.approved_at || new Date())],
+        ['Status', 'Approved'],
+        ['Countersigned PDF', 'Attached to this email'],
+        ['Secure Link', pdfUrl || `Available in ${BRAND.name}`]
+      ],
+      ctaLabel: 'View Submitted Log',
+      ctaUrl: viewUrl
+    })
+  };
+}
+
+// Notifies the technician who submitted the daily log that it was approved,
+// attaching the countersigned PDF. The recipient is resolved server-side from
+// their auth user id.
+export async function sendDailyLogApprovalEmail(log, { reviewerName = 'Manager', recipientUserId = '', pdfBlob = null, pdfUrl = '' } = {}) {
+  const viewUrl = `${window.location.origin}/technician/daily-log/${log.id}/submitted`;
+  const { subject, html } = buildDailyLogApprovalEmail({ log, reviewerName, viewUrl, pdfUrl });
+  const projectPart = String(log.projectNumber || log.project_number || 'project').replace(/[^a-zA-Z0-9_.-]/g, '_');
+  const datePart = String(log.date || '').replace(/[^0-9-]/g, '') || 'date';
+  return queueAndSendNotification({
+    reportId: null,
+    recipientEmail: '',
+    recipientUserId,
+    subject,
+    html,
+    notificationType: 'daily_log_approved',
+    pdfBlob,
+    pdfFileName: `Daily-Field-Log-${projectPart}-${datePart}-Approved.pdf`
+  });
+}
+
 export function buildApprovalEmail({ report, reviewerName }) {
   const dfr = report.dfr_number || MODULE_NAMES.materialAssurance;
   return {
@@ -129,6 +233,8 @@ export function buildRejectionEmail({ report, reviewerName, remarks }) {
 export async function queueAndSendNotification({
   reportId,
   recipientEmail,
+  recipientRole = '',
+  recipientUserId = '',
   subject,
   html,
   notificationType,
@@ -172,6 +278,11 @@ export async function queueAndSendNotification({
       notificationId: queued?.id,
       reportId,
       reviewerEmail: resolvedRecipientEmail,
+      // When set, the edge function resolves the actual recipient(s) from the
+      // profiles table by role or user id (service role, RLS-proof);
+      // reviewerEmail above remains the fallback if no profile matches.
+      recipientRole,
+      recipientUserId,
       subject,
       html,
       notificationType,

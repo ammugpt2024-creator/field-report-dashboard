@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { Resend } from "npm:resend";
+import { createClient } from "npm:@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -40,7 +41,23 @@ Deno.serve(async (req) => {
 
     const envResendKey = Deno.env.get("RESEND_API_KEY");
     const resendApiKey = HARDCODED_RESEND_KEY || envResendKey;
-    const fromEmail = "QCore <onboarding@resend.dev>";
+
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    const admin = supabaseUrl && serviceRoleKey ? createClient(supabaseUrl, serviceRoleKey) : null;
+
+    // From address comes from the notification_settings table; env and the
+    // verified-domain literal are fallbacks only.
+    let fromEmail = Deno.env.get("RESEND_FROM_EMAIL") || "QCore <notifications@qcoreapp.com>";
+    if (admin) {
+      const { data: fromSetting, error: fromError } = await admin
+        .from("notification_settings")
+        .select("value")
+        .eq("key", "email_from_address")
+        .maybeSingle();
+      if (fromError) console.warn("FROM ADDRESS LOOKUP FAILED:", fromError);
+      if (fromSetting?.value) fromEmail = fromSetting.value;
+    }
 
     console.log("RESEND KEY EXISTS:", Boolean(envResendKey));
     console.log("HARDCODED RESEND KEY EXISTS:", Boolean(HARDCODED_RESEND_KEY));
@@ -51,11 +68,56 @@ Deno.serve(async (req) => {
       throw new Error("RESEND_API_KEY is missing. Add it with `supabase secrets set RESEND_API_KEY=...`.");
     }
 
-    const to = body.reviewerEmail || body.to || body.recipientEmail || body.recipient_email;
+    let to = body.reviewerEmail || body.to || body.recipientEmail || body.recipient_email;
+    const recipientRole = String(body.recipientRole || body.recipient_role || "");
     const subject = String(body.subject || "Validation Notification");
     const html = String(body.html || body.body_html || body.message || "");
 
-    if (!to) throw new Error("Missing recipient email. Expected `to`.");
+    // Resolve the recipient from the database by role (e.g. the QC manager /
+    // project manager) when one is requested instead of a literal address.
+    if (recipientRole && admin) {
+      const { data: roleProfiles, error: roleError } = await admin
+        .from("profiles")
+        .select("email")
+        .eq("role", recipientRole)
+        .not("email", "is", null);
+      if (roleError) console.warn("RECIPIENT ROLE LOOKUP FAILED:", roleError);
+      const roleEmails = (roleProfiles || []).map((profile) => String(profile.email || "").trim()).filter(Boolean);
+      console.log("RECIPIENT ROLE LOOKUP:", { recipientRole, found: roleEmails.length });
+      if (roleEmails.length) {
+        to = roleEmails;
+      } else {
+        // No profile carries the role — use the configured reviewer address.
+        const { data: reviewerSetting, error: reviewerError } = await admin
+          .from("notification_settings")
+          .select("value")
+          .eq("key", "qc_reviewer_email")
+          .maybeSingle();
+        if (reviewerError) console.warn("REVIEWER SETTING LOOKUP FAILED:", reviewerError);
+        if (reviewerSetting?.value) {
+          to = reviewerSetting.value;
+          console.log("RECIPIENT FROM SETTINGS:", reviewerSetting.value);
+        }
+      }
+    }
+
+    // Resolve a specific user's email by their auth id (e.g. the technician
+    // who submitted the log, for approval notifications).
+    const recipientUserId = String(body.recipientUserId || body.recipient_user_id || "");
+    if (recipientUserId && admin) {
+      const { data: userProfile, error: userError } = await admin
+        .from("profiles")
+        .select("email")
+        .eq("id", recipientUserId)
+        .maybeSingle();
+      if (userError) console.warn("RECIPIENT USER LOOKUP FAILED:", userError);
+      if (userProfile?.email) {
+        to = userProfile.email;
+        console.log("RECIPIENT FROM USER ID:", userProfile.email);
+      }
+    }
+
+    if (!to) throw new Error("Missing recipient email. Expected `to`, a resolvable `recipientRole`, or `recipientUserId`.");
     if (!html) throw new Error("Missing email body. Expected `html`.");
 
     console.log("RESEND INIT START");

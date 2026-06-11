@@ -2,6 +2,55 @@ import { supabase } from "./supabase.js";
 
 const STORAGE_KEY = "imqcore:field-execution-logs";
 
+// Persists attachment metadata so any device (and the QC reviewer) can load
+// it from the database — local records in the log JSON are only a cache.
+export async function persistDailyLogAttachmentRecord(attachment = {}) {
+  try {
+    const storagePath = attachment.storagePath || attachment.storage_path || "";
+    if (!storagePath) return null;
+    const { data: authData } = await supabase.auth.getUser();
+    const userId = authData?.user?.id || null;
+    const fileType = attachment.fileType || attachment.file_type || "application/octet-stream";
+    const attachmentType = String(attachment.attachmentType || attachment.attachment_type || "").toLowerCase() === "photo" || fileType.startsWith("image/")
+      ? "photo"
+      : "file";
+
+    const { error } = await supabase.from("daily_log_attachments").upsert({
+      file_name: attachment.fileName || attachment.file_name || "Attachment",
+      file_type: fileType,
+      file_size: Number(attachment.fileSize || attachment.file_size || 0) || 0,
+      storage_path: storagePath,
+      storage_bucket: attachment.storageBucket || attachment.storage_bucket || "daily-log-attachments",
+      attachment_type: attachmentType,
+      local_daily_log_id: String(attachment.dailyLogId || attachment.daily_log_id || "") || null,
+      local_activity_id: String(attachment.activityId || attachment.activity_id || "") || null,
+      local_report_id: String(attachment.reportId || attachment.report_id || "") || null,
+      uploaded_by: userId,
+      deleted_at: null
+    }, { onConflict: "storage_path" });
+
+    if (error) console.warn("Daily log attachment record could not be saved to the database.", error);
+    return error ? null : storagePath;
+  } catch (error) {
+    console.warn("Daily log attachment record persistence failed.", error);
+    return null;
+  }
+}
+
+export async function softDeleteDailyLogAttachmentRecord(attachment = {}) {
+  try {
+    const storagePath = attachment.storagePath || attachment.storage_path || "";
+    if (!storagePath) return;
+    const { error } = await supabase
+      .from("daily_log_attachments")
+      .update({ deleted_at: new Date().toISOString() })
+      .eq("storage_path", storagePath);
+    if (error) console.warn("Daily log attachment record could not be soft-deleted.", error);
+  } catch (error) {
+    console.warn("Daily log attachment soft delete failed.", error);
+  }
+}
+
 export const DAILY_LOG_STATUS = {
   DRAFT: "draft",
   ACTIVE: "active",
@@ -261,14 +310,9 @@ export function createDailyLog({
     syncStatus: "Offline saved",
     lastSyncedAt: "",
     managerComments: [],
-    activities: [
-      createActivity({
-        title: "General Work Log",
-        type: "General Work Log",
-        location: "",
-        concreteReports: []
-      })
-    ],
+    // Activities start empty — the technician adds them explicitly, and reports
+    // and attachments live inside each added activity.
+    activities: [],
     createdAt: today.toISOString(),
     updatedAt: today.toISOString(),
     submittedAt: ""
@@ -712,12 +756,77 @@ export function submitDailyLog(log) {
   });
 }
 
-export function approveDailyLog(log, reviewerName = "Manager") {
+// Loads a submitted daily log from the database (for reviewers on devices that
+// don't hold the technician's local copy). Accepts the local client uuid or
+// the numeric daily_logs id.
+export async function fetchDailyLogFromSupabase(logId) {
+  const idString = String(logId || "").trim();
+  if (!idString) return null;
+
+  let query = supabase.from("daily_logs").select("*");
+  query = /^\d+$/.test(idString) ? query.eq("id", Number(idString)) : query.eq("client_log_id", idString);
+  const { data, error } = await query.maybeSingle();
+  if (error || !data) {
+    if (error) console.warn("Daily log could not be loaded from the database.", error);
+    return null;
+  }
+
+  let payload = data.payload || {};
+  if (typeof payload === "string") {
+    try {
+      payload = JSON.parse(payload);
+    } catch {
+      payload = {};
+    }
+  }
+
+  return {
+    ...payload,
+    id: payload.id || data.client_log_id || idString,
+    status: data.status || payload.status,
+    submittedAt: data.submitted_at || payload.submittedAt || payload.submitted_at || "",
+    submitted_at: data.submitted_at || payload.submitted_at || payload.submittedAt || "",
+    supabaseDailyLogId: data.id,
+    supabase_daily_log_id: data.id,
+    technicianUserId: data.technician_id || payload.submittedBy || payload.submitted_by || payload.userId || payload.user_id || "",
+    pdfStoragePath: data.pdf_storage_path || payload.pdfStoragePath || payload.pdf_storage_path || "",
+    pdf_storage_path: data.pdf_storage_path || payload.pdf_storage_path || payload.pdfStoragePath || "",
+    pdfUrl: data.pdf_url || payload.pdfUrl || payload.pdf_url || "",
+    pdf_url: data.pdf_url || payload.pdf_url || payload.pdfUrl || ""
+  };
+}
+
+// Persists a review decision (approve / return for corrections) to the
+// database so it is visible across devices, not just in this browser.
+export async function updateDailyLogReviewInSupabase(log) {
+  const patch = {
+    status: log.status,
+    payload: sanitizeDailyLogForSupabasePayload(log),
+    updated_at: new Date().toISOString()
+  };
+
+  const numericId = log.supabaseDailyLogId || log.supabase_daily_log_id;
+  let query = supabase.from("daily_logs").update(patch);
+  query = numericId ? query.eq("id", numericId) : query.eq("client_log_id", String(log.id));
+  const { error } = await query;
+  if (error) {
+    console.error("Daily log review update failed", error);
+    throw new Error("The review decision could not be saved to the server. Please try again.");
+  }
+}
+
+export function approveDailyLog(log, reviewerName = "Manager", qcSignature = "") {
+  const approvedAt = new Date().toISOString();
+  const signature = qcSignature || log.qcSignature || log.qc_signature || "";
   return saveDailyLog({
     ...log,
     status: DAILY_LOG_STATUS.APPROVED,
-    approvedAt: new Date().toISOString(),
+    approvedAt,
+    approved_at: approvedAt,
     approvedBy: reviewerName,
+    approved_by: reviewerName,
+    qcSignature: signature,
+    qc_signature: signature,
     syncStatus: "Synced"
   });
 }

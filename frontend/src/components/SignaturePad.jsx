@@ -168,6 +168,12 @@ export default function SignaturePad({
   };
 
   const saveSignature = () => {
+    // A previously saved signature can be re-confirmed as-is (e.g. when a
+    // recalled Daily Log is resubmitted); Clear lets the user draw a new one.
+    if (value) {
+      onSave(value);
+      return;
+    }
     if (!canvasRef.current) return;
     const dataUrl = canvasRef.current.toDataURL('image/png');
     onSave(dataUrl);
@@ -227,7 +233,12 @@ export default function SignaturePad({
       </div>
       <div className="rounded-3xl border border-slate-300 bg-slate-50 p-3">
         {value ? (
-          <img src={value} alt="Signature Preview" className="h-32 w-full rounded-2xl object-contain" />
+          <div>
+            <img src={value} alt="Signature Preview" className="h-32 w-full rounded-2xl object-contain" />
+            <p className="mt-2 text-center text-xs font-semibold text-slate-500">
+              Using your saved signature — press Clear to draw a new one.
+            </p>
+          </div>
         ) : mode === 'type' ? (
           <div className="rounded-2xl bg-white p-4">
             <input
@@ -280,7 +291,7 @@ export default function SignaturePad({
           <button
             type="button"
             onClick={saveSignature}
-            disabled={disabled || !isDirty || Boolean(value)}
+            disabled={disabled || (!isDirty && !value)}
             className="rounded-2xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {saveLabel}

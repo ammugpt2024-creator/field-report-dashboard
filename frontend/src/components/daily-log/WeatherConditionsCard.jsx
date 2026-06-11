@@ -81,7 +81,7 @@ export default function WeatherConditionsCard({ log, onUpdate }) {
   }, [log.id]);
 
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+    <section className="rounded-2xl border border-sky-200 bg-gradient-to-r from-sky-50 via-white to-white px-4 py-3 shadow-sm">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex min-w-0 items-center gap-3">
           <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-blue-50 text-blue-700">

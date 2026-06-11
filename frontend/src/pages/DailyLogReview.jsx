@@ -1,14 +1,20 @@
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, CheckCircle2, MessageSquareWarning } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
+import SignatureModal from "../components/SignatureModal";
+import DailyLogSummaryView from "../components/daily-log/DailyLogSummaryView";
 import {
   approveDailyLog,
-  formatActivityStatus,
+  fetchDailyLogFromSupabase,
   formatLogStatus,
   getDailyLogById,
-  requestDailyLogRevision
+  requestDailyLogRevision,
+  updateDailyLogPdfMetadataInSupabase,
+  updateDailyLogReviewInSupabase
 } from "../services/dailyLogService";
+import { createDailyLogPdfSignedUrl, openDailyLogPdf, regenerateDailyLogPdf } from "../services/dailyLogPdfService";
+import { sendDailyLogApprovalEmail } from "../services/notificationService";
 
 function Section({ kicker, title, children }) {
   return (
@@ -20,141 +26,131 @@ function Section({ kicker, title, children }) {
   );
 }
 
-function Value({ label, value }) {
-  return (
-    <div className="rounded-2xl bg-slate-50 px-4 py-3">
-      <dt className="text-xs font-bold uppercase tracking-[0.16em] text-slate-400">{label}</dt>
-      <dd className="mt-1 break-words text-sm font-bold text-slate-900">{value || "-"}</dd>
-    </div>
-  );
-}
-
-function sanitizeSummaryHtml(value = "") {
-  return String(value)
-    .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, "")
-    .replace(/<style[\s\S]*?>[\s\S]*?<\/style>/gi, "")
-    .replace(/\son\w+="[^"]*"/gi, "")
-    .replace(/\son\w+='[^']*'/gi, "");
-}
-
-function ConcreteReportPreview({ report }) {
-  const attachments = report.attachments || [];
-  const photos = attachments.filter((attachment) => attachment.attachmentType === "photo");
-  const files = attachments.filter((attachment) => attachment.attachmentType === "file");
-
-  return (
-    <article className="rounded-2xl border border-slate-200 bg-white p-4">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <p className="text-xs font-bold uppercase tracking-[0.18em] text-blue-700">Concrete Report</p>
-          <h4 className="mt-1 text-base font-bold text-slate-950">{report.dfrNumber || "Draft Concrete Report"}</h4>
-        </div>
-        <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-bold text-slate-700">{report.status || "Draft"}</span>
-      </div>
-      <dl className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
-        <Value label="Placement Location" value={report.placementLocation} />
-        <Value label="Mix Number" value={report.mixNumber} />
-        <Value label="Ticket Number" value={report.ticketNumber} />
-        <Value label="Truck Number" value={report.truckNumber} />
-        <Value label="Cubic Yards" value={report.cubicYards} />
-        <Value label="Slump" value={report.slump} />
-        <Value label="Air Content" value={report.airContent} />
-        <Value label="Concrete Temperature" value={report.concreteTemperature} />
-        <Value label="Notes" value={report.notes} />
-      </dl>
-      {report.strengthVerificationRequired && (
-        <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-4">
-          <p className="text-xs font-bold uppercase tracking-[0.18em] text-amber-800">Strength Verification</p>
-          <dl className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-5">
-            <Value label="Set Number" value={report.setNumber} />
-            <Value label="Lab Samples" value={report.labSamples} />
-            <Value label="Field Samples" value={report.fieldSamples} />
-            <Value label="Record Result" value={report.recordResult} />
-            <Value label="Inspector Notes" value={report.inspectorNotes} />
-          </dl>
-        </div>
-      )}
-      {attachments.length > 0 && (
-        <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
-          <p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-500">Photos & Attachments</p>
-          {photos.length > 0 && (
-            <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
-              {photos.map((attachment) => (
-                <div key={attachment.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
-                  {attachment.previewUrl ? (
-                    <img src={attachment.previewUrl} alt="" className="h-28 w-full object-cover" />
-                  ) : (
-                    <div className="flex h-28 items-center justify-center text-xs font-bold text-slate-400">Photo</div>
-                  )}
-                  <p className="truncate px-3 py-2 text-xs font-bold text-slate-700">{attachment.fileName}</p>
-                </div>
-              ))}
-            </div>
-          )}
-          {files.length > 0 && (
-            <div className="mt-3 space-y-2">
-              {files.map((attachment) => (
-                <div key={attachment.id} className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3">
-                  <p className="min-w-0 truncate text-sm font-bold text-slate-800">{attachment.fileName}</p>
-                  <span className="shrink-0 text-xs font-semibold text-slate-500">{attachment.fileType || "Attachment"}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-    </article>
-  );
-}
-
-function getActivityAttachments(activity) {
-  const reports = activity.concreteReports || activity.reports || [];
-  return [
-    ...(activity.photos || []).map((attachment) => ({ ...attachment, attachmentType: "photo" })),
-    ...(activity.attachments || []).map((attachment) => ({ ...attachment, attachmentType: attachment.attachmentType || "file" })),
-    ...reports.flatMap((report) => report.attachments || [])
-  ];
-}
-
-function WeatherReview({ log }) {
-  return (
-    <dl className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-5">
-      <Value label="Temperature" value={log.temperature ? `${log.temperature}°F` : ""} />
-      <Value label="Humidity" value={log.humidity ? `${log.humidity}%` : ""} />
-      <Value label="Wind" value={log.windSpeed ? `${log.windSpeed} mph` : ""} />
-      <Value label="Rain Chance" value={log.rainProbability ? `${log.rainProbability}%` : ""} />
-      <Value label="Condition" value={log.weatherOverride || log.weatherCondition || log.weather} />
-    </dl>
-  );
-}
-
 export default function DailyLogReview() {
   const { logId } = useParams();
   const navigate = useNavigate();
   const { profile } = useAuth();
   const [log, setLog] = useState(() => getDailyLogById(logId));
+  const [loadingLog, setLoadingLog] = useState(() => !getDailyLogById(logId));
+  const [savingDecision, setSavingDecision] = useState(false);
+  const [signatureModalOpen, setSignatureModalOpen] = useState(false);
+  const [qcSignatureDraft, setQcSignatureDraft] = useState("");
   const [revisionComment, setRevisionComment] = useState("");
   const reviewerName = profile?.full_name || "Manager";
 
-  const totals = useMemo(() => {
-    const activities = log?.activities || [];
-    return {
-      activities: activities.length,
-      reports: activities.reduce((sum, activity) => sum + (activity.concreteReports || activity.reports || []).length, 0),
-      photos: activities.reduce((sum, activity) => sum + getActivityAttachments(activity).filter((attachment) => attachment.attachmentType === "photo").length, 0),
-      files: activities.reduce((sum, activity) => sum + getActivityAttachments(activity).filter((attachment) => attachment.attachmentType === "file").length, 0)
+  useEffect(() => {
+    let active = true;
+    // The reviewer's device usually has no local copy of the technician's
+    // log — load it from the database instead.
+    if (log) return undefined;
+    fetchDailyLogFromSupabase(logId)
+      .then((remoteLog) => {
+        if (!active) return;
+        if (remoteLog) setLog(remoteLog);
+        setLoadingLog(false);
+      })
+      .catch((error) => {
+        console.error("Daily log review load failed", error);
+        if (active) setLoadingLog(false);
+      });
+    return () => {
+      active = false;
     };
-  }, [log]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [logId]);
+
+  async function persistDecision(nextLog) {
+    setLog(nextLog);
+    setSavingDecision(true);
+    try {
+      await updateDailyLogReviewInSupabase(nextLog);
+      navigate("/manager/dashboard");
+    } catch (error) {
+      window.alert(error.message || "The review decision could not be saved to the server. Please try again.");
+    } finally {
+      setSavingDecision(false);
+    }
+  }
 
   function approveLog() {
-    if (!log) return;
-    setLog(approveDailyLog(log, reviewerName));
+    if (!log || savingDecision) return;
+    setSignatureModalOpen(true);
+  }
+
+  async function approveWithSignature(signature) {
+    if (!log || savingDecision) return false;
+    setSavingDecision(true);
+    try {
+      const approved = approveDailyLog(log, reviewerName, signature);
+      setLog(approved);
+      await updateDailyLogReviewInSupabase(approved);
+
+      // Regenerate the PDF so it carries the QC reviewer signature and the
+      // approval date, replacing the stored copy at the same path.
+      let approvedPdfLog = approved;
+      try {
+        const withPdf = await regenerateDailyLogPdf(approved);
+        approvedPdfLog = withPdf;
+        setLog(withPdf);
+        await updateDailyLogPdfMetadataInSupabase(approved, withPdf);
+      } catch (pdfError) {
+        console.error("Approved PDF regeneration failed", pdfError);
+        window.alert("The log was approved, but the PDF could not be refreshed with the reviewer signature. Use Regenerate PDF to retry.");
+      }
+
+      // Notify the technician who submitted the log, attaching the
+      // countersigned PDF.
+      try {
+        let pdfBlob = null;
+        let pdfUrl = "";
+        const storagePath = approvedPdfLog.pdfStoragePath || approvedPdfLog.pdf_storage_path;
+        const cachedDataUrl = approvedPdfLog.pdfDataUrl || approvedPdfLog.pdf_data_url;
+        if (storagePath) {
+          pdfUrl = await createDailyLogPdfSignedUrl(storagePath);
+          pdfBlob = await fetch(pdfUrl).then((response) => (response.ok ? response.blob() : null)).catch(() => null);
+        } else if (cachedDataUrl) {
+          pdfBlob = await fetch(cachedDataUrl).then((response) => response.blob()).catch(() => null);
+        }
+        const technicianUserId = approvedPdfLog.technicianUserId ||
+          approvedPdfLog.submittedBy || approvedPdfLog.submitted_by ||
+          approvedPdfLog.userId || approvedPdfLog.user_id ||
+          approvedPdfLog.technicianId || approvedPdfLog.technician_id || "";
+        await sendDailyLogApprovalEmail(approvedPdfLog, {
+          reviewerName,
+          recipientUserId: technicianUserId,
+          pdfBlob,
+          pdfUrl
+        });
+      } catch (emailError) {
+        console.warn("Technician approval notification could not be sent", emailError);
+      }
+
+      setSignatureModalOpen(false);
+      navigate("/manager/dashboard");
+      return true;
+    } catch (error) {
+      window.alert(error.message || "The review decision could not be saved to the server. Please try again.");
+      return false;
+    } finally {
+      setSavingDecision(false);
+    }
   }
 
   function requestRevision() {
-    if (!log) return;
-    setLog(requestDailyLogRevision(log, revisionComment, reviewerName));
+    if (!log || savingDecision) return;
+    persistDecision(requestDailyLogRevision(log, revisionComment, reviewerName));
     setRevisionComment("");
+  }
+
+  if (loadingLog) {
+    return (
+      <div className="min-h-screen bg-slate-100 p-6">
+        <section className="mx-auto max-w-3xl rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h1 className="text-2xl font-bold text-slate-950">Loading Daily Log...</h1>
+          <p className="mt-2 text-sm font-semibold text-slate-500">Fetching the submitted log from the server.</p>
+        </section>
+      </div>
+    );
   }
 
   if (!log) {
@@ -167,6 +163,9 @@ export default function DailyLogReview() {
       </div>
     );
   }
+
+  const normalizedStatus = String(log.status || "").toLowerCase();
+  const isPendingDecision = ["submitted", "pending_manager_review"].includes(normalizedStatus);
 
   return (
     <div className="min-h-screen w-full max-w-full overflow-x-hidden bg-slate-100 px-4 py-5 sm:px-6 lg:p-8">
@@ -181,98 +180,89 @@ export default function DailyLogReview() {
           <p className="mt-2 text-sm font-semibold text-slate-300">{log.projectName} - {log.date} - {formatLogStatus(log.status)}</p>
         </section>
 
-        <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
-          <Value label="Activities" value={totals.activities} />
-          <Value label="Reports" value={totals.reports} />
-          <Value label="Photos" value={totals.photos} />
-          <Value label="Files" value={totals.files} />
-        </section>
+        {/* Render the exact same view the technician sees on the submitted
+            report page — PDF actions, activities, reports, and rendered
+            attachments — with the approval decision below it. */}
+        <DailyLogSummaryView
+          log={log}
+          onViewPdf={() => openDailyLogPdf(log).catch((error) => window.alert(error.message || "Unable to open the PDF right now."))}
+          onDownloadPdf={() => openDailyLogPdf(log, { download: true }).catch((error) => window.alert(error.message || "Unable to download the PDF right now."))}
+          onRegeneratePdf={async (logToRegenerate) => {
+            const withPdf = await regenerateDailyLogPdf(logToRegenerate);
+            setLog(withPdf);
+            try {
+              await updateDailyLogPdfMetadataInSupabase(logToRegenerate, withPdf);
+            } catch (error) {
+              console.warn("Daily log PDF metadata update failed", error);
+            }
+            return withPdf;
+          }}
+        />
 
-        <Section kicker="Daily Summary" title="Daily Summary">
-          <div className="rounded-2xl bg-slate-50 p-4">
-            <p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-400">Summary</p>
-            {log.dailySummary ? (
-              <div
-                className="prose prose-slate mt-2 max-w-none text-sm font-semibold leading-6 text-slate-700"
-                dangerouslySetInnerHTML={{ __html: sanitizeSummaryHtml(log.dailySummary) }}
-              />
-            ) : (
-              <p className="mt-2 text-sm font-semibold leading-6 text-slate-700">No daily summary entered.</p>
-            )}
-          </div>
-        </Section>
-
-        <Section kicker="Weather" title="Weather Conditions">
-          <WeatherReview log={log} />
-          {log.weatherCapturedAt && <p className="mt-3 text-sm font-semibold text-slate-500">Captured {new Date(log.weatherCapturedAt).toLocaleString()}</p>}
-          {log.weatherOverrideReason && <p className="mt-3 rounded-2xl bg-amber-50 p-3 text-sm font-semibold text-amber-900">Override reason: {log.weatherOverrideReason}</p>}
-        </Section>
-
-        <Section kicker="Site Conditions" title="Site Conditions Narrative">
-          <div className="grid grid-cols-1 gap-3">
-            <div className="rounded-2xl bg-slate-50 p-4">
-              {log.siteConditions ? (
-                <div
-                  className="prose prose-slate max-w-none text-sm font-semibold leading-6 text-slate-700"
-                  dangerouslySetInnerHTML={{ __html: sanitizeSummaryHtml(log.siteConditions) }}
-                />
-              ) : (
-                <p className="text-sm font-semibold leading-6 text-slate-700">No site conditions entered.</p>
-              )}
+        {isPendingDecision ? (
+          <Section kicker="Manager Actions" title="Approval Decision">
+            <textarea
+              value={revisionComment}
+              onChange={(event) => setRevisionComment(event.target.value)}
+              rows={4}
+              placeholder="Add manager comments or revision instructions."
+              className="min-h-28 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-900 outline-none focus:border-blue-700 focus:ring-4 focus:ring-blue-100"
+            />
+            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <button
+                type="button"
+                onClick={approveLog}
+                disabled={savingDecision}
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl bg-emerald-700 px-4 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500"
+              >
+                <CheckCircle2 className="h-4 w-4" />
+                {savingDecision ? "Saving..." : "Approve Daily Log"}
+              </button>
+              <button
+                type="button"
+                onClick={requestRevision}
+                disabled={savingDecision}
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-4 text-sm font-bold text-amber-900 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <MessageSquareWarning className="h-4 w-4" />
+                Request Revision
+              </button>
             </div>
-          </div>
-        </Section>
-
-        <Section kicker="Activities" title="Activity Package">
-          <div className="space-y-4">
-            {log.activities.map((activity, index) => {
-              const reports = activity.concreteReports || activity.reports || [];
-              return (
-                <article key={activity.id} className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                    <div>
-                      <p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">Activity {index + 1}</p>
-                      <h3 className="mt-1 text-xl font-bold text-slate-950">{activity.title}</h3>
-                      <p className="mt-1 text-sm font-semibold text-slate-600">{activity.type} - {activity.location || "Location pending"}</p>
-                    </div>
-                    <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-bold text-slate-700">{formatActivityStatus(activity.status)}</span>
-                  </div>
-                  <p className="mt-4 whitespace-pre-wrap rounded-2xl bg-white p-4 text-sm font-semibold leading-6 text-slate-700">{activity.description || "No description entered."}</p>
-                  <dl className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
-                    <Value label="Crew" value={activity.crewSize} />
-                    <Value label="Equipment" value={activity.equipmentUsed} />
-                    <Value label="Material" value={activity.materialUsed} />
-                  </dl>
-                  <div className="mt-4 space-y-3">
-                    {reports.map((report) => <ConcreteReportPreview key={report.id} report={report} />)}
-                    {!reports.length && <p className="rounded-2xl bg-white p-4 text-sm font-semibold text-slate-500">No report attached to this activity.</p>}
-                  </div>
-                </article>
-              );
-            })}
-          </div>
-        </Section>
-
-        <Section kicker="Manager Actions" title="Approval Decision">
-          <textarea
-            value={revisionComment}
-            onChange={(event) => setRevisionComment(event.target.value)}
-            rows={4}
-            placeholder="Add manager comments or revision instructions."
-            className="min-h-28 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-900 outline-none focus:border-blue-700 focus:ring-4 focus:ring-blue-100"
-          />
-          <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <button type="button" onClick={approveLog} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl bg-emerald-700 px-4 text-sm font-bold text-white">
-              <CheckCircle2 className="h-4 w-4" />
-              Approve Daily Log
-            </button>
-            <button type="button" onClick={requestRevision} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-4 text-sm font-bold text-amber-900">
-              <MessageSquareWarning className="h-4 w-4" />
-              Request Revision
-            </button>
-          </div>
-        </Section>
+          </Section>
+        ) : (
+          <Section kicker="Manager Actions" title="Review Complete">
+            <p className="rounded-2xl bg-slate-50 p-4 text-sm font-semibold text-slate-700">
+              This daily log is <span className="font-bold">{formatLogStatus(log.status)}</span>
+              {log.approvedBy || log.approved_by ? ` by ${log.approvedBy || log.approved_by}` : ""}
+              {log.approvedAt || log.approved_at ? ` on ${new Date(log.approvedAt || log.approved_at).toLocaleString()}` : ""}.
+              No further action is required.
+            </p>
+          </Section>
+        )}
       </div>
+      <SignatureModal
+        open={signatureModalOpen}
+        title="QC Reviewer Signature"
+        description="Sign once to approve this Daily Field Log. Your signature and the approval date are added to the final PDF."
+        value={qcSignatureDraft}
+        onSave={setQcSignatureDraft}
+        onClear={() => setQcSignatureDraft("")}
+        disabled={savingDecision}
+        onClose={() => {
+          if (!savingDecision) setSignatureModalOpen(false);
+        }}
+        onConfirm={async (confirmedSignature) => {
+          const signatureToUse = confirmedSignature || qcSignatureDraft;
+          if (!signatureToUse) {
+            window.alert("Please sign before approving the Daily Log.");
+            return false;
+          }
+          setQcSignatureDraft(signatureToUse);
+          return approveWithSignature(signatureToUse);
+        }}
+        autoConfirmOnSave
+        signatureActionLabel={savingDecision ? "Approving..." : "Sign & Approve Daily Log"}
+      />
     </div>
   );
 }

@@ -253,11 +253,11 @@ export function AttachmentRenderer({ attachment }) {
 
   if (isImageAttachment(attachment) && url) {
     return (
-      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
         <img
           src={url}
           alt={attachmentFileName(attachment) || "Attachment"}
-          className="max-h-[760px] w-full object-contain"
+          className="mx-auto block max-h-[400px] w-auto max-w-full object-contain"
           onError={() => {
             setResolvedUrl("");
             setRenderError("Attachment source is unavailable. Re-upload this file to include it in the submitted report.");
@@ -277,7 +277,7 @@ export function AttachmentRenderer({ attachment }) {
       <div className="space-y-4 overflow-x-auto rounded-2xl border border-slate-200 bg-slate-100 p-3">
         {pdfPages.length ? (
           pdfPages.map((page) => (
-            <div key={page.pageNumber} className="mx-auto w-full max-w-[1180px] rounded-xl bg-white p-2 shadow-sm">
+            <div key={page.pageNumber} className="mx-auto w-full max-w-[820px] rounded-xl bg-white p-2 shadow-sm">
               <img
                 src={page.imageUrl}
                 alt={`Page ${page.pageNumber}`}
@@ -377,7 +377,6 @@ export default function PhotosAttachmentsSection({ attachments = [], onAddFiles,
     ...visibleAttachments.filter((attachment) => attachment.attachmentType === "photo"),
     ...visibleAttachments.filter((attachment) => attachment.attachmentType !== "photo")
   ];
-  const hasAttachments = orderedAttachments.length > 0;
   const showNativeCameraCapture = canUseNativeCameraCapture();
   const videoRef = useRef(null);
   const cameraPanelRef = useRef(null);
@@ -560,23 +559,29 @@ export default function PhotosAttachmentsSection({ attachments = [], onAddFiles,
   );
 
   return (
-    <section className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-3">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h4 className="text-base font-bold text-slate-950">Photos & Attachments</h4>
-          <p className="mt-1 text-sm font-semibold text-slate-500">Capture field photos and supporting files for this activity report.</p>
+    <section className="mt-4 overflow-hidden rounded-2xl border border-slate-200 bg-white">
+      <div className="flex flex-col gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex min-w-0 items-center gap-3">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-slate-950 text-white">
+            <Camera className="h-4 w-4" />
+          </span>
+          <div className="min-w-0">
+            <h4 className="text-sm font-bold text-slate-950">Photos & Attachments</h4>
+            <p className="mt-0.5 text-xs font-semibold text-slate-500">Capture field photos and supporting files for this activity report.</p>
+          </div>
         </div>
-        {!hasAttachments && uploadActions}
+        {uploadActions}
       </div>
+      <div className="p-4">
 
       {cameraError && (
-        <p className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 p-3 text-sm font-bold text-rose-800">
+        <p className="mb-3 rounded-2xl border border-rose-200 bg-rose-50 p-3 text-sm font-bold text-rose-800">
           {cameraError}
         </p>
       )}
 
       {cameraOpen && (
-        <div ref={cameraPanelRef} className="mt-4 overflow-hidden rounded-2xl border border-slate-200 bg-slate-950">
+        <div ref={cameraPanelRef} className="mb-3 overflow-hidden rounded-2xl border border-slate-200 bg-slate-950">
           <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
             <div>
               <p className="text-sm font-bold text-white">Camera Capture</p>
@@ -615,23 +620,22 @@ export default function PhotosAttachmentsSection({ attachments = [], onAddFiles,
       )}
 
       {orderedAttachments.length === 0 ? (
-        <p className="mt-3 rounded-xl border border-dashed border-slate-300 bg-white p-3 text-sm font-semibold text-slate-500">
-          No photos or files added yet.
-        </p>
+        <div className="flex flex-col items-center justify-center gap-1.5 rounded-2xl border border-dashed border-slate-300 bg-slate-50/60 px-4 py-8 text-center">
+          <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-400">
+            <Image className="h-5 w-5" />
+          </span>
+          <p className="mt-1 text-sm font-bold text-slate-700">No photos or files added yet</p>
+          <p className="text-xs font-semibold text-slate-500">Use Take Photo, Upload Photo, or Upload File above to document this activity.</p>
+        </div>
       ) : (
         <AttachmentList attachments={orderedAttachments} onRemove={onRemove} onRetry={onRetry} />
-      )}
-
-      {hasAttachments && (
-        <div className="mt-3 flex justify-end">
-          {uploadActions}
-        </div>
       )}
 
       <p className="mt-3 flex items-center gap-2 text-xs font-semibold text-slate-500">
         <Paperclip className="h-3.5 w-3.5" />
         Allowed: photos, PDF, DOC, DOCX, XLS, XLSX. Executable and script files are blocked.
       </p>
+      </div>
     </section>
   );
 }
