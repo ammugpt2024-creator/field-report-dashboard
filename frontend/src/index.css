@@ -2,6 +2,38 @@
 @tailwind components;
 @tailwind utilities;
 
+@media print {
+  @page {
+    margin: 36px 42px 42px 42px;
+  }
+
+  body {
+    font-family: Inter, Arial, sans-serif;
+    line-height: 1.4;
+  }
+
+  .report-section,
+  .keep-together,
+  .specification-summary,
+  .specification-summary table {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  thead {
+    display: table-header-group;
+  }
+
+  tfoot {
+    display: table-footer-group;
+  }
+}
+
 /* RESET */
 
 * {

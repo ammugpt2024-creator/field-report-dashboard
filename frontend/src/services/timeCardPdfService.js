@@ -1,4 +1,5 @@
 import jsPdfModule from "jspdf";
+import autoTable from "jspdf-autotable";
 import { supabase } from "./supabase.js";
 import { saveTimeCard } from "./timeCardService.js";
 import { getStorageConfigError, logStorageStep } from "./storageDiagnosticsService.js";
@@ -35,15 +36,6 @@ function formatDateTime(value) {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return pdfValue(value);
   return parsed.toLocaleString(undefined, { month: "short", day: "2-digit", year: "numeric", hour: "numeric", minute: "2-digit" });
-}
-
-function formatTime(value) {
-  if (!value) return "-";
-  const [hours, minutes] = String(value).split(":").map(Number);
-  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return pdfValue(value);
-  const parsed = new Date();
-  parsed.setHours(hours, minutes, 0, 0);
-  return parsed.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 }
 
 function normalizeStatus(value) {
@@ -135,21 +127,24 @@ export function generateTimeCardPdfBlob(card) {
   const generatedAt = card.pdfGeneratedAt || card.pdf_generated_at || new Date().toISOString();
   const signedAt = card.signedAt || card.signed_at || card.submittedAt || card.submitted_at;
   const signature = getSignature(card);
+  const managerSignature = card.managerSignature || card.manager_signature || "";
+  const entries = Array.isArray(card.entries) ? card.entries : [];
+  const weekStart = card.weekStartDate || card.week_start_date || card.date;
+  const weekEnd = card.weekEndDate || card.week_end_date;
+  const totalRegular = card.totalRegularHours || card.total_regular_hours || "0.00";
+  const totalOvertime = card.totalOvertimeHours || card.total_overtime_hours || "0.00";
+  const totalHours = card.totalHours || card.total_hours || "0.00";
 
-  doc.setFillColor(15, 23, 42);
-  doc.roundedRect(margin, y, contentWidth, 72, 8, 8, "F");
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(18);
-  doc.setTextColor(255, 255, 255);
-  doc.text(`Timesheet ${timesheetNumber}`, margin + 18, y + 28);
-  doc.setFontSize(10);
-  doc.text(pdfValue(card.projectName), margin + 18, y + 48);
-  doc.setFillColor(241, 245, 249);
-  doc.roundedRect(pageWidth - margin - 122, y + 20, 104, 24, 12, 12, "F");
-  doc.setFontSize(9);
+  doc.setFontSize(20);
   doc.setTextColor(15, 23, 42);
-  doc.text(normalizeStatus(card.status), pageWidth - margin - 100, y + 36);
-  y += 94;
+  doc.text("Weekly Timesheet", margin, y + 20);
+  doc.setFontSize(10);
+  doc.setFont("helvetica", "normal");
+  doc.text(`${pdfValue(card.projectName)} | Week Ending ${formatDate(weekEnd)}`, margin, y + 38);
+  doc.setFont("helvetica", "bold");
+  doc.text(normalizeStatus(card.status), pageWidth - margin, y + 20, { align: "right" });
+  y += 62;
 
   addSectionHeader(doc, "Timesheet Summary", margin, y, contentWidth);
   y += 30;
@@ -162,17 +157,17 @@ export function generateTimeCardPdfBlob(card) {
       ["Project", card.projectName]
     ],
     [
-      ["Date", formatDate(card.date)],
-      ["Shift", card.shift],
+      ["Week Start", formatDate(weekStart)],
+      ["Week End", formatDate(weekEnd)],
       ["Project Number", card.projectNumber || card.project_number]
     ],
     [
-      ["Time In", formatTime(card.timeIn || card.time_in)],
-      ["Time Out", formatTime(card.timeOut || card.time_out)],
-      ["Break", `${pdfValue(card.breakMinutes ?? card.break_minutes ?? 0)} Minutes`]
+      ["Regular Hours", `${pdfValue(totalRegular)} Hours`],
+      ["Overtime Hours", `${pdfValue(totalOvertime)} Hours`],
+      ["Total Hours", `${pdfValue(totalHours)} Hours`]
     ],
     [
-      ["Total Hours", `${pdfValue(card.totalHours || card.total_hours)} Hours`],
+      ["Status", normalizeStatus(card.status)],
       ["Submitted", formatDateTime(card.submittedAt || card.submitted_at)],
       ["Approved", formatDateTime(card.approvedAt || card.approved_at)]
     ]
@@ -185,22 +180,47 @@ export function generateTimeCardPdfBlob(card) {
   });
 
   y += 6;
-  addSectionHeader(doc, "Work Performed", margin, y, contentWidth);
-  y += 30;
-  doc.setDrawColor(226, 232, 240);
-  doc.setFillColor(248, 250, 252);
-  const workLines = doc.splitTextToSize(pdfValue(card.workDescription || card.work_description), contentWidth - 24);
-  const workHeight = Math.max(64, Math.min(130, workLines.length * 13 + 24));
-  doc.roundedRect(margin, y, contentWidth, workHeight, 5, 5, "FD");
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(10);
-  doc.setTextColor(15, 23, 42);
-  doc.text(workLines, margin + 12, y + 20);
-  y += workHeight + 20;
+  addSectionHeader(doc, "Weekly Hours", margin, y, contentWidth);
+  y += 28;
+  autoTable(doc, {
+    startY: y,
+    head: [["Day", "Date", "Regular Hours", "Overtime Hours"]],
+    body: entries.map((entry) => [
+      entry.dayName || entry.day_name,
+      formatDate(entry.workDate || entry.work_date),
+      entry.regularHours || entry.regular_hours || "0.00",
+      entry.overtimeHours || entry.overtime_hours || "0.00"
+    ]),
+    theme: "grid",
+    margin: { left: margin, right: margin, bottom: 34 },
+    tableWidth: contentWidth,
+    styles: {
+      font: "helvetica",
+      fontSize: 7.8,
+      cellPadding: { top: 4, right: 4, bottom: 4, left: 4 },
+      lineColor: [203, 213, 225],
+      lineWidth: 0.35,
+      textColor: [15, 23, 42],
+      valign: "middle"
+    },
+    headStyles: {
+      fillColor: [241, 245, 249],
+      textColor: [15, 23, 42],
+      fontStyle: "bold",
+      fontSize: 7.8
+    },
+    columnStyles: {
+      0: { cellWidth: 120 },
+      1: { cellWidth: 120 },
+      2: { cellWidth: 120, halign: "right" },
+      3: { cellWidth: 120, halign: "right" }
+    }
+  });
+  y = (doc.lastAutoTable?.finalY || y) + 18;
 
-  addSectionHeader(doc, "Technician Signature", margin, y, contentWidth);
+  addSectionHeader(doc, "Approval", margin, y, contentWidth);
   y += 32;
-  const signatureBoxWidth = contentWidth * 0.56;
+  const signatureBoxWidth = (contentWidth - 12) / 2;
   doc.setDrawColor(226, 232, 240);
   doc.setFillColor(255, 255, 255);
   doc.roundedRect(margin, y, signatureBoxWidth, 72, 5, 5, "FD");
@@ -219,8 +239,33 @@ export function generateTimeCardPdfBlob(card) {
   doc.setFont("helvetica", "bold");
   doc.setFontSize(8);
   doc.setTextColor(100, 116, 139);
-  doc.text("TECHNICIAN SIGNATURE", margin + 12, y + 68);
-  addInfoBox(doc, "Date Signed", formatDateTime(signedAt), margin + signatureBoxWidth + 12, y, contentWidth - signatureBoxWidth - 12, 72);
+  doc.text("EMPLOYEE SIGNATURE", margin + 12, y + 68);
+
+  const managerBoxX = margin + signatureBoxWidth + 12;
+  doc.setDrawColor(226, 232, 240);
+  doc.setFillColor(255, 255, 255);
+  doc.roundedRect(managerBoxX, y, signatureBoxWidth, 72, 5, 5, "FD");
+  if (managerSignature) {
+    try {
+      doc.addImage(managerSignature, getImageFormat(managerSignature), managerBoxX + 12, y + 12, signatureBoxWidth - 24, 42);
+    } catch {
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      doc.setTextColor(100, 116, 139);
+      doc.text("Manager signature image could not be embedded.", managerBoxX + 12, y + 34);
+    }
+  }
+  doc.setDrawColor(148, 163, 184);
+  doc.line(managerBoxX + 12, y + 58, managerBoxX + signatureBoxWidth - 12, y + 58);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8);
+  doc.setTextColor(100, 116, 139);
+  doc.text("MANAGER SIGNATURE", managerBoxX + 12, y + 68);
+  y += 86;
+
+  addInfoBox(doc, "Date Signed", formatDateTime(signedAt), margin, y, columnWidth);
+  addInfoBox(doc, "Approval Date", formatDateTime(card.reviewedAt || card.reviewed_at || card.approvedAt || card.approved_at), margin + columnWidth + columnGap, y, columnWidth);
+  addInfoBox(doc, "Review Comments", card.reviewComments || card.review_comments || card.managerComment || "-", margin + (columnWidth + columnGap) * 2, y, columnWidth);
 
   y = doc.internal.pageSize.getHeight() - 24;
   doc.setFont("helvetica", "bold");

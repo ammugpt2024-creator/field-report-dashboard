@@ -1,6 +1,8 @@
 import jsPdfModule from "jspdf";
 import autoTable from "jspdf-autotable";
 import pdfWorkerUrl from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
+import interRegularUrl from "../assets/fonts/Inter-Regular.ttf?url";
+import interSemiBoldUrl from "../assets/fonts/Inter-SemiBold.ttf?url";
 import { supabase } from "./supabase.js";
 import { saveDailyLog } from "./dailyLogService.js";
 import { getStorageConfigError, logStorageStep } from "./storageDiagnosticsService.js";
@@ -8,34 +10,75 @@ import { getStorageConfigError, logStorageStep } from "./storageDiagnosticsServi
 const DAILY_LOG_PDF_BUCKET = "daily-log-pdfs";
 const SIGNED_URL_TTL_SECONDS = 60 * 10;
 const JsPDFConstructor = jsPdfModule?.jsPDF || jsPdfModule?.default || jsPdfModule;
-const PAGE_MARGIN = 42;
-const PAGE_BOTTOM_MARGIN = 40;
+const PAGE_MARGIN = 40;
+const PAGE_TOP_MARGIN = 36;
+const PAGE_BOTTOM_MARGIN = 42;
 const LOCAL_PDF_CACHE_LIMIT_BYTES = 2_500_000;
 const COMPANY_NAME = "Dulles Engineering, Inc.";
 const COMPANY_LOGO_URL = "https://img1.wsimg.com/isteam/ip/5d283b38-0950-4c46-838b-44766d9a75d2/DULLES%20ENGINEERING_new%20logo.png/%3A/rs%3Dh%3A78%2Ccg%3Atrue%2Cm/qt%3Dq%3A95";
+const REPORT_FONT_FAMILY = "Inter";
+let reportFontsRegistered = false;
 const PDF_COLORS = {
-  navy: [15, 23, 42],
+  navy: [16, 24, 40],
   blue: [37, 99, 235],
   green: [4, 120, 87],
   amber: [180, 83, 9],
   red: [185, 28, 28],
   slate: [71, 85, 105],
-  muted: [100, 116, 139],
-  line: [226, 232, 240],
-  soft: [248, 250, 252],
+  muted: [102, 112, 133],
+  line: [178, 190, 206],
+  soft: [242, 244, 247],
   paleBlue: [239, 246, 255],
   white: [255, 255, 255]
 };
 
+const TABLE_STYLES = {
+  fontSize: 9,
+  cellPadding: { top: 6, right: 8, bottom: 6, left: 8 },
+  lineColor: PDF_COLORS.line,
+  lineWidth: 0.35,
+  textColor: PDF_COLORS.navy,
+  minCellHeight: 24,
+  valign: "middle"
+};
+
+const TABLE_HEAD_STYLES = {
+  fillColor: PDF_COLORS.soft,
+  textColor: PDF_COLORS.navy,
+  fontStyle: "bold",
+  fontSize: 10
+};
+
 function pdfValue(value) {
-  return value == null || value === "" ? "-" : String(value);
+  return value == null || value === "" ? "N/A" : String(value);
+}
+
+function formatDateOnly(value) {
+  if (!value) return "N/A";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return pdfValue(value);
+  return date.toLocaleDateString("en-US", {
+    month: "2-digit",
+    day: "2-digit",
+    year: "numeric"
+  });
+}
+
+function formatTimeOnly(value) {
+  if (!value) return "N/A";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return pdfValue(value);
+  return date.toLocaleTimeString("en-US", {
+    hour: "2-digit",
+    minute: "2-digit"
+  });
 }
 
 function formatDateTime(value) {
-  if (!value) return "-";
+  if (!value) return "N/A";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return pdfValue(value);
-  return date.toLocaleString();
+  return `${formatDateOnly(value)} ${formatTimeOnly(value)}`;
 }
 
 function getPageWidth(doc) {
@@ -48,6 +91,10 @@ function getPageHeight(doc) {
 
 function getContentWidth(doc) {
   return getPageWidth(doc) - PAGE_MARGIN * 2;
+}
+
+function getRemainingPageHeight(doc, y) {
+  return getPageHeight(doc) - PAGE_BOTTOM_MARGIN - y;
 }
 
 function titleCase(value) {
@@ -570,17 +617,45 @@ function getPdfFileName(log) {
   return `Daily-Field-Log-${safePathSegment(log.projectNumber || log.projectId)}-${safePathSegment(log.date)}-${safePathSegment(log.id)}.pdf`;
 }
 
+function arrayBufferToBase64(buffer) {
+  let binary = "";
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+  }
+  return btoa(binary);
+}
+
+async function registerReportFonts(doc) {
+  if (reportFontsRegistered) return;
+  try {
+    const [regularResponse, boldResponse] = await Promise.all([
+      fetch(interRegularUrl),
+      fetch(interSemiBoldUrl)
+    ]);
+    if (!regularResponse.ok || !boldResponse.ok) throw new Error("Unable to load report font assets.");
+    doc.addFileToVFS("Inter-Regular.ttf", arrayBufferToBase64(await regularResponse.arrayBuffer()));
+    doc.addFont("Inter-Regular.ttf", REPORT_FONT_FAMILY, "normal");
+    doc.addFileToVFS("Inter-SemiBold.ttf", arrayBufferToBase64(await boldResponse.arrayBuffer()));
+    doc.addFont("Inter-SemiBold.ttf", REPORT_FONT_FAMILY, "bold");
+    reportFontsRegistered = true;
+  } catch (error) {
+    console.warn("[Daily Log PDF] Unable to embed report font; falling back to built-in sans font.", error);
+  }
+}
+
 function setReportFont(doc, weight = "regular", size = 10, color = PDF_COLORS.navy) {
   const style = weight === "semibold" || weight === "medium" ? "bold" : "normal";
-  doc.setFont("helvetica", style);
+  doc.setFont(reportFontsRegistered ? REPORT_FONT_FAMILY : "helvetica", style);
   doc.setFontSize(size);
   doc.setTextColor(...color);
 }
 
 function ensurePage(doc, y, minSpace = 54) {
-  if (y + minSpace < getPageHeight(doc) - PAGE_BOTTOM_MARGIN) return y;
+  if (getRemainingPageHeight(doc, y) >= minSpace) return y;
   doc.addPage();
-  return PAGE_MARGIN;
+  return PAGE_TOP_MARGIN;
 }
 
 function sectionHeader(doc, title, y, options = {}) {
@@ -677,95 +752,121 @@ function formatStrengthRequired(value) {
   return "No";
 }
 
+const CONSOLIDATED_CONCRETE_RECORD_COLUMNS = [
+  { label: "Test #", keys: ["test_number", "testNumber"], width: 20 },
+  { label: "Ticket #", keys: ["ticket_number", "ticketNumber"], width: 31 },
+  { label: "Truck #", keys: ["truck_number", "truckNumber"], width: 31 },
+  { label: "CY", keys: ["cubic_yards", "cubicYards"], width: 19 },
+  { label: "Batch", keys: ["batch_time", "time_batched", "timeBatched"], width: 28 },
+  { label: "Arrival", keys: ["arrival_time", "arrivalTime"], width: 28 },
+  { label: "Tested", keys: ["testing_time", "time_tested", "timeTested"], width: 28 },
+  { label: "Finish", keys: ["finish_unload_time", "finish_unload", "finishUnload"], width: 28 },
+  { label: "Min", keys: ["actual_minutes", "actualMinutes"], width: 21 },
+  { label: "Result", keys: ["record_result", "row_status", "recordResult", "status"], width: 32 },
+  { label: "Water", keys: ["water_added_gal", "waterAdded"], width: 25 },
+  { label: "Air °F", keys: ["air_temp_f", "airTempF", "airTemp"], width: 24 },
+  { label: "Conc °F", keys: ["concrete_temp_f", "concreteTempF", "concreteTemp"], width: 27 },
+  { label: "Slump", keys: ["slump_in", "slump"], width: 23 },
+  { label: "Air %", keys: ["air_content_percent", "airContent"], width: 23 },
+  { label: "Unit Wt", keys: ["unit_weight_lbs_ft3", "unitWeight"], width: 29 },
+  { label: "Spread", keys: ["spread_in", "spread"], width: 25 },
+  { label: "J-Ring", keys: ["j_ring_in", "jRing"], width: 25 },
+  { label: "Strength", keys: ["strength_verification_required", "strengthVerificationRequired"], width: 32 },
+  { label: "Set #", keys: ["set_number", "setNumber"], width: 28 },
+  { label: "Lab", keys: ["lab_cylinders", "lab_samples", "labSamples"], width: 20 },
+  { label: "Field", keys: ["field_cylinders", "field_samples", "fieldSamples"], width: 22 },
+  { label: "Comments", keys: ["inspector_notes", "comments", "notes"], width: 52, align: "left" }
+];
+
+function getConsolidatedConcreteRecordRows(records) {
+  return records.map((record, index) => CONSOLIDATED_CONCRETE_RECORD_COLUMNS.map((column) => {
+    if (column.label === "Test #") return pdfValue(getRecordField(record, column.keys) || index + 1);
+    if (column.label === "Result") return formatStatus(getRecordField(record, column.keys));
+    if (column.label === "Strength") return formatStrengthRequired(getRecordField(record, column.keys));
+    return pdfValue(getRecordField(record, column.keys));
+  }));
+}
+
+function getConsolidatedConcreteColumnStyles(doc) {
+  const totalBaseWidth = CONSOLIDATED_CONCRETE_RECORD_COLUMNS.reduce((sum, column) => sum + column.width, 0);
+  const scale = getContentWidth(doc) / totalBaseWidth;
+  return CONSOLIDATED_CONCRETE_RECORD_COLUMNS.reduce((styles, column, index) => {
+    styles[index] = {
+      cellWidth: column.width * scale,
+      halign: column.align || "center"
+    };
+    return styles;
+  }, {});
+}
+
+function ensureConcreteLandscapePage(doc, y) {
+  if (getPageWidth(doc) > getPageHeight(doc)) return y;
+  doc.addPage("letter", "landscape");
+  return PAGE_TOP_MARGIN;
+}
+
 function renderRecordsTable(doc, records = [], y) {
   if (!records.length) return y;
+  y = ensureConcreteLandscapePage(doc, y);
   y = ensurePage(doc, y, 64);
   setReportFont(doc, "semibold", 11, PDF_COLORS.navy);
-  doc.text("Material Delivery & Field Test Results", PAGE_MARGIN, y);
+  doc.text("Material Delivery & Verification Records", PAGE_MARGIN, y);
   setReportFont(doc, "regular", 8.5, PDF_COLORS.slate);
   doc.text(`${records.length} records`, getPageWidth(doc) - PAGE_MARGIN, y, { align: "right" });
   y += 12;
 
-  const tableGroups = [{
-    title: "Delivery Tracking",
-    columns: [
-      { header: "Test #", keys: ["test_number", "testNumber"] },
-      { header: "Ticket #", keys: ["ticket_number", "ticketNumber"] },
-      { header: "Truck #", keys: ["truck_number", "truckNumber"] },
-      { header: "CY", keys: ["cubic_yards", "cubicYards"] },
-      { header: "Batch", keys: ["batch_time", "time_batched", "timeBatched"] },
-      { header: "Arrival", keys: ["arrival_time", "arrivalTime"] },
-      { header: "Tested", keys: ["testing_time", "time_tested", "timeTested"] },
-      { header: "Finish", keys: ["finish_unload_time", "finishUnload"] },
-      { header: "Minutes", keys: ["actual_minutes", "actualMinutes"] },
-      { header: "Result", keys: ["record_result", "row_status", "status"] }
-    ]
-  }, {
-    title: "Field Test Results & Strength Verification",
-    columns: [
-      { header: "Test #", keys: ["test_number", "testNumber"] },
-      { header: "Water", keys: ["water_added_gal", "waterAdded"] },
-      { header: "Air °F", keys: ["air_temp_f", "airTemp"] },
-      { header: "Conc °F", keys: ["concrete_temp_f", "concreteTemp"] },
-      { header: "Slump", keys: ["slump_in", "slump"] },
-      { header: "Air %", keys: ["air_content_percent", "airContent"] },
-      { header: "Unit Wt", keys: ["unit_weight_lbs_ft3", "unitWeight"] },
-      { header: "Spread", keys: ["spread_in", "spread"] },
-      { header: "J-Ring", keys: ["j_ring_in", "jRing"] },
-      { header: "Strength", keys: ["strength_verification_required", "strengthVerificationRequired"] },
-      { header: "Set #", keys: ["set_number", "setNumber"] },
-      { header: "Lab", keys: ["lab_samples", "labSamples"] },
-      { header: "Field", keys: ["field_samples", "fieldSamples"] },
-      { header: "Comments", keys: ["inspector_notes", "comments", "notes"] }
-    ]
-  }];
-
-  tableGroups.forEach((group) => {
-    y = ensurePage(doc, y, 72);
-    setReportFont(doc, "medium", 9, PDF_COLORS.slate);
-    doc.text(group.title.toUpperCase(), PAGE_MARGIN, y);
-    y += 8;
-    const body = records.map((record, index) => group.columns.map((column) => {
-      if (column.header === "Test #") return pdfValue(getRecordField(record, column.keys) || index + 1);
-      if (column.header === "Result") return formatStatus(getRecordField(record, column.keys));
-      if (column.header === "Strength") return formatStrengthRequired(getRecordField(record, column.keys));
-      return pdfValue(getRecordField(record, column.keys));
-    }));
-
-    autoTable(doc, {
-      startY: y,
-      head: [group.columns.map((column) => column.header)],
-      body,
-      theme: "grid",
-      margin: { left: PAGE_MARGIN, right: PAGE_MARGIN, top: PAGE_MARGIN, bottom: PAGE_BOTTOM_MARGIN + 16 },
-      tableWidth: getContentWidth(doc),
-      showHead: "everyPage",
-      styles: {
-        font: "helvetica",
-        fontSize: 8.5,
-        cellPadding: 4,
-        overflow: "linebreak",
-        valign: "middle",
-        lineColor: PDF_COLORS.line,
-        lineWidth: 0.4,
-        textColor: PDF_COLORS.navy,
-        minCellHeight: 18
-      },
-      headStyles: {
-        fillColor: PDF_COLORS.navy,
-        textColor: PDF_COLORS.white,
-        fontStyle: "bold",
-        fontSize: 8.5,
-        halign: "center"
-      },
-      alternateRowStyles: {
-        fillColor: PDF_COLORS.soft
+  autoTable(doc, {
+    startY: y,
+    head: [CONSOLIDATED_CONCRETE_RECORD_COLUMNS.map((column) => column.label)],
+    body: getConsolidatedConcreteRecordRows(records),
+    theme: "grid",
+    margin: { left: PAGE_MARGIN, right: PAGE_MARGIN, top: PAGE_TOP_MARGIN, bottom: PAGE_BOTTOM_MARGIN + 16 },
+    tableWidth: getContentWidth(doc),
+    showHead: "everyPage",
+    styles: {
+      font: "helvetica",
+      fontSize: 5.6,
+      cellPadding: { top: 2.2, right: 1.4, bottom: 2.2, left: 1.4 },
+      overflow: "linebreak",
+      valign: "middle",
+      halign: "center",
+      lineColor: PDF_COLORS.line,
+      lineWidth: 0.55,
+      textColor: PDF_COLORS.navy,
+      minCellHeight: 13
+    },
+    headStyles: {
+      fillColor: PDF_COLORS.navy,
+      textColor: PDF_COLORS.white,
+      fontStyle: "bold",
+      fontSize: 5.5,
+      halign: "center",
+      minCellHeight: 17
+    },
+    alternateRowStyles: {
+      fillColor: PDF_COLORS.soft
+    },
+    columnStyles: getConsolidatedConcreteColumnStyles(doc),
+    didParseCell: (data) => {
+      if (data.section !== "body") return;
+      const header = CONSOLIDATED_CONCRETE_RECORD_COLUMNS[data.column.index]?.label;
+      const value = String(data.cell.raw || "").toLowerCase();
+      if (header === "Result") {
+        if (value.includes("pass")) {
+          data.cell.styles.textColor = PDF_COLORS.green;
+          data.cell.styles.fontStyle = "bold";
+        } else if (value.includes("fail")) {
+          data.cell.styles.textColor = PDF_COLORS.red;
+          data.cell.styles.fontStyle = "bold";
+        } else if (value.includes("retest") || value.includes("pending") || value.includes("review")) {
+          data.cell.styles.textColor = PDF_COLORS.amber;
+          data.cell.styles.fontStyle = "bold";
+        }
       }
-    });
-    y = (doc.lastAutoTable?.finalY || y) + 12;
+    }
   });
 
-  return y + 2;
+  return (doc.lastAutoTable?.finalY || y) + 14;
 }
 
 function addImageToPdf(doc, source, attachment, x, y, maxWidth, maxHeight) {
@@ -1064,32 +1165,7 @@ function renderDescriptionBox(doc, text, y, options = {}) {
 }
 
 async function renderConcreteReport(doc, report, reportIndex, y, activity, log) {
-  y = ensurePage(doc, y, 86);
-  setReportFont(doc, "semibold", 13, PDF_COLORS.navy);
-  doc.text(`Attached Report ${reportIndex + 1}: Concrete Test Log`, PAGE_MARGIN, y);
-  setReportFont(doc, "regular", 9, PDF_COLORS.slate);
-  doc.text(`DFR: ${pdfValue(getReportDfrNumber(report))}  |  Status: ${formatStatus(report.status || report.reportStatus || "submitted")}`, PAGE_MARGIN, y + 15);
-  y += 28;
-
-  setReportFont(doc, "semibold", 11, PDF_COLORS.navy);
-  doc.text("Concrete Specifications", PAGE_MARGIN, y);
-  y += 10;
-  y = drawEngineeringTable(doc, [
-    { label: "Mix Number", value: getReportSpecificationValue(report, ["mix_number", "mix_no", "mixNumber", "mixNo"]) },
-    { label: "Specified Strength", value: getReportSpecificationValue(report, ["speed_of_stress_psi", "speed_of_stress", "strength_spec", "specified_strength_psi", "specified_strength", "specifiedStrength"]) },
-    { label: "Slump Requirement", value: getReportSpecificationValue(report, ["slump_in", "slump", "slumpIn"]) },
-    { label: "Air Content Requirement", value: getReportSpecificationValue(report, ["air_content_percent", "air_content", "airContent", "airContentPercent"]) },
-    { label: "Unit Weight", value: getReportSpecificationValue(report, ["unit_weight_lbs_ft3", "unit_weight", "unitWeight", "unitWeightLbsFt3"]) },
-    { label: "Material Temperature", value: getReportSpecificationValue(report, ["concrete_temp_f", "concrete_temp", "material_temp_f", "materialTemp", "concreteTemperature"]) },
-    { label: "Spread", value: getReportSpecificationValue(report, ["spread_in", "spread", "spreadIn"]) },
-    { label: "J-Ring", value: getReportSpecificationValue(report, ["j_ring_in", "j_ring", "jRing", "jRingIn"]) },
-    { label: "DFR Number", value: getReportDfrNumber(report) },
-    { label: "Comments", value: getReportSpecificationValue(report, ["comments", "notes"]) || "No comments recorded." }
-  ], y, 2);
-
-  y = renderRecordsTable(doc, getReportRecords(report), y);
-  y = await renderAttachments(doc, getReportAttachments(report, activity, log), y, "Concrete Report Attachments");
-  return y + 4;
+  return AttachedReportBlock(doc, report, reportIndex, y, activity, log);
 }
 
 async function renderActivities(doc, log, y) {
@@ -1126,18 +1202,1298 @@ function renderComments(doc, log, y) {
   });
 }
 
+function statusColor(status) {
+  const normalized = String(status || "").toLowerCase();
+  if (normalized.includes("approved") || normalized.includes("complete")) return PDF_COLORS.green;
+  if (normalized.includes("return") || normalized.includes("fail")) return PDF_COLORS.red;
+  if (normalized.includes("pending") || normalized.includes("review") || normalized.includes("retest")) return PDF_COLORS.amber;
+  if (normalized.includes("draft")) return PDF_COLORS.blue;
+  return PDF_COLORS.slate;
+}
+
+function drawBadge(doc, text, x, y, options = {}) {
+  const color = options.color || statusColor(text);
+  const paddingX = options.paddingX || 7;
+  const height = options.height || 15;
+  setReportFont(doc, "semibold", options.fontSize || 7.5, color);
+  const width = Math.max(options.minWidth || 0, doc.getTextWidth(String(text)) + paddingX * 2);
+  doc.setDrawColor(...color);
+  doc.setFillColor(...PDF_COLORS.white);
+  doc.roundedRect(x, y, width, height, height / 2, height / 2, "S");
+  doc.text(String(text), x + width / 2, y + height - 5, { align: "center" });
+  return width;
+}
+
+async function PdfHeader(doc, log, y) {
+  const pageWidth = getPageWidth(doc);
+  const width = getContentWidth(doc);
+  const leftWidth = 122;
+  const rightWidth = 128;
+  const centerWidth = width - leftWidth - rightWidth - 26;
+  setReportFont(doc, "medium", 10, PDF_COLORS.slate);
+  const projectLines = doc.splitTextToSize(getProjectName(log), centerWidth);
+  setReportFont(doc, "semibold", 9.5, PDF_COLORS.navy);
+  const reportNumberLines = doc.splitTextToSize(getDailyReportNumber(log), rightWidth);
+  const rightZoneHeight = 58 + reportNumberLines.length * 11;
+  const headerHeight = Math.max(94, 58 + projectLines.length * 13, rightZoneHeight);
+  const logoSource = await sourceToDataUrl(log.companyLogoUrl || log.company_logo_url || COMPANY_LOGO_URL) || getDullesLogoDataUrl();
+
+  y = ensurePage(doc, y, headerHeight + 10);
+  doc.setFillColor(...PDF_COLORS.navy);
+  doc.rect(0, 0, pageWidth, 10, "F");
+  doc.setDrawColor(...PDF_COLORS.line);
+  doc.setFillColor(...PDF_COLORS.white);
+  doc.rect(PAGE_MARGIN, y, width, headerHeight, "FD");
+
+  if (logoSource?.startsWith("data:image/")) {
+    addImageToPdf(doc, logoSource, { fileType: "image/png" }, PAGE_MARGIN + 10, y + 15, 74, 34);
+  } else {
+    doc.setFillColor(...PDF_COLORS.paleBlue);
+    doc.roundedRect(PAGE_MARGIN + 10, y + 15, 48, 34, 4, 4, "F");
+    setReportFont(doc, "semibold", 13, PDF_COLORS.blue);
+    doc.text("DE", PAGE_MARGIN + 26, y + 36);
+  }
+  setReportFont(doc, "semibold", 8.5, PDF_COLORS.navy);
+  doc.text(COMPANY_NAME, PAGE_MARGIN + 10, y + 61);
+
+  const centerX = PAGE_MARGIN + leftWidth + 13;
+  setReportFont(doc, "semibold", 24, PDF_COLORS.navy);
+  doc.text("DAILY FIELD REPORT", centerX, y + 30);
+  setReportFont(doc, "medium", 10, PDF_COLORS.slate);
+  doc.text(projectLines, centerX, y + 48);
+
+  const rightX = PAGE_MARGIN + width - rightWidth;
+  setReportFont(doc, "medium", 7.5, PDF_COLORS.muted);
+  doc.text("REPORT NUMBER", rightX, y + 22);
+  setReportFont(doc, "semibold", 9.5, PDF_COLORS.navy);
+  doc.text(reportNumberLines, rightX, y + 34);
+  const dateLabelY = y + 36 + reportNumberLines.length * 11;
+  setReportFont(doc, "medium", 7.5, PDF_COLORS.muted);
+  doc.text("DATE", rightX, dateLabelY);
+  setReportFont(doc, "semibold", 9.5, PDF_COLORS.navy);
+  doc.text(formatDateOnly(getLogDate(log)), rightX, dateLabelY + 12);
+  drawBadge(doc, formatStatus(log.status || "Pending Manager Review"), rightX, dateLabelY + 20, { minWidth: 84 });
+
+  return y + headerHeight + 14;
+}
+
+function SectionTitle(doc, title, y, options = {}) {
+  y = ensurePage(doc, y, options.minSpace || 36);
+  setReportFont(doc, "semibold", options.size || 13, PDF_COLORS.navy);
+  doc.text(String(title).toUpperCase(), PAGE_MARGIN, y);
+  doc.setDrawColor(...PDF_COLORS.navy);
+  doc.setLineWidth(0.8);
+  doc.line(PAGE_MARGIN, y + 6, getPageWidth(doc) - PAGE_MARGIN, y + 6);
+  doc.setLineWidth(0.2);
+  return y + 18;
+}
+
+function InfoGrid(doc, items, y, options = {}) {
+  const columns = options.columns || 4;
+  const gap = options.gap ?? 8;
+  const cellWidth = (getContentWidth(doc) - gap * (columns - 1)) / columns;
+
+  for (let start = 0; start < items.length; start += columns) {
+    const row = items.slice(start, start + columns);
+    const heights = row.map((item) => {
+      setReportFont(doc, "regular", options.valueSize || 9.5, PDF_COLORS.navy);
+      const lines = doc.splitTextToSize(pdfValue(item.value), cellWidth - 18);
+      return Math.max(options.minHeight || 38, 20 + lines.length * 11);
+    });
+    const rowHeight = Math.max(...heights, options.minHeight || 38);
+    y = ensurePage(doc, y, rowHeight + 6);
+    row.forEach((item, index) => {
+      const x = PAGE_MARGIN + index * (cellWidth + gap);
+      doc.setDrawColor(...PDF_COLORS.line);
+      doc.setFillColor(...PDF_COLORS.soft);
+      doc.roundedRect(x, y, cellWidth, rowHeight, 3, 3, "FD");
+      setReportFont(doc, "medium", options.labelSize || 7.6, PDF_COLORS.muted);
+      doc.text(String(item.label || "").toUpperCase(), x + 8, y + 12);
+      setReportFont(doc, "regular", options.valueSize || 9.5, PDF_COLORS.navy);
+      doc.text(doc.splitTextToSize(pdfValue(item.value), cellWidth - 18), x + 8, y + 25);
+    });
+    y += rowHeight + gap;
+  }
+
+  return y + 3;
+}
+
+function SummaryCards(doc, items, y) {
+  return InfoGrid(doc, items, y, {
+    columns: 3,
+    gap: 8,
+    minHeight: 44,
+    labelSize: 7.5,
+    valueSize: 10
+  });
+}
+
+function ProfessionalTable(doc, { title, columns, rows }, y, options = {}) {
+  y = ensurePage(doc, y, options.minSpace || 70);
+  if (title) {
+    setReportFont(doc, "semibold", options.titleSize || 10.5, PDF_COLORS.navy);
+    doc.text(title, PAGE_MARGIN, y);
+    y += 9;
+  }
+
+  autoTable(doc, {
+    startY: y,
+    head: [columns],
+    body: rows.length ? rows : [columns.map(() => "N/A")],
+    theme: "grid",
+    margin: { left: PAGE_MARGIN, right: PAGE_MARGIN, top: PAGE_TOP_MARGIN, bottom: PAGE_BOTTOM_MARGIN + 16 },
+    tableWidth: getContentWidth(doc),
+    showHead: "everyPage",
+    pageBreak: options.pageBreak || "auto",
+    rowPageBreak: "avoid",
+    styles: {
+      font: "helvetica",
+      fontSize: options.fontSize || 8.3,
+      cellPadding: options.cellPadding || 4,
+      overflow: "linebreak",
+      valign: "middle",
+      lineColor: PDF_COLORS.line,
+      lineWidth: 0.35,
+      textColor: PDF_COLORS.navy,
+      minCellHeight: 17
+    },
+    headStyles: {
+      fillColor: PDF_COLORS.navy,
+      textColor: PDF_COLORS.white,
+      fontStyle: "bold",
+      fontSize: options.headFontSize || 8.2,
+      halign: "center",
+      valign: "middle"
+    },
+    alternateRowStyles: { fillColor: PDF_COLORS.soft },
+    columnStyles: options.columnStyles || {},
+    didParseCell: (data) => {
+      if (data.section !== "body") return;
+      const header = columns[data.column.index];
+      const value = String(data.cell.raw || "").toLowerCase();
+      if (header === "Result") {
+        if (value.includes("pass")) {
+          data.cell.styles.textColor = PDF_COLORS.green;
+          data.cell.styles.fontStyle = "bold";
+        } else if (value.includes("fail")) {
+          data.cell.styles.textColor = PDF_COLORS.red;
+          data.cell.styles.fontStyle = "bold";
+        } else if (value.includes("retest") || value.includes("pending")) {
+          data.cell.styles.textColor = PDF_COLORS.amber;
+          data.cell.styles.fontStyle = "bold";
+        }
+      }
+    }
+  });
+
+  return doc.lastAutoTable.finalY + 12;
+}
+
+function getAttachmentCategory(attachment = {}) {
+  const raw = [
+    attachment.category,
+    attachment.attachmentCategory,
+    attachment.attachment_category,
+    attachment.type,
+    attachment.attachmentType,
+    attachment.attachment_type,
+    getAttachmentFileName(attachment)
+  ].join(" ").toLowerCase();
+  if (raw.includes("ticket")) return "Tickets";
+  if (raw.includes("delivery") || raw.includes("slip")) return "Delivery Slips";
+  if (raw.includes("test")) return "Test Images";
+  if (isPhotoAttachment(attachment)) return "Photos";
+  if (isPdfAttachment(attachment) || raw.includes("doc") || raw.includes("xls")) return "Other Reports";
+  return "Other Reports";
+}
+
+function renderAttachmentCard(doc, attachment, x, y, width, height) {
+  doc.setDrawColor(...PDF_COLORS.line);
+  doc.setFillColor(...PDF_COLORS.soft);
+  doc.roundedRect(x, y, width, height, 4, 4, "FD");
+  setReportFont(doc, "semibold", 9, PDF_COLORS.navy);
+  doc.text(doc.splitTextToSize(getAttachmentFileName(attachment), width - 18), x + 9, y + 15);
+  setReportFont(doc, "regular", 8, PDF_COLORS.slate);
+  const meta = [
+    getAttachmentCategory(attachment),
+    attachment.pageCount || attachment.page_count ? `${attachment.pageCount || attachment.page_count} pages` : "",
+    attachment.createdAt || attachment.created_at || attachment.uploadedAt || attachment.uploaded_at
+      ? formatDateTime(attachment.createdAt || attachment.created_at || attachment.uploadedAt || attachment.uploaded_at)
+      : ""
+  ].filter(Boolean).join(" • ");
+  doc.text(doc.splitTextToSize(meta || "Attachment", width - 18), x + 9, y + height - 12);
+}
+
+async function AttachmentGallery(doc, attachments = [], y, title = "Attachments") {
+  if (!attachments.length) return y;
+  y = SectionTitle(doc, title, y, { minSpace: 42, size: 12 });
+
+  const photos = attachments.filter(isRenderableImageAttachment);
+  const documents = attachments.filter((attachment) => !isRenderableImageAttachment(attachment));
+
+  setReportFont(doc, "semibold", 9.5, PDF_COLORS.navy);
+  doc.text("Photos", PAGE_MARGIN, y);
+  y += 10;
+
+  if (!photos.length) {
+    y = InfoGrid(doc, [{ label: "Photos", value: "No photos attached" }], y, { columns: 1, minHeight: 30 });
+  } else {
+    const gap = 10;
+    const boxWidth = (getContentWidth(doc) - gap) / 2;
+    const maxImageHeight = 112;
+    for (let index = 0; index < photos.length; index += 2) {
+      const row = photos.slice(index, index + 2);
+      y = ensurePage(doc, y, maxImageHeight + 38);
+      const rendered = [];
+      for (const [rowIndex, attachment] of row.entries()) {
+        const x = PAGE_MARGIN + rowIndex * (boxWidth + gap);
+        let source = getAttachmentSource(attachment);
+        try {
+          source = await sourceToDataUrl(source);
+          if (source?.startsWith("data:image/")) {
+            source = await compressImageDataUrl(source, { maxDimension: 1200, quality: 0.78 });
+            const props = doc.getImageProperties(source);
+            const ratio = Math.min((boxWidth - 12) / props.width, maxImageHeight / props.height);
+            rendered.push({ attachment, source, x, width: props.width * ratio, height: props.height * ratio });
+          } else {
+            rendered.push({ attachment, source: "", x, width: 0, height: 0 });
+          }
+        } catch {
+          rendered.push({ attachment, source: "", x, width: 0, height: 0 });
+        }
+      }
+
+      for (const item of rendered) {
+        doc.setDrawColor(...PDF_COLORS.line);
+        doc.setFillColor(...PDF_COLORS.white);
+        doc.roundedRect(item.x, y, boxWidth, maxImageHeight + 30, 4, 4, "FD");
+        if (item.source) {
+          doc.addImage(item.source, getImageFormat(item.source, item.attachment), item.x + (boxWidth - item.width) / 2, y + 6, item.width, item.height, undefined, "FAST");
+        } else {
+          setReportFont(doc, "regular", 8.5, PDF_COLORS.slate);
+          doc.text("Image unavailable", item.x + 8, y + 22);
+        }
+        setReportFont(doc, "regular", 7.5, PDF_COLORS.slate);
+        const caption = [
+          getAttachmentFileName(item.attachment),
+          item.attachment?.createdAt || item.attachment?.created_at || item.attachment?.uploadedAt || item.attachment?.uploaded_at
+            ? formatDateTime(item.attachment.createdAt || item.attachment.created_at || item.attachment.uploadedAt || item.attachment.uploaded_at)
+            : ""
+        ].filter(Boolean).join(" • ");
+        doc.text(doc.splitTextToSize(caption, boxWidth - 16), item.x + 8, y + maxImageHeight + 17);
+      }
+      y += maxImageHeight + 40;
+    }
+  }
+
+  if (documents.length) {
+    setReportFont(doc, "semibold", 9.5, PDF_COLORS.navy);
+    doc.text("Documents", PAGE_MARGIN, y);
+    y += 10;
+    const gap = 8;
+    const cardWidth = (getContentWidth(doc) - gap) / 2;
+    const cardHeight = 42;
+    for (let index = 0; index < documents.length; index += 2) {
+      y = ensurePage(doc, y, cardHeight + 8);
+      documents.slice(index, index + 2).forEach((attachment, rowIndex) => {
+        renderAttachmentCard(doc, attachment, PAGE_MARGIN + rowIndex * (cardWidth + gap), y, cardWidth, cardHeight);
+      });
+      y += cardHeight + gap;
+    }
+  }
+
+  return y + 4;
+}
+
+function getSpecSummaryItems(report) {
+  return [
+    ["Strength", getReportSpecificationValue(report, ["speed_of_stress_psi", "speed_of_stress", "strength_spec", "specified_strength_psi", "specified_strength", "specifiedStrength"])],
+    ["Slump", getReportSpecificationValue(report, ["slump_in", "slump", "slumpIn"])],
+    ["Air Content", getReportSpecificationValue(report, ["air_content_percent", "air_content", "airContent", "airContentPercent"])],
+    ["Unit Weight", getReportSpecificationValue(report, ["unit_weight_lbs_ft3", "unit_weight", "unitWeight", "unitWeightLbsFt3"])],
+    ["Material Temp", getReportSpecificationValue(report, ["concrete_temp_f", "concrete_temp", "material_temp_f", "materialTemp", "concreteTemperature"])],
+    ["Spread", getReportSpecificationValue(report, ["spread_in", "spread", "spreadIn"])],
+    ["J-Ring", getReportSpecificationValue(report, ["j_ring_in", "j_ring", "jRing", "jRingIn"])],
+    ["Mix No.", getReportSpecificationValue(report, ["mix_number", "mix_no", "mixNumber", "mixNo"])],
+    ["Comments", getReportSpecificationValue(report, ["comments", "notes"])]
+  ].map(([label, value]) => ({ label, value: pdfValue(value) }));
+}
+
+function getSpecificationSummaryHeight(doc, items, columns = 3) {
+  const gap = 8;
+  const cellWidth = (getContentWidth(doc) - gap * (columns - 1)) / columns;
+  let height = 22;
+  for (let start = 0; start < items.length; start += columns) {
+    const row = items.slice(start, start + columns);
+    const rowHeight = Math.max(...row.map((item) => {
+      setReportFont(doc, "regular", 9, PDF_COLORS.navy);
+      const valueLines = doc.splitTextToSize(String(item.value), cellWidth - 16);
+      return Math.max(30, 17 + valueLines.length * 10);
+    }));
+    height += rowHeight + gap;
+  }
+  return height + 6;
+}
+
+function renderSpecificationSummary(doc, report, y) {
+  const items = getSpecSummaryItems(report);
+  const columns = 3;
+  const gap = 0;
+  const sectionHeight = Math.max(92, getSpecificationSummaryHeight(doc, items, columns));
+  y = ensurePage(doc, y, Math.max(105, sectionHeight));
+
+  setReportFont(doc, "semibold", 10.5, PDF_COLORS.navy);
+  doc.text("Specification Summary", PAGE_MARGIN, y);
+  y += 11;
+
+  const cellWidth = (getContentWidth(doc) - gap * (columns - 1)) / columns;
+  for (let start = 0; start < items.length; start += columns) {
+    const row = items.slice(start, start + columns);
+    const rowHeight = Math.max(...row.map((item) => {
+      setReportFont(doc, "regular", 9, PDF_COLORS.navy);
+      const valueLines = doc.splitTextToSize(String(item.value), cellWidth - 16);
+      return Math.max(30, 17 + valueLines.length * 10);
+    }));
+
+    row.forEach((item, index) => {
+      const x = PAGE_MARGIN + index * (cellWidth + gap);
+      doc.setDrawColor(...PDF_COLORS.line);
+      doc.setFillColor(...PDF_COLORS.white);
+      doc.setFillColor(...(Math.floor(start / columns) % 2 === 0 ? PDF_COLORS.soft : PDF_COLORS.white));
+      doc.rect(x, y, cellWidth, rowHeight, "FD");
+      setReportFont(doc, "medium", 7.4, PDF_COLORS.muted);
+      doc.text(String(item.label).toUpperCase(), x + 7, y + 10);
+      setReportFont(doc, "regular", 9, PDF_COLORS.navy);
+      doc.text(doc.splitTextToSize(String(item.value), cellWidth - 16), x + 7, y + 22);
+    });
+    y += rowHeight + gap;
+  }
+
+  return y + 4;
+}
+
+async function AttachedReportBlock(doc, report, reportIndex, y, activity, log) {
+  y = ensurePage(doc, y, 250);
+  doc.setDrawColor(...PDF_COLORS.line);
+  doc.line(PAGE_MARGIN, y, getPageWidth(doc) - PAGE_MARGIN, y);
+  y += 12;
+
+  setReportFont(doc, "semibold", 12.5, PDF_COLORS.navy);
+  doc.text(`CONCRETE TEST LOG - ${pdfValue(getReportDfrNumber(report))}`, PAGE_MARGIN, y);
+  y += 14;
+  setReportFont(doc, "regular", 9, PDF_COLORS.slate);
+  doc.text(
+    `Report Type: ${pdfValue(report.reportType || report.report_type || "Concrete Test Log")}  |  Status: ${formatStatus(report.status || report.reportStatus || "Submitted")}`,
+    PAGE_MARGIN,
+    y
+  );
+  y += 16;
+
+  y = renderSpecificationSummary(doc, report, y);
+
+  const records = getReportRecords(report);
+  if (records.length) {
+    y = ensureConcreteLandscapePage(doc, y);
+    y = ensurePage(doc, y, 130);
+    y = ProfessionalTable(doc, {
+      title: "Material Delivery & Verification Records",
+      columns: CONSOLIDATED_CONCRETE_RECORD_COLUMNS.map((column) => column.label),
+      rows: getConsolidatedConcreteRecordRows(records)
+    }, y, {
+      minSpace: 90,
+      fontSize: 5.6,
+      headFontSize: 5.5,
+      cellPadding: { top: 2.2, right: 1.4, bottom: 2.2, left: 1.4 },
+      columnStyles: getConsolidatedConcreteColumnStyles(doc)
+    });
+  } else {
+    y = InfoGrid(doc, [{ label: "Test Results Summary", value: "No delivery records recorded." }], y, { columns: 1, minHeight: 34 });
+  }
+
+  y = await AttachmentGallery(doc, getReportAttachments(report, activity, log), y, "Concrete Report Attachments");
+  return y + 8;
+}
+
+async function ActivityCard(doc, activity, index, y, log) {
+  const reports = getScopedActivityReports(activity, log);
+  const attachments = getActivityAttachments(activity, log);
+  y = ensurePage(doc, y, 90);
+
+  setReportFont(doc, "semibold", 11.5, PDF_COLORS.navy);
+  doc.text(`Activity ${index + 1}: ${getActivityName(activity, index)}`, PAGE_MARGIN, y);
+  y += 12;
+  setReportFont(doc, "regular", 8.5, PDF_COLORS.slate);
+  doc.text(
+    `Location: ${pdfValue(activity.location)}  |  Status: ${formatStatus(activity.status || "in_progress")}  |  Type: ${getActivityType(activity)}`,
+    PAGE_MARGIN,
+    y
+  );
+  y += 11;
+
+  const description = activity.description || "No description recorded.";
+  const width = getContentWidth(doc);
+  const descriptionLines = doc.splitTextToSize(`Description: ${description}`, width);
+  y = ensurePage(doc, y, Math.min(90, 12 + descriptionLines.length * 10));
+  if (descriptionLines.length <= 3) {
+    setReportFont(doc, "regular", 9, PDF_COLORS.navy);
+    doc.text(descriptionLines, PAGE_MARGIN, y);
+    y += descriptionLines.length * 10 + 10;
+  } else {
+    const boxHeight = Math.max(42, 18 + descriptionLines.length * 10);
+    y = ensurePage(doc, y, boxHeight + 10);
+    doc.setDrawColor(...PDF_COLORS.line);
+    doc.setFillColor(...PDF_COLORS.white);
+    doc.rect(PAGE_MARGIN, y, width, boxHeight, "S");
+    setReportFont(doc, "regular", 9, PDF_COLORS.navy);
+    doc.text(descriptionLines, PAGE_MARGIN + 8, y + 14);
+    y += boxHeight + 10;
+  }
+
+  for (const [reportIndex, report] of reports.entries()) {
+    y = await AttachedReportBlock(doc, report, reportIndex, y, activity, log);
+  }
+  y = await AttachmentGallery(doc, attachments, y, "Activity Attachments");
+  return y + 12;
+}
+
+async function renderProfessionalActivities(doc, log, y) {
+  y = SectionTitle(doc, "Activities", y, { minSpace: 90 });
+  const activities = log.activities || [];
+  if (!activities.length) {
+    return InfoGrid(doc, [{ label: "Activities", value: "No activities recorded." }], y, { columns: 1, minHeight: 34 });
+  }
+  for (const [index, activity] of activities.entries()) {
+    y = await ActivityCard(doc, activity, index, y, log);
+  }
+  return y;
+}
+
+function renderProfessionalComments(doc, log, y) {
+  y = renderDocumentSectionTitle(doc, "Comments", y, { minSpace: 90 });
+  const text = log.notes || log.comments || "No comments recorded.";
+  return reportParagraph(doc, sentenceCase(text), PAGE_MARGIN, y, getContentWidth(doc), { size: 10 }) + 24;
+}
+
+async function ApprovalBlock(doc, log, y) {
+  y = SectionTitle(doc, "Approval", y, { minSpace: 160 });
+  const gap = 12;
+  const boxWidth = (getContentWidth(doc) - gap) / 2;
+  const boxHeight = 94;
+  y = ensurePage(doc, y, boxHeight + 8);
+  const submitted = {
+    title: "Submitted By",
+    name: getTechnicianName(log),
+    date: formatDateTime(log.submittedAt || log.submitted_at),
+    image: log.technicianSignature || log.technician_signature || log.technicianSignatureUrl || log.technician_signature_url
+  };
+  const approved = Boolean(log.approvedAt || log.approved_at || log.qcSignature || log.qc_signature || log.qcSignatureUrl || log.qc_signature_url);
+  const reviewer = {
+    title: "Reviewed / Approved By",
+    name: approved ? (log.approvedBy || log.approved_by || "Project Manager / QC") : "Pending Review",
+    date: approved ? formatDateTime(log.approvedAt || log.approved_at) : "Pending Review",
+    image: approved ? (log.qcSignature || log.qc_signature || log.qcSignatureUrl || log.qc_signature_url) : ""
+  };
+
+  for (const [index, entry] of [submitted, reviewer].entries()) {
+    const x = PAGE_MARGIN + index * (boxWidth + gap);
+    doc.setDrawColor(...PDF_COLORS.line);
+    doc.setFillColor(...PDF_COLORS.soft);
+    doc.roundedRect(x, y, boxWidth, boxHeight, 4, 4, "FD");
+    setReportFont(doc, "medium", 8.2, PDF_COLORS.muted);
+    doc.text(entry.title.toUpperCase(), x + 10, y + 15);
+    const hasSignature = await renderSignatureImage(doc, entry.image, x + 10, y + 22, boxWidth - 20, 30);
+    if (!hasSignature) {
+      doc.setDrawColor(...PDF_COLORS.line);
+      doc.line(x + 10, y + 50, x + boxWidth - 10, y + 50);
+    }
+    setReportFont(doc, "semibold", 10, PDF_COLORS.navy);
+    doc.text(doc.splitTextToSize(pdfValue(entry.name), boxWidth - 20), x + 10, y + 66);
+    setReportFont(doc, "regular", 8.8, PDF_COLORS.slate);
+    doc.text(doc.splitTextToSize(entry.date, boxWidth - 20), x + 10, y + 82);
+  }
+  return y + boxHeight + 8;
+}
+
+function PdfFooter(doc, log) {
+  const pageCount = doc.getNumberOfPages();
+  const reportNumber = getDailyReportNumber(log);
+  const projectName = doc.splitTextToSize(getProjectName(log), 230)[0];
+
+  for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
+    doc.setPage(pageNumber);
+    const pageWidth = getPageWidth(doc);
+    const pageHeight = getPageHeight(doc);
+    doc.setDrawColor(...PDF_COLORS.line);
+    doc.line(PAGE_MARGIN, pageHeight - 24, pageWidth - PAGE_MARGIN, pageHeight - 24);
+    setReportFont(doc, "regular", 8, PDF_COLORS.muted);
+    doc.text(projectName, PAGE_MARGIN, pageHeight - 12);
+    doc.text(reportNumber, pageWidth / 2, pageHeight - 12, { align: "center" });
+    doc.text(`Page ${pageNumber} of ${pageCount}`, pageWidth - PAGE_MARGIN, pageHeight - 12, { align: "right" });
+  }
+}
+
+function getConcreteReports(log) {
+  return (log.activities || []).flatMap((activity) => (
+    getScopedActivityReports(activity, log).map((report) => ({ report, activity }))
+  ));
+}
+
+function sentenceCase(text) {
+  const value = String(text || "").trim();
+  if (!value) return "";
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function reportParagraph(doc, text, x, y, width, options = {}) {
+  setReportFont(doc, options.weight || "regular", options.size || 10, options.color || PDF_COLORS.navy);
+  const lines = doc.splitTextToSize(text, width);
+  const lineHeightFactor = options.lineHeightFactor || 1.4;
+  doc.text(lines, x, y, { lineHeightFactor });
+  return y + lines.length * (options.size || 10) * lineHeightFactor;
+}
+
+function drawRule(doc, y, color = PDF_COLORS.line) {
+  doc.setDrawColor(...color);
+  doc.setLineWidth(0.6);
+  doc.line(PAGE_MARGIN, y, getPageWidth(doc) - PAGE_MARGIN, y);
+  doc.setLineWidth(0.2);
+}
+
+function renderDocumentSectionTitle(doc, title, y, options = {}) {
+  y = ensurePage(doc, y, options.minSpace || 80);
+  setReportFont(doc, "semibold", options.size || 14, PDF_COLORS.navy);
+  doc.text(String(title).toUpperCase(), PAGE_MARGIN, y);
+  drawRule(doc, y + 7);
+  return y + 24;
+}
+
+function renderLabelValue(doc, label, value, x, y, width, options = {}) {
+  setReportFont(doc, "semibold", options.labelSize || 8.5, PDF_COLORS.muted);
+  doc.text(String(label).toUpperCase(), x, y);
+  setReportFont(doc, "regular", options.valueSize || 10, PDF_COLORS.navy);
+  const lines = doc.splitTextToSize(pdfValue(value), width);
+  doc.text(lines, x, y + 13, { lineHeightFactor: 1.4 });
+  return y + 13 + lines.length * (options.valueSize || 10) * 1.4;
+}
+
+function renderMetadataRows(doc, rows, y, options = {}) {
+  const columns = options.columns || 2;
+  const gap = 20;
+  const cellWidth = (getContentWidth(doc) - gap * (columns - 1)) / columns;
+  let cursor = y;
+  for (let start = 0; start < rows.length; start += columns) {
+    const row = rows.slice(start, start + columns);
+    const rowHeight = Math.max(...row.map((item) => {
+      setReportFont(doc, "regular", 10, PDF_COLORS.navy);
+      return 22 + doc.splitTextToSize(pdfValue(item.value), cellWidth).length * 10;
+    }));
+    cursor = ensurePage(doc, cursor, rowHeight + 8);
+    row.forEach((item, index) => {
+      renderLabelValue(doc, item.label, item.value, PAGE_MARGIN + index * (cellWidth + gap), cursor, cellWidth);
+    });
+    cursor += rowHeight + 8;
+  }
+  return cursor;
+}
+
+function renderCompactGrid(doc, items, y, options = {}) {
+  const columns = options.columns || 3;
+  const gap = options.gap ?? 0;
+  const cellWidth = (getContentWidth(doc) - gap * (columns - 1)) / columns;
+  const rowHeight = options.rowHeight || 26;
+  const labelWidth = options.labelWidth || Math.min(72, cellWidth * 0.38);
+  const rows = Math.ceil(items.length / columns);
+  y = ensurePage(doc, y, rows * rowHeight + 4);
+  const showBorders = options.borders === true;
+
+  for (let start = 0; start < items.length; start += columns) {
+    const rowIndex = Math.floor(start / columns);
+    const row = items.slice(start, start + columns);
+    row.forEach((item, index) => {
+      const x = PAGE_MARGIN + index * (cellWidth + gap);
+      if (showBorders) {
+        doc.setDrawColor(...PDF_COLORS.line);
+        doc.setFillColor(...(rowIndex % 2 === 0 ? PDF_COLORS.soft : PDF_COLORS.white));
+        doc.rect(x, y, cellWidth, rowHeight, "FD");
+      }
+      setReportFont(doc, "semibold", options.labelSize || 7.8, PDF_COLORS.muted);
+      doc.text(`${String(item.label || "").toUpperCase()}:`, x + (showBorders ? 6 : 0), y + 15);
+      setReportFont(doc, "regular", options.valueSize || 8.8, PDF_COLORS.navy);
+      doc.text(doc.splitTextToSize(pdfValue(item.value), cellWidth - labelWidth - 10), x + labelWidth, y + 15);
+    });
+    y += rowHeight;
+  }
+  return y + (options.afterGap ?? 12);
+}
+
+function renderCompactSectionTitle(doc, title, y, options = {}) {
+  y = ensurePage(doc, y, options.minSpace || 50);
+  setReportFont(doc, "semibold", options.size || 12, PDF_COLORS.navy);
+  doc.text(String(title), PAGE_MARGIN, y);
+  drawRule(doc, y + 6);
+  return y + 20;
+}
+
+async function renderEngineeringTitleBlock(doc, log, y) {
+  const logoSource = await sourceToDataUrl(log.companyLogoUrl || log.company_logo_url || COMPANY_LOGO_URL) || getDullesLogoDataUrl();
+  const headerHeight = 76;
+  y = ensurePage(doc, y, 145);
+  doc.setDrawColor(...PDF_COLORS.line);
+  doc.setFillColor(...PDF_COLORS.white);
+  doc.rect(PAGE_MARGIN, y, getContentWidth(doc), headerHeight, "S");
+
+  if (logoSource?.startsWith("data:image/")) {
+    addImageToPdf(doc, logoSource, { fileType: "image/png" }, PAGE_MARGIN + 10, y + 10, 76, 30);
+  }
+  setReportFont(doc, "regular", 8.5, PDF_COLORS.muted);
+  doc.text(COMPANY_NAME, PAGE_MARGIN + 10, y + 52);
+
+  setReportFont(doc, "semibold", 24, PDF_COLORS.navy);
+  doc.text("DAILY FIELD REPORT", getPageWidth(doc) / 2, y + 24, { align: "center" });
+  setReportFont(doc, "regular", 10, PDF_COLORS.navy);
+  doc.text(getProjectName(log), getPageWidth(doc) / 2, y + 42, { align: "center" });
+  setReportFont(doc, "regular", 8.2, PDF_COLORS.muted);
+  doc.text(`Generated: ${formatDateTime(log.pdfGeneratedAt || log.pdf_generated_at || new Date().toISOString())}`, getPageWidth(doc) - PAGE_MARGIN - 10, y + 62, { align: "right" });
+
+  return renderCompactGrid(doc, [
+    { label: "Project Name", value: getProjectName(log) },
+    { label: "Project No.", value: getProjectNumber(log) },
+    { label: "Date", value: formatDateOnly(getLogDate(log)) },
+    { label: "Technician", value: getTechnicianName(log) },
+    { label: "Shift", value: log.shift || log.shift_name || "N/A" },
+    { label: "Status", value: formatStatus(log.status || "Pending Manager Review") },
+    { label: "Report No.", value: getDailyReportNumber(log) }
+  ], y + headerHeight + 12, { columns: 3, rowHeight: 22, labelWidth: 68, afterGap: 14 });
+}
+
+function getExecutiveSummaryText(log) {
+  const activities = log.activities || [];
+  const reports = getConcreteReports(log);
+  const weather = log.weatherCondition || log.weather || "Not recorded";
+  const activitySentence = activities.length === 1
+    ? "One activity was completed during the reporting period."
+    : `${activities.length} activities were completed during the reporting period.`;
+  const reportSentence = reports.length === 1
+    ? "One concrete test log was submitted."
+    : `${reports.length} concrete test logs were submitted.`;
+  return [
+    activitySentence,
+    reportSentence,
+    `Weather conditions were ${String(weather).toLowerCase()}.`,
+    `Report is ${formatStatus(log.status || "Pending Manager Review").toLowerCase()}.`
+  ].join(" ");
+}
+
+function renderExecutiveNarrative(doc, log, y) {
+  const reports = getConcreteReports(log);
+  const attachments = getAllAttachments(log);
+  y = renderCompactSectionTitle(doc, "Executive Summary", y, { minSpace: 94 });
+  y = reportParagraph(doc, getExecutiveSummaryText(log), PAGE_MARGIN, y, getContentWidth(doc), { size: 9.2 }) + 8;
+  return renderCompactGrid(doc, [
+    { label: "Activities", value: (log.activities || []).length },
+    { label: "Reports", value: reports.length },
+    { label: "Photos", value: attachments.filter(isPhotoAttachment).length },
+    { label: "Weather", value: log.weatherCondition || log.weather || "N/A" },
+    { label: "Status", value: formatStatus(log.status || "Pending Manager Review") }
+  ], y, { columns: 5, rowHeight: 23, labelWidth: 50, labelSize: 7.2, valueSize: 8.2, afterGap: 14 });
+}
+
+function renderActivitiesNarrative(doc, log, y) {
+  const activities = log.activities || [];
+  y = renderCompactSectionTitle(doc, "Activities", y, { minSpace: 78 });
+  if (!activities.length) {
+    return reportParagraph(doc, "No activities were recorded for this reporting period.", PAGE_MARGIN, y, getContentWidth(doc), { size: 9.2 }) + 14;
+  }
+
+  activities.forEach((activity, index) => {
+    const descriptionLines = doc.splitTextToSize(sentenceCase(activity.description || "Documents work performed."), getContentWidth(doc) - 72);
+    const blockHeight = 50 + descriptionLines.length * 10;
+    y = ensurePage(doc, y, blockHeight);
+    setReportFont(doc, "semibold", 10.5, PDF_COLORS.navy);
+    doc.text(`Activity ${String(index + 1).padStart(2, "0")}: ${getActivityName(activity, index)}`, PAGE_MARGIN, y);
+    y += 12;
+    y = renderCompactGrid(doc, [
+      { label: "Location", value: activity.location || "N/A" },
+      { label: "Status", value: formatStatus(activity.status || "In Progress") },
+      { label: "Type", value: getActivityType(activity) }
+    ], y, { columns: 3, rowHeight: 23, labelWidth: 58, afterGap: 6 });
+    setReportFont(doc, "semibold", 8.2, PDF_COLORS.muted);
+    doc.text("DESCRIPTION:", PAGE_MARGIN, y + 8);
+    setReportFont(doc, "regular", 9, PDF_COLORS.navy);
+    doc.text(descriptionLines, PAGE_MARGIN + 72, y + 8, { lineHeightFactor: 1.35 });
+    y += Math.max(18, descriptionLines.length * 10) + 12;
+  });
+  return y;
+}
+
+function getReportResult(report) {
+  const records = getReportRecords(report);
+  const statuses = records.map((record) => formatStatus(getRecordField(record, ["record_result", "row_status", "recordResult", "status"]))).filter(Boolean);
+  if (!statuses.length) return formatStatus(report.status || report.reportStatus || "Submitted");
+  if (statuses.some((status) => status.toLowerCase().includes("fail"))) return "Fail";
+  if (statuses.some((status) => status.toLowerCase().includes("retest"))) return "Retest";
+  if (statuses.every((status) => status.toLowerCase().includes("pass"))) return "Pass";
+  return statuses[0];
+}
+
+function getDarkTableHeadStyles(fontSize = 9) {
+  return {
+    fillColor: PDF_COLORS.navy,
+    textColor: PDF_COLORS.white,
+    fontStyle: "bold",
+    fontSize
+  };
+}
+
+function renderConcreteSummaries(doc, log, y) {
+  const reports = getConcreteReports(log);
+  y = renderReferenceSectionBar(doc, "Concrete Test Log Summary", y, { afterGap: 10 });
+  if (!reports.length) {
+    return reportParagraph(doc, "No concrete test logs were submitted with this daily field report.", PAGE_MARGIN, y, getContentWidth(doc), { size: 9.2 }) + 14;
+  }
+
+  y = ensurePage(doc, y, 34 + reports.length * 18);
+  autoTable(doc, {
+    startY: y,
+    head: [["DFR No.", "Mix No.", "Strength", "Slump", "Air %", "Unit Wt", "Result"]],
+    body: reports.map(({ report }) => [
+      getReportDfrNumber(report),
+      pdfValue(getReportSpecificationValue(report, ["mix_number", "mix_no", "mixNumber", "mixNo"])),
+      pdfValue(getReportSpecificationValue(report, ["speed_of_stress_psi", "speed_of_stress", "strength_spec", "specified_strength_psi", "specified_strength", "specifiedStrength"])),
+      pdfValue(getReportSpecificationValue(report, ["slump_in", "slump", "slumpIn"])),
+      pdfValue(getReportSpecificationValue(report, ["air_content_percent", "air_content", "airContent", "airContentPercent"])),
+      pdfValue(getReportSpecificationValue(report, ["unit_weight_lbs_ft3", "unit_weight", "unitWeight", "unitWeightLbsFt3"])),
+      getReportResult(report)
+    ]),
+    theme: "grid",
+    margin: { left: PAGE_MARGIN, right: PAGE_MARGIN, top: PAGE_TOP_MARGIN, bottom: PAGE_BOTTOM_MARGIN + 16 },
+    tableWidth: getContentWidth(doc),
+    styles: {
+      font: reportFontsRegistered ? REPORT_FONT_FAMILY : "helvetica",
+      fontSize: 8.4,
+      cellPadding: { top: 5, right: 7, bottom: 5, left: 7 },
+      lineColor: PDF_COLORS.line,
+      lineWidth: 0.35,
+      textColor: PDF_COLORS.navy,
+      minCellHeight: 21,
+      valign: "middle"
+    },
+    headStyles: getDarkTableHeadStyles(8.6),
+    alternateRowStyles: { fillColor: PDF_COLORS.white }
+  });
+  return (doc.lastAutoTable?.finalY || y) + 12;
+}
+
+const DAILY_LOG_CONCRETE_RECORD_COLUMNS = [
+  { header: "Test #", width: 25 },
+  { header: "Ticket #", width: 36 },
+  { header: "Truck #", width: 36 },
+  { header: "CY", width: 22 },
+  { header: "Batch", width: 34 },
+  { header: "Arrival", width: 34 },
+  { header: "Tested", width: 34 },
+  { header: "Finish", width: 34 },
+  { header: "Min", width: 26 },
+  { header: "Result", width: 38 },
+  { header: "Water", width: 32 },
+  { header: "Air Temp", width: 34 },
+  { header: "Conc Temp", width: 38 },
+  { header: "Slump", width: 30 },
+  { header: "Air %", width: 28 },
+  { header: "Unit Wt", width: 34 },
+  { header: "Spread", width: 30 },
+  { header: "J-Ring", width: 30 },
+  { header: "Set #", width: 42 },
+  { header: "Lab", width: 28 },
+  { header: "Field", width: 30 },
+  { header: "Comments", width: 64, align: "left" }
+];
+
+function getDailyLogConcreteColumnStyles(doc) {
+  const totalWidth = DAILY_LOG_CONCRETE_RECORD_COLUMNS.reduce((sum, column) => sum + column.width, 0);
+  const scale = getContentWidth(doc) / totalWidth;
+  return DAILY_LOG_CONCRETE_RECORD_COLUMNS.reduce((styles, column, index) => {
+    styles[index] = {
+      cellWidth: column.width * scale,
+      halign: column.align || "center"
+    };
+    return styles;
+  }, {});
+}
+
+function getDailyLogConcreteRecordRows(records) {
+  return records.map((record, index) => [
+    getRecordField(record, ["test_number", "testNumber"]) || index + 1,
+    getRecordValue(record, ["ticket_number", "ticketNumber"]),
+    getRecordValue(record, ["truck_number", "truckNumber"]),
+    getRecordValue(record, ["cubic_yards", "cubicYards"]),
+    getRecordValue(record, ["batch_time", "time_batched", "timeBatched"]),
+    getRecordValue(record, ["arrival_time", "arrivalTime"]),
+    getRecordValue(record, ["testing_time", "time_tested", "timeTested"]),
+    getRecordValue(record, ["finish_unload_time", "finish_unload", "finishUnload"]),
+    getRecordValue(record, ["actual_minutes", "actualMinutes"]),
+    formatStatus(getRecordField(record, ["record_result", "row_status", "recordResult", "status"])),
+    getRecordValue(record, ["water_added_gal", "waterAdded"]),
+    getRecordValue(record, ["air_temp_f", "airTempF", "airTemp"]),
+    getRecordValue(record, ["concrete_temp_f", "concreteTempF", "concreteTemp"]),
+    getRecordValue(record, ["slump_in", "slump"]),
+    getRecordValue(record, ["air_content_percent", "airContent"]),
+    getRecordValue(record, ["unit_weight_lbs_ft3", "unitWeight"]),
+    getRecordValue(record, ["spread_in", "spread"]),
+    getRecordValue(record, ["j_ring_in", "jRing"]),
+    getRecordValue(record, ["set_number", "setNumber"]),
+    getRecordValue(record, ["lab_cylinders", "lab_samples", "labSamples"]),
+    getRecordValue(record, ["field_cylinders", "field_samples", "fieldSamples"]),
+    getRecordValue(record, ["inspector_notes", "comments", "notes"])
+  ]);
+}
+
+function getRecordValue(record, keys) {
+  return pdfValue(getRecordField(record, keys));
+}
+
+function inlineFields(fields) {
+  return fields.map(({ label, value }) => `${label} ${pdfValue(value)}`).join(" | ");
+}
+
+function getTestRecordHeight(doc, record) {
+  const width = getContentWidth(doc) - 20;
+  const rows = getTestRecordRows(record);
+  setReportFont(doc, "regular", 8.4, PDF_COLORS.navy);
+  return 34 + rows.reduce((sum, row) => {
+    const lines = doc.splitTextToSize(`${row.label}: ${row.value}`, width - 80);
+    return sum + Math.max(17, lines.length * 9.5 + 6);
+  }, 0);
+}
+
+function getTestRecordRows(record) {
+  return [{
+    label: "Delivery",
+    value: inlineFields([
+      { label: "Ticket", value: getRecordValue(record, ["ticket_number", "ticketNumber"]) },
+      { label: "Truck", value: getRecordValue(record, ["truck_number", "truckNumber"]) },
+      { label: "CY", value: getRecordValue(record, ["cubic_yards", "cubicYards"]) },
+      { label: "Batch", value: getRecordValue(record, ["batch_time", "time_batched", "timeBatched"]) },
+      { label: "Arrival", value: getRecordValue(record, ["arrival_time", "arrivalTime"]) },
+      { label: "Tested", value: getRecordValue(record, ["testing_time", "time_tested", "timeTested"]) },
+      { label: "Finish", value: getRecordValue(record, ["finish_unload_time", "finish_unload", "finishUnload"]) },
+      { label: "Minutes", value: getRecordValue(record, ["actual_minutes", "actualMinutes"]) }
+    ])
+  }, {
+    label: "Fresh Concrete",
+    value: inlineFields([
+      { label: "Water Added", value: getRecordValue(record, ["water_added_gal", "waterAdded"]) },
+      { label: "Air Temp", value: getRecordValue(record, ["air_temp_f", "airTempF", "airTemp"]) },
+      { label: "Concrete Temp", value: getRecordValue(record, ["concrete_temp_f", "concreteTempF", "concreteTemp"]) },
+      { label: "Slump", value: getRecordValue(record, ["slump_in", "slump"]) },
+      { label: "Air", value: getRecordValue(record, ["air_content_percent", "airContent"]) },
+      { label: "Unit Wt", value: getRecordValue(record, ["unit_weight_lbs_ft3", "unitWeight"]) },
+      { label: "Spread", value: getRecordValue(record, ["spread_in", "spread"]) },
+      { label: "J-Ring", value: getRecordValue(record, ["j_ring_in", "jRing"]) }
+    ])
+  }, {
+    label: "Strength / Cylinders",
+    value: inlineFields([
+      { label: formatStrengthRequired(getRecordField(record, ["strength_verification_required", "strengthVerificationRequired"])), value: "" },
+      { label: "Set", value: getRecordValue(record, ["set_number", "setNumber"]) },
+      { label: "Lab", value: getRecordValue(record, ["lab_cylinders", "lab_samples", "labSamples"]) },
+      { label: "Field", value: getRecordValue(record, ["field_cylinders", "field_samples", "fieldSamples"]) }
+    ])
+  }, {
+    label: "Result",
+    value: formatStatus(getRecordField(record, ["record_result", "row_status", "recordResult", "status"]))
+  }, {
+    label: "Comments",
+    value: getRecordValue(record, ["inspector_notes", "comments", "notes"])
+  }];
+}
+
+function renderTestRecordBlock(doc, record, index, y) {
+  const blockHeight = getTestRecordHeight(doc, record);
+  y = ensurePage(doc, y, blockHeight);
+  const x = PAGE_MARGIN;
+  const width = getContentWidth(doc);
+  doc.setDrawColor(...PDF_COLORS.line);
+  doc.setFillColor(...PDF_COLORS.white);
+  doc.rect(x, y, width, blockHeight, "FD");
+  doc.setFillColor(...PDF_COLORS.soft);
+  doc.rect(x, y, width, 24, "F");
+  setReportFont(doc, "semibold", 10, PDF_COLORS.navy);
+  doc.text(`TEST RECORD ${index + 1}`, x + 8, y + 15);
+
+  let rowY = y + 32;
+  getTestRecordRows(record).forEach((row) => {
+    setReportFont(doc, "semibold", 8.2, PDF_COLORS.muted);
+    doc.text(`${row.label}:`, x + 8, rowY);
+    setReportFont(doc, "regular", 8.4, PDF_COLORS.navy);
+    const lines = doc.splitTextToSize(row.value, width - 94);
+    doc.text(lines, x + 88, rowY, { lineHeightFactor: 1.35 });
+    rowY += Math.max(17, lines.length * 9.5 + 6);
+  });
+  return y + blockHeight + 12;
+}
+
+function renderConcreteAppendix(doc, log, y) {
+  const reports = getConcreteReports(log);
+  if (!reports.length) return y;
+  doc.addPage("letter", "portrait");
+  y = PAGE_TOP_MARGIN;
+  setReportFont(doc, "semibold", 14, PDF_COLORS.navy);
+  doc.text("APPENDIX A - CONCRETE TEST LOG", PAGE_MARGIN, y);
+  drawRule(doc, y + 8, PDF_COLORS.navy);
+  y += 28;
+
+  reports.forEach(({ report }, reportIndex) => {
+    y = ensurePage(doc, y, 185);
+    setReportFont(doc, "semibold", 13, PDF_COLORS.navy);
+    doc.text(`${reportIndex + 1}. ${getReportDfrNumber(report)}`, PAGE_MARGIN, y);
+    y += 18;
+    y = renderSpecificationSummary(doc, report, y);
+    const records = getReportRecords(report);
+    if (!records.length) {
+      y = reportParagraph(doc, "No test records were recorded for this concrete test log.", PAGE_MARGIN, y, getContentWidth(doc)) + 18;
+    } else {
+      records.forEach((record, recordIndex) => {
+        y = renderTestRecordBlock(doc, record, recordIndex, y);
+      });
+    }
+    y += 6;
+  });
+  return y;
+}
+
+async function renderEngineeringApproval(doc, log, y) {
+  y = renderCompactSectionTitle(doc, "Approval", y, { minSpace: 92 });
+  const gap = 28;
+  const columnWidth = (getContentWidth(doc) - gap) / 2;
+  const entries = [
+    {
+      title: "Submitted By",
+      name: getTechnicianName(log),
+      date: formatDateTime(log.submittedAt || log.submitted_at),
+      image: log.technicianSignature || log.technician_signature || log.technicianSignatureUrl || log.technician_signature_url
+    },
+    {
+      title: "Reviewed By",
+      name: log.approvedBy || log.approved_by || "Pending Review",
+      date: log.approvedAt || log.approved_at ? formatDateTime(log.approvedAt || log.approved_at) : "Pending Review",
+      image: log.qcSignature || log.qc_signature || log.qcSignatureUrl || log.qc_signature_url
+    }
+  ];
+
+  for (const [index, entry] of entries.entries()) {
+    const x = PAGE_MARGIN + index * (columnWidth + gap);
+    setReportFont(doc, "semibold", 10, PDF_COLORS.navy);
+    doc.text(entry.title, x, y);
+    const hasSignature = await renderSignatureImage(doc, entry.image, x, y + 12, columnWidth, 24);
+    if (!hasSignature) {
+      doc.setDrawColor(...PDF_COLORS.line);
+      doc.line(x, y + 35, x + columnWidth, y + 35);
+    }
+    renderLabelValue(doc, "Name", entry.name, x, y + 50, columnWidth, { labelSize: 7.8, valueSize: 8.8 });
+    renderLabelValue(doc, "Date", entry.date, x, y + 80, columnWidth, { labelSize: 7.8, valueSize: 8.8 });
+  }
+
+  return renderLabelValue(doc, "Status", formatStatus(log.status || "Pending Manager Review"), PAGE_MARGIN, y + 112, getContentWidth(doc), { labelSize: 7.8, valueSize: 9 }) + 10;
+}
+
+async function renderReferenceDailyLogHeader(doc, log, y) {
+  const logoSource = await sourceToDataUrl(log.companyLogoUrl || log.company_logo_url || COMPANY_LOGO_URL) || getDullesLogoDataUrl();
+  const pageWidth = getPageWidth(doc);
+  const headerX = PAGE_MARGIN;
+  const headerWidth = getContentWidth(doc);
+  const headerHeight = 96;
+  const statusText = formatStatus(log.status || "Draft");
+  const headerMuted = [203, 213, 225];
+  const headerSoft = [226, 232, 240];
+  const setHeaderFont = (color, size, style = "normal") => {
+    doc.setTextColor(...color);
+    doc.setFont("helvetica", style);
+    doc.setFontSize(size);
+  };
+  y = ensurePage(doc, y, headerHeight + 18);
+
+  doc.setFillColor(...PDF_COLORS.navy);
+  doc.roundedRect(headerX, y, headerWidth, headerHeight, 12, 12, "F");
+
+  const logoX = headerX + 14;
+  const logoY = y + 14;
+  const logoBoxSize = 58;
+  doc.setFillColor(...PDF_COLORS.white);
+  doc.roundedRect(logoX, logoY, logoBoxSize, logoBoxSize, 9, 9, "F");
+  const logoRendered = logoSource?.startsWith("data:image/")
+    ? addImageToPdf(doc, logoSource, { fileType: "image/png" }, logoX + 7, logoY + 15, logoBoxSize - 14, 28)
+    : false;
+  if (!logoRendered) {
+    setHeaderFont(PDF_COLORS.navy, 16, "bold");
+    doc.text("DE", logoX + logoBoxSize / 2, logoY + 36, { align: "center" });
+  }
+
+  setHeaderFont(PDF_COLORS.white, 8.5, "bold");
+  doc.text(`Technician: ${getTechnicianName(log)}`, logoX, y + 79);
+  setHeaderFont(headerSoft, 8, "bold");
+  doc.text(`Generated: ${formatDateTime(log.pdfGeneratedAt || log.pdf_generated_at || new Date().toISOString())}`, logoX, y + 91);
+
+  setHeaderFont(PDF_COLORS.white, 20, "bold");
+  doc.text("Daily Log", pageWidth / 2, y + 31, { align: "center" });
+  setHeaderFont(headerMuted, 10, "bold");
+  doc.text(getProjectName(log), pageWidth / 2, y + 48, { align: "center" });
+  setHeaderFont(headerSoft, 8, "normal");
+  doc.text(`DFR: ${getDailyReportNumber(log)}`, pageWidth / 2, y + 68, { align: "center" });
+  doc.text(`Date: ${formatDateOnly(getLogDate(log))}`, pageWidth / 2, y + 81, { align: "center" });
+
+  setHeaderFont(PDF_COLORS.navy, 7.4, "bold");
+  const badgeText = statusText.toUpperCase();
+  const pillWidth = Math.max(78, doc.getTextWidth(badgeText) + 14);
+  const pillHeight = 18;
+  const pillX = headerX + headerWidth - pillWidth - 14;
+  const pillY = y + 66;
+  doc.setFillColor(...PDF_COLORS.soft);
+  doc.roundedRect(pillX, pillY, pillWidth, pillHeight, 7, 7, "F");
+  setHeaderFont(PDF_COLORS.navy, 7.4, "bold");
+  doc.text(badgeText, pillX + pillWidth / 2, pillY + 12, { align: "center" });
+
+  return y + headerHeight + 18;
+}
+
+function renderReferenceSectionBar(doc, title, y, options = {}) {
+  const barHeight = options.height || 20;
+  y = ensurePage(doc, y, barHeight + 22);
+  doc.setFillColor(...PDF_COLORS.navy);
+  doc.roundedRect(PAGE_MARGIN, y, getContentWidth(doc), barHeight, 4, 4, "F");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(options.size || 9.2);
+  doc.setTextColor(...PDF_COLORS.white);
+  doc.text(String(title).toUpperCase(), PAGE_MARGIN + 10, y + 13.5);
+  return y + barHeight + (options.afterGap ?? 12);
+}
+
+function renderReferenceFieldCard(doc, item, x, y, width, height) {
+  const label = String(item.label || "").toUpperCase();
+  const value = pdfValue(item.value);
+  doc.setFillColor(...PDF_COLORS.soft);
+  doc.setDrawColor(205, 216, 228);
+  doc.roundedRect(x, y, width, height, 6, 6, "FD");
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(7.8);
+  doc.setTextColor(50, 74, 104);
+  doc.text(label, x + 10, y + 12);
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(9.4);
+  doc.setTextColor(...PDF_COLORS.navy);
+  const valueLines = doc.splitTextToSize(value, width - 20);
+  doc.text(valueLines.slice(0, 2), x + 10, y + 26, { lineHeightFactor: 1.1 });
+}
+
+function renderReferenceSection(doc, title, items, y, options = {}) {
+  const columns = options.columns || 2;
+  const gapX = options.gapX ?? 10;
+  const gapY = options.gapY ?? 8;
+  const cardHeight = options.cardHeight || 36;
+  const rows = Math.ceil(items.length / columns);
+  const sectionHeight = 20 + 12 + rows * cardHeight + Math.max(rows - 1, 0) * gapY + 14;
+  y = ensurePage(doc, y, Math.max(options.minSpace || 86, sectionHeight));
+  y = renderReferenceSectionBar(doc, title, y);
+
+  const cardWidth = (getContentWidth(doc) - gapX * (columns - 1)) / columns;
+  items.forEach((item, index) => {
+    const row = Math.floor(index / columns);
+    const column = index % columns;
+    const x = PAGE_MARGIN + column * (cardWidth + gapX);
+    const cardY = y + row * (cardHeight + gapY);
+    renderReferenceFieldCard(doc, item, x, cardY, cardWidth, cardHeight);
+  });
+
+  return y + rows * cardHeight + Math.max(rows - 1, 0) * gapY + (options.afterGap ?? 14);
+}
+
+function renderReferenceExecutiveSummary(doc, log, y) {
+  y = ensurePage(doc, y, 68);
+  y = renderReferenceSectionBar(doc, "Executive Summary", y, { afterGap: 8 });
+  const text = getExecutiveSummaryText(log);
+  const lines = doc.splitTextToSize(text, getContentWidth(doc) - 22);
+  const boxHeight = Math.max(34, lines.length * 9 * 1.35 + 18);
+  doc.setFillColor(...PDF_COLORS.white);
+  doc.setDrawColor(205, 216, 228);
+  doc.roundedRect(PAGE_MARGIN, y, getContentWidth(doc), boxHeight, 4, 4, "S");
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+  doc.setTextColor(...PDF_COLORS.navy);
+  doc.text(lines, PAGE_MARGIN + 11, y + 15, { lineHeightFactor: 1.35 });
+  return y + boxHeight + 14;
+}
+
+function renderReferenceActivities(doc, log, y) {
+  const activities = log.activities || [];
+  y = ensurePage(doc, y, 60);
+  y = renderReferenceSectionBar(doc, "Activities", y, { afterGap: 8 });
+  if (!activities.length) {
+    return reportParagraph(doc, "No activities recorded.", PAGE_MARGIN, y + 8, getContentWidth(doc), { size: 10 }) + 12;
+  }
+  autoTable(doc, {
+    startY: y,
+    head: [["Activity", "Location", "Status", "Type", "Work Performed"]],
+    body: activities.map((activity, index) => [
+      `${String(index + 1).padStart(2, "0")} - ${getActivityName(activity, index)}`,
+      pdfValue(activity.location),
+      formatStatus(activity.status || "In Progress"),
+      getActivityType(activity),
+      sentenceCase(activity.description || "Documents work performed.")
+    ]),
+    theme: "grid",
+    margin: { left: PAGE_MARGIN, right: PAGE_MARGIN, top: PAGE_TOP_MARGIN, bottom: PAGE_BOTTOM_MARGIN + 16 },
+    tableWidth: getContentWidth(doc),
+    styles: {
+      font: reportFontsRegistered ? REPORT_FONT_FAMILY : "helvetica",
+      fontSize: 8.4,
+      cellPadding: { top: 5, right: 7, bottom: 5, left: 7 },
+      lineColor: PDF_COLORS.line,
+      lineWidth: 0.35,
+      textColor: PDF_COLORS.navy,
+      minCellHeight: 21,
+      valign: "middle"
+    },
+    headStyles: getDarkTableHeadStyles(8.6),
+    columnStyles: { 0: { cellWidth: 92 }, 1: { cellWidth: 72 }, 2: { cellWidth: 68 }, 3: { cellWidth: 86 } }
+  });
+  return (doc.lastAutoTable?.finalY || y) + 12;
+}
+
+function renderReferenceConcreteReportSections(doc, log, y) {
+  const reports = getConcreteReports(log);
+  if (!reports.length) return y;
+  y = renderConcreteSummaries(doc, log, y);
+
+  for (const { report } of reports) {
+    const records = getReportRecords(report);
+    if (!records.length) continue;
+    y = ensurePage(doc, y, 84);
+    y = renderReferenceSectionBar(doc, "Concrete Delivery & Testing Records", y, { afterGap: 7 });
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(...PDF_COLORS.muted);
+    doc.text("Delivery log format: one row per truck/test record. Headers repeat automatically across pages.", PAGE_MARGIN, y);
+    y += 8;
+
+    autoTable(doc, {
+      startY: y,
+      head: [DAILY_LOG_CONCRETE_RECORD_COLUMNS.map((column) => column.header)],
+      body: getDailyLogConcreteRecordRows(records),
+      theme: "grid",
+      margin: { left: PAGE_MARGIN, right: PAGE_MARGIN, top: PAGE_TOP_MARGIN, bottom: PAGE_BOTTOM_MARGIN + 16 },
+      tableWidth: getContentWidth(doc),
+      showHead: "everyPage",
+      styles: {
+        font: reportFontsRegistered ? REPORT_FONT_FAMILY : "helvetica",
+        fontSize: 5.8,
+        cellPadding: { top: 3.5, right: 2.2, bottom: 3.5, left: 2.2 },
+        lineColor: PDF_COLORS.line,
+        lineWidth: 0.35,
+        textColor: PDF_COLORS.navy,
+        minCellHeight: 16,
+        overflow: "linebreak",
+        valign: "middle"
+      },
+      headStyles: getDarkTableHeadStyles(5.8),
+      columnStyles: getDailyLogConcreteColumnStyles(doc)
+    });
+    y = (doc.lastAutoTable?.finalY || y) + 14;
+  }
+  return y;
+}
+
+function renderReferenceAttachments(doc, log, y) {
+  const attachments = getAllAttachments(log);
+  y = ensurePage(doc, y, 48);
+  setReportFont(doc, "semibold", 12, PDF_COLORS.navy);
+  doc.text("Attachments", PAGE_MARGIN, y);
+  y += 16;
+  if (!attachments.length) {
+    setReportFont(doc, "regular", 10, PDF_COLORS.navy);
+    doc.text("No attachments uploaded.", PAGE_MARGIN, y);
+    return y + 14;
+  }
+  attachments.forEach((attachment) => {
+    y = ensurePage(doc, y, 28);
+    setReportFont(doc, "semibold", 10, PDF_COLORS.navy);
+    doc.text(getAttachmentFileName(attachment), PAGE_MARGIN, y);
+    setReportFont(doc, "regular", 9, PDF_COLORS.muted);
+    doc.text(`Type: ${getAttachmentCategory(attachment)}`, PAGE_MARGIN, y + 12);
+    y += 28;
+  });
+  return y + 6;
+}
+
+function renderReferenceQaqcSummary(doc, log, y) {
+  const reports = getConcreteReports(log).map(({ report }) => report);
+  const records = reports.flatMap(getReportRecords);
+  const totalCy = records.reduce((sum, record) => sum + (Number(getRecordField(record, ["cubic_yards", "cubicYards"])) || 0), 0);
+  const totalCylinders = records.reduce((sum, record) => (
+    sum + (Number(getRecordField(record, ["lab_cylinders", "lab_samples", "labSamples"])) || 0) + (Number(getRecordField(record, ["field_cylinders", "field_samples", "fieldSamples"])) || 0)
+  ), 0);
+  const passed = records.filter((record) => formatStatus(getRecordField(record, ["record_result", "row_status", "recordResult", "status"])).toLowerCase().includes("pass")).length;
+  const failed = records.filter((record) => formatStatus(getRecordField(record, ["record_result", "row_status", "recordResult", "status"])).toLowerCase().includes("fail")).length;
+  y = renderReferenceSection(doc, "QA/QC Summary", [
+    { label: "Total Records", value: records.length },
+    { label: "Total Cubic Yards", value: totalCy.toFixed(1) },
+    { label: "Total Cylinders", value: totalCylinders },
+    { label: "Passed Tests", value: passed },
+    { label: "Failed Tests", value: failed },
+    { label: "Pending Review", value: Math.max(records.length - passed - failed, 0) }
+  ], y, { columns: 3, minSpace: 86 });
+  return y;
+}
+
+async function renderReferenceSignatures(doc, log, y) {
+  y = ensurePage(doc, y, 82);
+  setReportFont(doc, "semibold", 12, PDF_COLORS.navy);
+  doc.text("Signatures", PAGE_MARGIN, y);
+  y += 18;
+  const width = getContentWidth(doc);
+  const columns = [PAGE_MARGIN, PAGE_MARGIN + width * 0.34, PAGE_MARGIN + width * 0.68];
+  const labels = ["Technician Signature", "QA Reviewer Signature", "Date Approved"];
+  labels.forEach((label, index) => {
+    setReportFont(doc, "semibold", 9, PDF_COLORS.muted);
+    doc.text(label, columns[index], y);
+    doc.setDrawColor(...PDF_COLORS.line);
+    doc.line(columns[index], y + 26, columns[index] + width * 0.28, y + 26);
+  });
+  await renderSignatureImage(doc, log.technicianSignature || log.technician_signature || log.technicianSignatureUrl || log.technician_signature_url, columns[0], y + 4, width * 0.28, 20);
+  await renderSignatureImage(doc, log.qcSignature || log.qc_signature || log.qcSignatureUrl || log.qc_signature_url, columns[1], y + 4, width * 0.28, 20);
+  setReportFont(doc, "regular", 10, PDF_COLORS.navy);
+  doc.text(log.approvedAt || log.approved_at ? formatDateOnly(log.approvedAt || log.approved_at) : "", columns[2], y + 20);
+  return y + 44;
+}
 export async function generateDailyLogPdfBlob(log) {
   const doc = new JsPDFConstructor({ orientation: "portrait", unit: "pt", format: "letter", compress: true });
-  let y = PAGE_MARGIN;
+  await registerReportFonts(doc);
+  let y = PAGE_TOP_MARGIN;
 
-  y = await renderTitleBlock(doc, log, y);
-  y = renderProjectInformation(doc, log, y);
-  y = renderExecutiveSummary(doc, log, y);
-  y = renderWeather(doc, log, y);
-  y = await renderActivities(doc, log, y);
-  y = renderComments(doc, log, y);
-  await renderSignatures(doc, log, y);
-  addPageFooters(doc, log);
+  y = await renderReferenceDailyLogHeader(doc, log, y);
+  y = renderReferenceSection(doc, "Project Information", [
+    { label: "Project Number", value: getProjectNumber(log) },
+    { label: "Project Name", value: getProjectName(log) },
+    { label: "General Contractor", value: log.generalContractor || log.general_contractor || log.project?.general_contractor || "Not recorded" },
+    { label: "GC Representative", value: log.gcRepresentative || log.gc_representative || "Not recorded" },
+    { label: "Project Location", value: getProjectLocation(log) },
+    { label: "Technician Name", value: getTechnicianName(log) }
+  ], y, { columns: 2, minSpace: 128 });
+  y = renderReferenceSection(doc, "Daily Log", [
+    { label: "Weather", value: log.weatherCondition || log.weather || "Not recorded" },
+    { label: "Shift", value: log.shift || log.shift_name || "Not recorded" },
+    { label: "DFR Number", value: getDailyReportNumber(log) },
+    { label: "Report Time", value: formatTimeOnly(log.submittedAt || log.submitted_at || log.createdAt || log.created_at) },
+    { label: "Inspector Comments", value: log.notes || log.comments || "-" }
+  ], y, { columns: 2, minSpace: 100 });
+  y = renderReferenceExecutiveSummary(doc, log, y);
+  y = renderReferenceActivities(doc, log, y);
+  y = renderReferenceConcreteReportSections(doc, log, y);
+  y = renderReferenceAttachments(doc, log, y);
+  y = renderReferenceQaqcSummary(doc, log, y);
+  await renderReferenceSignatures(doc, log, y);
+  PdfFooter(doc, log);
 
   return doc.output("blob");
 }

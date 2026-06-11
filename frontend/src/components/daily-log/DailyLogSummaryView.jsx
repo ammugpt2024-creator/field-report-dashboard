@@ -5,6 +5,7 @@ import { supabase } from "../../services/supabase";
 import { formatDateTime } from "../../modules/field-engineer/fieldEngineerData";
 import { AttachmentRenderer, formatFileSize } from "./PhotosAttachmentsSection";
 import ConcreteReportInlineContent from "../reports/ConcreteReportInlineContent";
+import CompactionReportInlineContent from "../reports/CompactionReportInlineContent";
 
 const DAILY_LOG_ATTACHMENT_BUCKET = "daily-log-attachments";
 
@@ -537,6 +538,22 @@ function getScopedActivityReports(activity, log) {
     .filter((report) => recordBelongsToActivity(report, activity));
 }
 
+function isCompactionReport(report = {}) {
+  const type = String(report.type || report.reportType || report.report_type || "").toLowerCase();
+  return type.includes("compaction") || type.includes("density") || type.includes("nuclear");
+}
+
+function getCompactionReportStats(report = {}) {
+  const records = Array.isArray(report.testRecords) ? report.testRecords : [];
+  return records.reduce((stats, record) => {
+    const result = String(record.densityResult || record.density_result || "").toLowerCase();
+    if (result === "pass") stats.passCount += 1;
+    if (result === "fail") stats.failCount += 1;
+    if (result === "retest") stats.retestCount += 1;
+    return stats;
+  }, { testCount: records.length, passCount: 0, failCount: 0, retestCount: 0 });
+}
+
 function ConcreteReportSummary({ report, reportIndex = 0, activity, log }) {
   const attachments = getReportAttachments(report)
     .filter((attachment) => recordBelongsToLogOwner(attachment, log))
@@ -550,17 +567,48 @@ function ConcreteReportSummary({ report, reportIndex = 0, activity, log }) {
   const submittedLogStatuses = [DAILY_LOG_STATUS.SUBMITTED, DAILY_LOG_STATUS.APPROVED, DAILY_LOG_STATUS.RETURNED].map((status) => String(status).toLowerCase());
   const shouldShowReportContent = finalReportStatuses.includes(reportStatus) || submittedLogStatuses.includes(logStatus);
   const reportLabel = `Report ${reportIndex + 1}`;
+  const compaction = isCompactionReport(report);
+  const compactionStats = compaction ? getCompactionReportStats(report) : null;
+  const pdfUrl = report.pdfUrl || report.pdf_url || report.finalPdfUrl || report.final_pdf_url || report.pdfPublicUrl || report.pdf_public_url || "";
+  const pdfAvailable = Boolean(pdfUrl || report.pdfStoragePath || report.pdf_storage_path);
 
   return (
     <article className="rounded-2xl border border-blue-100 bg-white p-4">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-400">{reportLabel}</p>
-          <h4 className="mt-1 text-base font-bold text-slate-950">Concrete Report</h4>
+          <h4 className="mt-1 text-base font-bold text-slate-950">{compaction ? "Compaction Report" : "Concrete Report"}</h4>
         </div>
         <span className="w-fit rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-bold text-blue-800">{report.status || "Draft"}</span>
       </div>
-      {shouldShowReportContent && <ConcreteReportInlineContent report={report} reportLabel={reportLabel} />}
+      {compaction && (
+        <>
+          <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+            <Value label="Report Type" value="Compaction Report" />
+            <Value label="Report Number" value={report.reportNumber || report.report_number} />
+            <Value label="Material Type" value={report.materialType || report.material_type} />
+            <Value label="Material Name" value={report.materialName || report.material_name} />
+            <Value label="Test Count" value={compactionStats.testCount} />
+            <Value label="Pass Count" value={compactionStats.passCount} />
+            <Value label="Fail Count" value={compactionStats.failCount} />
+            <Value label="Retest Count" value={compactionStats.retestCount} />
+            <Value label="Photo Count" value={(report.attachments || []).filter((attachment) => String(attachment.attachmentType || attachment.attachment_type || attachment.fileType || attachment.file_type || "").includes("photo") || String(attachment.fileType || attachment.file_type || "").startsWith("image/")).length} />
+            <Value label="Attachment Count" value={(report.attachments || []).filter((attachment) => !(String(attachment.attachmentType || attachment.attachment_type || attachment.fileType || attachment.file_type || "").includes("photo") || String(attachment.fileType || attachment.file_type || "").startsWith("image/"))).length} />
+            <Value label="PDF Available" value={pdfAvailable ? "Yes" : "No"} />
+          </div>
+          {pdfUrl && (
+            <div className="mt-3 flex flex-wrap gap-2">
+              <a href={pdfUrl} target="_blank" rel="noreferrer" className="inline-flex min-h-9 items-center rounded-xl bg-slate-950 px-3 text-xs font-bold text-white">View PDF</a>
+              <a href={pdfUrl} download className="inline-flex min-h-9 items-center rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-800">Download PDF</a>
+            </div>
+          )}
+        </>
+      )}
+      {shouldShowReportContent && (
+        compaction
+          ? <CompactionReportInlineContent report={report} reportLabel={reportLabel} />
+          : <ConcreteReportInlineContent report={report} reportLabel={reportLabel} />
+      )}
       {attachments.length > 0 && (
         <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
           <h4 className="text-base font-bold text-slate-950">Photos & Attachments</h4>
@@ -630,6 +678,7 @@ function ActivitySummaryCard({ activity, index, log }) {
 
 export default function DailyLogSummaryView({ log, onEdit, onViewPdf, onDownloadPdf, onRegeneratePdf }) {
   const [submittedAttachments, setSubmittedAttachments] = useState([]);
+  const [isRegeneratingPdf, setIsRegeneratingPdf] = useState(false);
   const activityIdsKey = (log.activities || []).map((activity) => normalizeId(activity?.id)).join("|");
   const hydratedLog = useMemo(() => ({
     ...log,
@@ -660,7 +709,17 @@ export default function DailyLogSummaryView({ log, onEdit, onViewPdf, onDownload
   const canHavePdf = hydratedLog.status === DAILY_LOG_STATUS.SUBMITTED || isApproved || (isReturned && (hydratedLog.pdfStoragePath || hydratedLog.pdf_storage_path));
   const hasCachedPdf = Boolean(hydratedLog.pdfDataUrl || hydratedLog.pdf_data_url);
   const canUsePdf = canHavePdf && (pdfStatus === "generated" || hasCachedPdf);
-  const canRegeneratePdf = canHavePdf && pdfStatus === "failed";
+  const canRegeneratePdf = canHavePdf && pdfStatus !== "pending" && Boolean(onRegeneratePdf);
+
+  async function handleRegeneratePdf() {
+    if (!onRegeneratePdf || isRegeneratingPdf) return;
+    setIsRegeneratingPdf(true);
+    try {
+      await onRegeneratePdf(hydratedLog);
+    } finally {
+      setIsRegeneratingPdf(false);
+    }
+  }
 
   return (
     <div className="space-y-4">
@@ -695,8 +754,14 @@ export default function DailyLogSummaryView({ log, onEdit, onViewPdf, onDownload
               </>
             )}
             {canRegeneratePdf && (
-              <button type="button" onClick={onRegeneratePdf} className="inline-flex min-h-11 items-center gap-2 rounded-2xl border border-blue-200 bg-blue-50 px-4 text-sm font-bold text-blue-800">
-                <RotateCcw className="h-4 w-4" /> Regenerate PDF
+              <button
+                type="button"
+                onClick={handleRegeneratePdf}
+                disabled={isRegeneratingPdf}
+                className="inline-flex min-h-11 items-center gap-2 rounded-2xl border border-blue-200 bg-blue-50 px-4 text-sm font-bold text-blue-800 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <RotateCcw className={`h-4 w-4 ${isRegeneratingPdf ? "animate-spin" : ""}`} />
+                {isRegeneratingPdf ? "Regenerating..." : "Regenerate PDF"}
               </button>
             )}
           </div>

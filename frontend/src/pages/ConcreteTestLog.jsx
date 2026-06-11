@@ -1232,7 +1232,7 @@ function renderDeliveryRecords(doc, context, cursor, margins) {
 
   const contentWidth = doc.internal.pageSize.getWidth() - margins.left - margins.right;
   const baseColumnWidths = [
-    20, 32, 32, 20, 29, 29, 29, 29, 22, 26, 36, 24, 28, 26, 22, 32, 28, 28, 24, 20, 22, 54
+    20, 32, 32, 20, 29, 29, 29, 29, 22, 26, 36, 24, 28, 26, 22, 32, 28, 28, 32, 24, 20, 22, 54
   ];
   const columnScale = contentWidth / baseColumnWidths.reduce((sum, width) => sum + width, 0);
   const deliveryColumnStyles = baseColumnWidths.reduce((styles, width, index) => {
@@ -1276,6 +1276,7 @@ function renderDeliveryRecords(doc, context, cursor, margins) {
       'Unit Wt',
       'Spread',
       'J-Ring',
+      'Strength',
       'Set #',
       'Lab',
       'Field',
@@ -1302,6 +1303,7 @@ function renderDeliveryRecords(doc, context, cursor, margins) {
         pdfValue(record.unit_weight_lbs_ft3),
         pdfValue(record.spread_in),
         pdfValue(record.j_ring_in),
+        isStrengthVerificationRequired(record) ? 'Required' : 'Not Required',
         pdfValue(record.set_number),
         pdfValue(record.lab_cylinders, '0'),
         pdfValue(record.field_cylinders, '0'),

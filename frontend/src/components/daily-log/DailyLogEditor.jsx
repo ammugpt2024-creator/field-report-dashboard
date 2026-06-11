@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Edit, Plus, Save, Send } from "lucide-react";
 import ActivityReportSelector from "../reports/ActivityReportSelector";
 import ConcreteReportInlineContent from "../reports/ConcreteReportInlineContent";
+import CompactionReportInlineContent from "../reports/CompactionReportInlineContent";
 import BottomActionBar from "../mobile/BottomActionBar";
 import SignatureModal from "../SignatureModal";
 import PhotosAttachmentsSection, { isAllowedDailyLogAttachment } from "./PhotosAttachmentsSection";
@@ -13,7 +14,10 @@ import {
   DAILY_LOG_STATUS,
   getDailyLogById,
   saveDailyLog,
-  submitDailyLog
+  saveDailyLogSignatureToSupabase,
+  submitDailyLog,
+  submitDailyLogToSupabase,
+  updateDailyLogPdfMetadataInSupabase
 } from "../../services/dailyLogService";
 import { regenerateDailyLogPdf } from "../../services/dailyLogPdfService";
 import DailyLogSubmitPanel from "./DailyLogSubmitPanel";
@@ -72,6 +76,26 @@ function SummaryField({ label, children }) {
       {children}
     </label>
   );
+}
+
+function ensureSubmittedDailyLogView() {
+  window.setTimeout(() => {
+    const path = window.location.pathname;
+    if (!path.includes("/technician/daily-log/")) return;
+    // Router navigation from onSubmitted normally lands here already; a hard
+    // reload would kill the deferred PDF generation, so it stays a fallback.
+    if (path.endsWith("/submitted")) return;
+    const currentLogId = path.match(/\/technician\/daily-log\/([^/]+)/)?.[1];
+    window.location.assign(currentLogId ? `/technician/daily-log/${currentLogId}/submitted` : "/technician/dashboard?view=submitted-logs");
+  }, 200);
+}
+
+function withSubmissionTimeout(promise, message, timeoutMs = 15000) {
+  let timeoutId;
+  const timeout = new Promise((_, reject) => {
+    timeoutId = window.setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => window.clearTimeout(timeoutId));
 }
 
 const requiredConcreteSpecFields = [
@@ -172,6 +196,43 @@ function hasConcreteReportContent(report = {}) {
 function isConcreteReportSubmitReady(report = {}) {
   const reportStatus = String(report.status || "").toLowerCase();
   return ["completed", "submitted", "approved", "finalized"].includes(reportStatus) || hasConcreteReportContent(report);
+}
+
+function isCompactionReport(report = {}) {
+  const type = String(report.type || report.reportType || report.report_type || "").toLowerCase();
+  return type.includes("compaction") || type.includes("density") || type.includes("nuclear");
+}
+
+function isCompactionReportSubmitReady(report = {}) {
+  const reportStatus = String(report.status || "").toLowerCase();
+  if (["completed", "submitted", "approved", "finalized"].includes(reportStatus)) return true;
+  const records = Array.isArray(report.testRecords) ? report.testRecords : [];
+  return Boolean(
+    String(report.serialNumber || report.serial_number || "").trim() &&
+    String(report.gaugeModel || report.gauge_model || "").trim() &&
+    String(report.calibrationDueDate || report.calibration_due_date || "").trim() &&
+    String(report.standardizedGauge || report.standardized_gauge || "").toLowerCase() === "yes" &&
+    String(report.materialType || report.material_type || "").trim() &&
+    records.length > 0
+  );
+}
+
+function hasCompactionReportContent(report = {}) {
+  const records = Array.isArray(report.testRecords) ? report.testRecords : [];
+  return Boolean(
+    records.length ||
+    String(report.reportNumber || report.report_number || "").trim() ||
+    String(report.status || "").trim() ||
+    String(report.materialType || report.material_type || "").trim() ||
+    String(report.materialName || report.material_name || "").trim() ||
+    String(report.maximumDryDensity || report.maximum_dry_density || "").trim() ||
+    String(report.correctedMaximumDryDensity || report.corrected_maximum_dry_density || "").trim() ||
+    String(report.percentMinimumDensityRequired || report.percent_minimum_density_required || "").trim()
+  );
+}
+
+function isAttachedReportSubmitReady(report = {}) {
+  return isCompactionReport(report) ? isCompactionReportSubmitReady(report) : isConcreteReportSubmitReady(report);
 }
 
 function createAttachmentRecord(file, attachmentType, context) {
@@ -300,20 +361,21 @@ async function createUploadReadyAttachment(file, attachmentType, context) {
   };
 }
 
-export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateConcreteReport, onOpenConcreteReport }) {
+export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateConcreteReport, onOpenConcreteReport, onCreateCompactionReport, onOpenCompactionReport }) {
   const [lastAutosavedAt, setLastAutosavedAt] = useState("");
   const [reportPickerActivityId, setReportPickerActivityId] = useState("");
   const [reportSectionError, setReportSectionError] = useState("");
   const [attemptedSubmit, setAttemptedSubmit] = useState(false);
   const [signatureModalOpen, setSignatureModalOpen] = useState(false);
   const [technicianSignatureDraft, setTechnicianSignatureDraft] = useState(log.technicianSignature || log.technician_signature || "");
+  const [isSubmittingLog, setIsSubmittingLog] = useState(false);
   const activitiesComplete = log.activities.length > 0 && log.activities.every((activity) => (
     String(activity.title || "").trim() &&
     String(activity.location || "").trim() &&
     String(activity.description || "").trim()
   ));
   const reportsComplete = log.activities.every((activity) => (
-    getActivityAttachedReports(activity).every((report) => isConcreteReportSubmitReady(report))
+    getActivityAttachedReports(activity).every((report) => isAttachedReportSubmitReady(report))
   ));
   const canSubmit = activitiesComplete && reportsComplete;
   const attachedReportCount = log.activities.reduce((sum, activity) => sum + getActivityAttachedReports(activity).length, 0);
@@ -324,6 +386,23 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
     technicianId: log.technicianId || log.technician_id || log.userId || log.user_id || log.createdBy || log.created_by,
     uploadedBy: log.technicianName || log.technician_name || log.createdByName || log.created_by_name || ""
   };
+
+  useEffect(() => {
+    function refreshFromStorage() {
+      const latest = getDailyLogById(log.id);
+      if (!latest || latest.updatedAt === log.updatedAt) return;
+      onChange(latest);
+    }
+
+    window.addEventListener("focus", refreshFromStorage);
+    window.addEventListener("storage", refreshFromStorage);
+    document.addEventListener("visibilitychange", refreshFromStorage);
+    return () => {
+      window.removeEventListener("focus", refreshFromStorage);
+      window.removeEventListener("storage", refreshFromStorage);
+      document.removeEventListener("visibilitychange", refreshFromStorage);
+    };
+  }, [log.id, log.updatedAt, onChange]);
 
   function updateLog(patch, { persist = true } = {}) {
     const nextLog = { ...log, ...patch, updatedAt: new Date().toISOString() };
@@ -386,23 +465,45 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
     }
   }
 
+  function addCompactionReport(activityId) {
+    try {
+      setReportSectionError("");
+      const activity = (log.activities || []).find((item) => item.id === activityId);
+      if (getActivityAttachedReports(activity).length >= 1) {
+        setReportSectionError("Only one report can be attached to each activity.");
+        setReportPickerActivityId("");
+        return;
+      }
+      const createdReport = onCreateCompactionReport?.(log, activityId);
+      if (!createdReport) {
+        setReportSectionError("Unable to load report section. Please try again.");
+        return;
+      }
+      setReportPickerActivityId("");
+    } catch (error) {
+      console.error("Compaction report section failed", error);
+      setReportSectionError("Unable to load report section. Please try again.");
+    }
+  }
+
   async function removeConcreteReport(activityId, reportId) {
     if (!window.confirm("Are you sure you want to delete this report?")) return;
 
     const activity = (log.activities || []).find((item) => item.id === activityId);
-    const targetReport = (activity?.concreteReports || []).find((report) => report.id === reportId);
+    const targetReport = getActivityAttachedReports(activity).find((report) => report.id === reportId);
+    const isCompactionTarget = isCompactionReport(targetReport);
     const targetKeys = new Set(getReportIdentityKeys(targetReport || { id: reportId }));
     const linkedReportId = targetReport?.linkedReportId || targetReport?.linked_report_id;
     const dfrNumber = String(targetReport?.dfrNumber || targetReport?.dfr_number || targetReport?.reportNumber || "").trim();
 
     try {
-      if (linkedReportId) {
+      if (!isCompactionTarget && linkedReportId) {
         const { error } = await supabase
           .from("concrete_test_logs")
           .update({ daily_log_id: null, activity_id: null, source_report_id: null })
           .eq("id", linkedReportId);
         if (error) throw error;
-      } else if (dfrNumber) {
+      } else if (!isCompactionTarget && dfrNumber) {
         const { error } = await supabase
           .from("concrete_test_logs")
           .update({ daily_log_id: null, activity_id: null, source_report_id: null })
@@ -428,6 +529,7 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
         return {
           ...activity,
           concreteReports: nextReports,
+          reports: (activity.reports || []).filter((report) => report.id !== reportId),
           _deletedConcreteReportIds: activity.id === activityId
             ? [...(activity._deletedConcreteReportIds || []), reportId, linkedReportId].filter(Boolean)
             : activity._deletedConcreteReportIds,
@@ -651,31 +753,120 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
   }
 
   async function submitLogWithSignature(signature) {
-    const logToSubmit = {
-      ...log,
-      technicianSignature: signature,
-      technician_signature: signature
-    };
-    const submitted = submitDailyLog(logToSubmit);
-    onChange(submitted);
-    onSubmitted?.(submitted);
+    if (!signature) {
+      window.alert("Please sign before submitting the Daily Log.");
+      return false;
+    }
+    if (isSubmittingLog) return false;
+    setIsSubmittingLog(true);
+    const latestLog = getDailyLogById(log.id) || log;
+
     try {
-      const withPdf = await regenerateDailyLogPdf(submitted);
-      onChange(withPdf);
-      onSubmitted?.(withPdf);
-    } catch (error) {
-      console.warn("Daily Log PDF generation failed after submission", error);
+      let signatureRecord;
+      try {
+        signatureRecord = await withSubmissionTimeout(
+          saveDailyLogSignatureToSupabase(latestLog, signature),
+          "Signature save timed out. Please try again."
+        );
+      } catch (error) {
+        console.error("Daily Log signature save failed", error);
+        window.alert("Signature could not be saved. Please try again.");
+        return false;
+      }
+
+      const submittedAt = new Date().toISOString();
+      const logToSubmit = {
+        ...latestLog,
+        technicianSignature: signature,
+        technician_signature: signature,
+        signatureId: signatureRecord.id,
+        signature_id: signatureRecord.id,
+        submittedBy: signatureRecord.userId,
+        submitted_by: signatureRecord.userId,
+        submittedAt,
+        submitted_at: submittedAt
+      };
+
+      let persistedSubmission;
+      try {
+        persistedSubmission = await withSubmissionTimeout(
+          submitDailyLogToSupabase(logToSubmit, {
+            signatureId: signatureRecord.id,
+            submittedAt,
+            submittedBy: signatureRecord.userId
+          }),
+          "Daily Log status update timed out. Please try again."
+        );
+      } catch (error) {
+        console.error("Daily Log status update failed", error);
+        window.alert("Daily Log submission failed. Signature saved successfully. Please try again.");
+        return false;
+      }
+
+      let persistedSubmitted;
+      try {
+        const submitted = submitDailyLog({
+          ...logToSubmit,
+          supabaseDailyLogId: persistedSubmission.id,
+          supabase_daily_log_id: persistedSubmission.id
+        });
+        persistedSubmitted = getDailyLogById(submitted.id) || submitted;
+        onChange(persistedSubmitted);
+        onSubmitted?.(persistedSubmitted);
+      } catch (error) {
+        console.error("Daily Log local save failed after submission", error);
+        window.alert("Daily Log was submitted, but it could not be saved on this device. Please refresh the page.");
+        return false;
+      }
+
+      setSignatureModalOpen(false);
+      ensureSubmittedDailyLogView();
+
+      window.setTimeout(() => {
+        regenerateDailyLogPdf(persistedSubmitted)
+          .then(async (withPdf) => {
+            onChange(withPdf);
+            try {
+              await withSubmissionTimeout(
+                updateDailyLogPdfMetadataInSupabase(persistedSubmitted, withPdf),
+                "Daily Log PDF metadata update timed out."
+              );
+            } catch (error) {
+              console.warn("Daily Log PDF metadata update failed", error);
+            }
+          })
+          .catch((error) => {
+            console.warn("Daily Log PDF generation failed after submission", error);
+            window.alert("Daily Log submitted successfully. PDF generation failed. Please click Regenerate PDF.");
+          });
+      }, 0);
+      return true;
+    } finally {
+      setIsSubmittingLog(false);
     }
   }
 
   async function submitLog(signatureOverride = "") {
+    if (isSubmittingLog) return;
     setAttemptedSubmit(true);
+    if (!String(log.projectId || log.project_id || log.projectName || log.project_name || "").trim()) {
+      window.alert("Select a project before submitting the Daily Log.");
+      return;
+    }
+    if (!String(log.date || log.log_date || "").trim()) {
+      window.alert("Select a date before submitting the Daily Log.");
+      return;
+    }
+    if (!String(log.shift || "").trim()) {
+      window.alert("Select a shift before submitting the Daily Log.");
+      return;
+    }
     if (!activitiesComplete) {
       window.alert("Complete activity name, location, and description for every activity before submitting the Daily Log.");
       return;
     }
     if (!reportsComplete) {
-      window.alert("Concrete Report must be completed before Daily Log submission.");
+      window.alert("Attached reports must be completed before Daily Log submission.");
       return;
     }
     const explicitSignature = typeof signatureOverride === "string" ? signatureOverride : "";
@@ -912,28 +1103,34 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
                   </div>
                 </div>
                 {concreteReports.map((report) => {
-                  const shouldShowReportContent = isConcreteReportSubmitReady(report);
+                  const compaction = isCompactionReport(report);
+                  const shouldShowReportContent = compaction ? hasCompactionReportContent(report) : isAttachedReportSubmitReady(report);
                   visibleReportOrdinal += 1;
                   const reportLabel = `Report ${visibleReportOrdinal}`;
+                  const displayReportType = compaction ? "Compaction Report" : "Concrete Report";
 
                   return (
                     <div key={report.id} className="mt-3 rounded-2xl border border-slate-200 bg-white p-4">
                       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                         <div className="min-w-0">
                           <p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-400">{reportLabel}</p>
-                          <h3 className="mt-1 text-base font-bold text-slate-950">Concrete Report</h3>
+                          <h3 className="mt-1 text-base font-bold text-slate-950">{displayReportType}</h3>
                           <p className="mt-1 text-sm font-semibold text-slate-600">
                             {report.status || "Draft"} • Updated {report.updatedAt ? new Date(report.updatedAt).toLocaleString() : "-"}
                           </p>
                           {report.reportNumber && <p className="mt-1 text-xs font-bold uppercase tracking-[0.14em] text-slate-400">{report.reportNumber}</p>}
-                          {attemptedSubmit && !isConcreteReportSubmitReady(report) && (
-                            <p className="mt-2 text-sm font-bold text-rose-700">Concrete Report must be completed before Daily Log submission.</p>
+                          {attemptedSubmit && !isAttachedReportSubmitReady(report) && (
+                            <p className="mt-2 text-sm font-bold text-rose-700">{displayReportType} must be completed before Daily Log submission.</p>
                           )}
                         </div>
-                        <div className="flex flex-wrap gap-2">
+                      <div className="flex flex-wrap gap-2">
                           <button
                             type="button"
-                            onClick={() => onOpenConcreteReport?.(log, activity.id, report.id, { mode: "edit" })}
+                            onClick={() => (
+                              isCompactionReport(report)
+                                ? onOpenCompactionReport?.(log, activity.id, report.id, { mode: "edit" })
+                                : onOpenConcreteReport?.(log, activity.id, report.id, { mode: "edit" })
+                            )}
                             className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-slate-950 px-3 text-xs font-bold text-white"
                           >
                             <Edit className="h-4 w-4" />
@@ -942,7 +1139,11 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
                           <button type="button" onClick={() => removeConcreteReport(activity.id, report.id)} className="min-h-10 rounded-xl border border-rose-200 bg-white px-3 text-xs font-bold text-rose-700">Delete Report</button>
                         </div>
                       </div>
-                      {shouldShowReportContent && <ConcreteReportInlineContent report={report} reportLabel={reportLabel} />}
+                      {shouldShowReportContent && (
+                        isCompactionReport(report)
+                          ? <CompactionReportInlineContent report={report} reportLabel={reportLabel} />
+                          : <ConcreteReportInlineContent report={report} reportLabel={reportLabel} />
+                      )}
                     </div>
                   );
                 })}
@@ -961,7 +1162,10 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
                 )}
                 {reportPickerActivityId === activity.id && (
                   <div className="mt-3">
-                    <ActivityReportSelector onAddConcreteReport={() => addConcreteReport(activity.id)} />
+                    <ActivityReportSelector
+                      onAddConcreteReport={() => addConcreteReport(activity.id)}
+                      onAddCompactionReport={() => addCompactionReport(activity.id)}
+                    />
                   </div>
                 )}
                 {reportSectionError && reportPickerActivityId === activity.id && (
@@ -1018,18 +1222,21 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
         value={technicianSignatureDraft}
         onSave={setTechnicianSignatureDraft}
         onClear={() => setTechnicianSignatureDraft("")}
-        onClose={() => setSignatureModalOpen(false)}
-        onConfirm={(confirmedSignature) => {
+        disabled={isSubmittingLog}
+        onClose={() => {
+          if (!isSubmittingLog) setSignatureModalOpen(false);
+        }}
+        onConfirm={async (confirmedSignature) => {
           const signatureToSubmit = confirmedSignature || technicianSignatureDraft;
           if (!signatureToSubmit) {
             window.alert("Please sign before submitting the Daily Log.");
             return;
           }
           setTechnicianSignatureDraft(signatureToSubmit);
-          setSignatureModalOpen(false);
-          submitLog(signatureToSubmit);
+          return submitLogWithSignature(signatureToSubmit);
         }}
-        signatureActionLabel="Save Technician Signature"
+        autoConfirmOnSave
+        signatureActionLabel={isSubmittingLog ? "Submitting Daily Log..." : "Sign & Submit Daily Log"}
       />
     </div>
   );

@@ -86,8 +86,18 @@ function App() {
         />
 
         <Route
+          path="/technician/daily-log/:logId/submitted"
+          element={<TechnicianDashboard />}
+        />
+
+        <Route
           path="/technician/daily-log/:logId/activity/:activityId/concrete-report/:reportId"
           element={<ConcreteTestLog />}
+        />
+
+        <Route
+          path="/technician/daily-log/:logId/activity/:activityId/compaction-report/:reportId"
+          element={<TechnicianDashboard />}
         />
 
         <Route

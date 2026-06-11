@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Bell,
   Camera,
+  Calculator,
   Download,
   FileText,
   KeyRound,
@@ -30,6 +31,7 @@ import { openDailyLogPdf, regenerateDailyLogPdf } from "../../services/dailyLogP
 import { generateAndUploadConcreteReportPdf, openConcreteReportPdf } from "../../services/concreteReportPdfService";
 import { openTimeCardPdf, regenerateTimeCardPdf } from "../../services/timeCardPdfService";
 import {
+  createWeeklyEntries,
   createTimeCard,
   deleteTimeCard,
   formatTimeCardStatus,
@@ -82,15 +84,6 @@ function formatShortDate(value) {
   const parsed = new Date(`${value}T00:00:00`);
   if (Number.isNaN(parsed.getTime())) return value;
   return parsed.toLocaleDateString(undefined, { month: "short", day: "2-digit", year: "numeric" });
-}
-
-function formatTimeLabel(value) {
-  if (!value) return "-";
-  const [hours, minutes] = String(value).split(":").map(Number);
-  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return value;
-  const parsed = new Date();
-  parsed.setHours(hours, minutes, 0, 0);
-  return parsed.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 }
 
 function getTimesheetNumber(card) {
@@ -424,12 +417,6 @@ function DashboardOverview({ profile, logCollections, timeCardCollections, onOpe
                   description="Document today's activities, inspections, reports and site observations."
                   actionLabel="Start Daily Log"
                   onClick={onCreateLog}
-                />
-                <StartWorkCard
-                  title="Timesheet"
-                  description="Record labor hours, shift information and work performed."
-                  actionLabel="Start Timesheet"
-                  onClick={onCreateTimeCard}
                 />
               </div>
             </div>
@@ -1383,6 +1370,456 @@ function ConcreteReportPage({ log, activityId, reportId, onChange, onBack }) {
   );
 }
 
+function toFiniteNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function getCompactionRecordMoistureRange(record = {}, materialType = "") {
+  const correctedOptimum = toFiniteNumber(record.correctedOptimumMoisture ?? record.corrected_optimum_moisture);
+  if (correctedOptimum === null || correctedOptimum <= 0) return null;
+  if (String(materialType).toLowerCase() === "aggregate") {
+    return { min: correctedOptimum - 2, max: correctedOptimum + 2 };
+  }
+  return { min: correctedOptimum * 0.8, max: correctedOptimum * 1.2 };
+}
+
+function formatCompactionRange(range) {
+  return range ? `${range.min.toFixed(1)} - ${range.max.toFixed(1)}` : "-";
+}
+
+function calculateCompactionRecord(record = {}, reportOrMaterialType = "") {
+  const reportContext = typeof reportOrMaterialType === "object" && reportOrMaterialType !== null ? reportOrMaterialType : {};
+  const materialType = typeof reportOrMaterialType === "object" && reportOrMaterialType !== null
+    ? (reportOrMaterialType.materialType || reportOrMaterialType.material_type || "")
+    : reportOrMaterialType;
+  const wetDensity = toFiniteNumber(record.wetDensity ?? record.wet_density);
+  const moistureUnitMass = toFiniteNumber(record.moistureUnitMass ?? record.moisture_unit_mass);
+  const correctedMaximum = toFiniteNumber(reportContext.correctedMaximumDryDensity ?? reportContext.corrected_maximum_dry_density);
+  const requiredDensity = toFiniteNumber(reportContext.percentMinimumDensityRequired ?? reportContext.percent_minimum_density_required);
+  const dryDensity = wetDensity !== null && moistureUnitMass !== null ? wetDensity - moistureUnitMass : null;
+  const moistureContent = moistureUnitMass !== null && dryDensity !== null && dryDensity > 0
+    ? (moistureUnitMass / dryDensity) * 100
+    : null;
+  const percentDryDensity = dryDensity !== null && correctedMaximum !== null && correctedMaximum > 0
+    ? (dryDensity / correctedMaximum) * 100
+    : null;
+  const moistureRange = getCompactionRecordMoistureRange(reportContext, materialType);
+  const moistureOutOfRange = Boolean(moistureRange && moistureContent !== null && (moistureContent < moistureRange.min || moistureContent > moistureRange.max));
+  const calculatedDensityResult = percentDryDensity !== null && requiredDensity !== null
+    ? (moistureOutOfRange ? "RETEST" : (percentDryDensity >= requiredDensity ? "PASS" : "FAIL"))
+    : "";
+  const densityResult = record.resultOverridden || record.result_overridden
+    ? (record.densityResult || record.density_result || calculatedDensityResult)
+    : calculatedDensityResult;
+  return {
+    ...record,
+    dryDensity: dryDensity === null ? "" : dryDensity.toFixed(1),
+    dry_density: dryDensity === null ? "" : dryDensity.toFixed(1),
+    moistureContent: moistureContent === null ? "" : moistureContent.toFixed(1),
+    moisture_content: moistureContent === null ? "" : moistureContent.toFixed(1),
+    percentDryDensity: percentDryDensity === null ? "" : percentDryDensity.toFixed(1),
+    percent_dry_density: percentDryDensity === null ? "" : percentDryDensity.toFixed(1),
+    moistureRange: formatCompactionRange(moistureRange),
+    moisture_range: formatCompactionRange(moistureRange),
+    moistureOutOfRange,
+    moisture_out_of_range: moistureOutOfRange,
+    densityResult,
+    density_result: densityResult,
+    calculatedDensityResult,
+    calculated_density_result: calculatedDensityResult
+  };
+}
+
+function getCompactionMoistureRange(report = {}) {
+  const correctedOptimum = Number(report.correctedOptimumMoisture || report.corrected_optimum_moisture || 0);
+  if (!Number.isFinite(correctedOptimum) || correctedOptimum <= 0) return "-";
+  if (String(report.materialType || report.material_type).toLowerCase() === "aggregate") {
+    return `${(correctedOptimum - 2).toFixed(1)} - ${(correctedOptimum + 2).toFixed(1)}`;
+  }
+  return `${(correctedOptimum * 0.8).toFixed(1)} - ${(correctedOptimum * 1.2).toFixed(1)}`;
+}
+
+function CompactionReportPage({ log, activityId, reportId, onChange, onBack }) {
+  const activity = (log.activities || []).find((item) => item.id === activityId);
+  const persistedReport = (activity?.reports || []).find((item) => item.id === reportId);
+  const [localReport, setLocalReport] = useState(persistedReport || null);
+  const report = localReport || persistedReport;
+  const isReadOnly = [DAILY_LOG_STATUS.SUBMITTED, DAILY_LOG_STATUS.APPROVED].includes(log.status);
+  const isStandardizationNo = String(report?.standardizedGauge || report?.standardized_gauge || "").toLowerCase() === "no";
+  const requiredMissing = [
+    ["serialNumber", "Serial Number"],
+    ["gaugeModel", "Gauge Model"],
+    ["calibrationDueDate", "Calibration Due Date"],
+    ["standardizedGauge", "Gauge Standardization"],
+    ["standardDensity", "Standard Density"],
+    ["standardMoisture", "Standard Moisture"],
+    ["materialType", "Material Type"],
+    ["materialName", "Material Name"]
+  ].filter(([key]) => !String(report?.[key] || "").trim());
+  const canComplete = report && requiredMissing.length === 0 && !isStandardizationNo && (report.testRecords || []).length > 0;
+
+  if (!activity || !report) {
+    return (
+      <section className={cardClass()}>
+        <h1 className="text-xl font-bold text-slate-950">Compaction Report Not Found</h1>
+        <button type="button" onClick={onBack} className="mt-4 min-h-10 rounded-xl border border-slate-200 px-4 text-sm font-bold">Back</button>
+      </section>
+    );
+  }
+
+  function saveReport(nextReport) {
+    const materialType = nextReport.materialType || nextReport.material_type || "";
+    const normalized = {
+      ...nextReport,
+      testRecords: (nextReport.testRecords || []).map((record) => calculateCompactionRecord(record, { ...nextReport, materialType })),
+      updatedAt: new Date().toISOString()
+    };
+    setLocalReport(normalized);
+    const nextLog = saveDailyLog({
+      ...log,
+      activities: (log.activities || []).map((item) => (
+        item.id === activityId
+          ? {
+              ...item,
+              reports: (item.reports || []).map((currentReport) => (
+                currentReport.id === normalized.id ? normalized : currentReport
+              )),
+              updatedAt: new Date().toISOString()
+            }
+          : item
+      )),
+      updatedAt: new Date().toISOString()
+    });
+    onChange(nextLog);
+  }
+
+  function updateReport(patch) {
+    if (isReadOnly) return;
+    saveReport({ ...report, ...patch, status: "draft" });
+  }
+
+  function addTestRecord() {
+    const nextNumber = (report.testRecords || []).length + 1;
+    updateReport({
+      testRecords: [
+        ...(report.testRecords || []),
+        calculateCompactionRecord({
+          id: crypto.randomUUID(),
+          testNo: nextNumber,
+          test_no: nextNumber,
+          location: activity.location || "",
+          stationFt: "",
+          station_ft: "",
+          referenceToCenterLine: "",
+          reference_to_center_line: "",
+          elevation: "",
+          compactedDepth: "",
+          compacted_depth: "",
+          methodOfCompaction: "",
+          method_of_compaction: "",
+          wetDensity: "",
+          wet_density: "",
+          moistureUnitMass: "",
+          moisture_unit_mass: "",
+          dryDensity: "",
+          dry_density: "",
+          moistureContent: "",
+          moisture_content: "",
+          densityResult: "",
+          density_result: "",
+          resultOverridden: false,
+          result_overridden: false,
+          testStatus: "Pending",
+          test_status: "Pending",
+          remarks: ""
+        }, report)
+      ]
+    });
+  }
+
+  function updateTestRecord(recordId, patch) {
+    updateReport({
+      testRecords: (report.testRecords || []).map((record) => (
+        record.id === recordId ? calculateCompactionRecord({ ...record, ...patch }, report) : record
+      ))
+    });
+  }
+
+  function duplicateTestRecord(recordId) {
+    const source = (report.testRecords || []).find((record) => record.id === recordId);
+    if (!source) return;
+    const copy = calculateCompactionRecord({
+      ...source,
+      id: crypto.randomUUID(),
+      testNo: (report.testRecords || []).length + 1,
+      test_no: (report.testRecords || []).length + 1
+    }, report);
+    updateReport({ testRecords: [...(report.testRecords || []), copy] });
+  }
+
+  function deleteTestRecord(recordId) {
+    updateReport({
+      testRecords: (report.testRecords || [])
+        .filter((record) => record.id !== recordId)
+        .map((record, index) => ({ ...record, testNo: index + 1, test_no: index + 1 }))
+    });
+  }
+
+  function completeReport() {
+    if (!canComplete) return;
+    saveReport({ ...report, status: "completed", completedAt: new Date().toISOString() });
+    onBack();
+  }
+
+  const records = report.testRecords || [];
+
+  function recordSectionTitle(title) {
+    return <h4 className="border-b border-slate-200 pb-2 text-sm font-bold uppercase tracking-[0.12em] text-slate-700 md:col-span-3">{title}</h4>;
+  }
+
+  function calculatedCard(label, value, { danger = false, formula = "" } = {}) {
+    return (
+      <div className={`rounded-2xl border px-3 py-2 ${danger ? "border-rose-300 bg-rose-50" : "border-slate-200 bg-slate-100"}`}>
+        <div className="flex items-center justify-between gap-2">
+          <p className={`text-xs font-bold uppercase tracking-[0.14em] ${danger ? "text-rose-700" : "text-slate-500"}`}>{label}</p>
+          <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em] ${danger ? "bg-rose-100 text-rose-800" : "bg-slate-200 text-slate-700"}`}>
+            <Calculator className="h-3 w-3" /> Calculated
+          </span>
+        </div>
+        <p className="mt-2 text-sm font-bold text-slate-950">{value || "-"}</p>
+        {formula && <p className="mt-1 text-xs font-semibold text-slate-500">{formula}</p>}
+      </div>
+    );
+  }
+
+  function resultTone(result) {
+    const normalized = String(result || "").toLowerCase();
+    if (normalized === "pass") return "border-emerald-300 bg-emerald-50 text-emerald-800";
+    if (normalized === "retest") return "border-amber-300 bg-amber-50 text-amber-800";
+    if (normalized === "fail") return "border-rose-300 bg-rose-50 text-rose-800";
+    return "border-slate-200 bg-white text-slate-950";
+  }
+
+  return (
+    <div className="space-y-4">
+      <section className={cardClass()}>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-400">Nuclear Density Report</p>
+            <h1 className="mt-2 text-2xl font-bold text-slate-950">Compaction Report</h1>
+            <p className="mt-1 text-sm font-semibold text-slate-600">{report.reportNumber} · {report.projectName}</p>
+          </div>
+          <span className="w-fit rounded-full border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-bold uppercase tracking-[0.12em] text-slate-700">{report.status || "Draft"}</span>
+        </div>
+      </section>
+
+      <section className={cardClass()}>
+        <h2 className="text-lg font-bold text-slate-950">Report Header</h2>
+        <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
+          {[
+            ["Report Number", report.reportNumber],
+            ["Project Name", report.projectName],
+            ["Project Number", report.projectNumber],
+            ["Section", report.section],
+            ["Date", report.date],
+            ["Client", report.client]
+          ].map(([label, value]) => (
+            <div key={label} className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2">
+              <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-400">{label}</p>
+              <p className="mt-1 text-sm font-bold text-slate-950">{value || "-"}</p>
+            </div>
+          ))}
+          <Field label="Test For (Optional)">
+            <input value={report.testFor || ""} disabled={isReadOnly} onChange={(event) => updateReport({ testFor: event.target.value, test_for: event.target.value })} className={inputClass()} />
+          </Field>
+        </div>
+      </section>
+
+      <section className={cardClass()}>
+        <h2 className="text-lg font-bold text-slate-950">Gauge Information</h2>
+        <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
+          <Field label="Serial Number *"><input value={report.serialNumber || ""} disabled={isReadOnly} onChange={(event) => updateReport({ serialNumber: event.target.value, serial_number: event.target.value })} className={inputClass()} /></Field>
+          <Field label="Gauge Model *"><input value={report.gaugeModel || ""} disabled={isReadOnly} onChange={(event) => updateReport({ gaugeModel: event.target.value, gauge_model: event.target.value })} className={inputClass()} /></Field>
+          <Field label="Calibration Due Date *"><input type="date" value={report.calibrationDueDate || ""} disabled={isReadOnly} onChange={(event) => updateReport({ calibrationDueDate: event.target.value, calibration_due_date: event.target.value })} className={inputClass()} /></Field>
+          <Field label="Did you standardize the nuclear gauge? *">
+            <select value={report.standardizedGauge || ""} disabled={isReadOnly} onChange={(event) => updateReport({ standardizedGauge: event.target.value, standardized_gauge: event.target.value })} className={inputClass()}>
+              <option value="">Select</option>
+              <option>Yes</option>
+              <option>No</option>
+            </select>
+          </Field>
+          <Field label="Standard Count Density *"><input type="number" value={report.standardDensity || ""} disabled={isReadOnly} onChange={(event) => updateReport({ standardDensity: event.target.value, standard_density: event.target.value })} className={inputClass()} /></Field>
+          <Field label="Standard Count Moisture *"><input type="number" value={report.standardMoisture || ""} disabled={isReadOnly} onChange={(event) => updateReport({ standardMoisture: event.target.value, standard_moisture: event.target.value })} className={inputClass()} /></Field>
+          <Field label="SP. GR. of +4 Material (Optional)"><input value={report.specificGravityPlus4 || ""} disabled={isReadOnly} onChange={(event) => updateReport({ specificGravityPlus4: event.target.value, specific_gravity_plus4: event.target.value })} className={inputClass()} /></Field>
+        </div>
+        {isStandardizationNo && (
+          <p className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 p-3 text-sm font-bold text-rose-800">
+            Nuclear gauge must be standardized before testing.
+          </p>
+        )}
+      </section>
+
+      <section className={cardClass()}>
+        <h2 className="text-lg font-bold text-slate-950">Material Type</h2>
+        <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
+          <Field label="Material Type *">
+            <select value={report.materialType || ""} disabled={isReadOnly} onChange={(event) => updateReport({ materialType: event.target.value, material_type: event.target.value, materialName: "", material_name: "" })} className={inputClass()}>
+              <option value="">Select</option>
+              <option>Aggregate</option>
+              <option>Soil</option>
+            </select>
+          </Field>
+          {report.materialType && (
+            <Field label="Material Name *">
+              <input value={report.materialName || ""} disabled={isReadOnly} onChange={(event) => updateReport({ materialName: event.target.value, material_name: event.target.value })} className={inputClass()} placeholder={report.materialType === "Aggregate" ? "#57 Stone, CR6, 21A" : "Structural Fill, Clay, Silty Sand"} />
+            </Field>
+          )}
+        </div>
+      </section>
+
+      <section className={cardClass()}>
+        <h2 className="text-lg font-bold text-slate-950">Specifications</h2>
+        <p className="mt-1 text-sm font-semibold text-slate-500">Stored once at report level and shared by all test records.</p>
+        <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
+          {[
+            ["E. Maximum Dry Density (lbs/ft3)", "maximumDryDensity", "maximum_dry_density"],
+            ["F. Percent Optimum Moisture (%)", "percentOptimumMoisture", "percent_optimum_moisture"],
+            ["G. Percent of Plus #4 (4.75 mm) (%)", "percentPassingNo4", "percent_passing_no4"],
+            ["H. Corrected Maximum Dry Density (lbs/ft3)", "correctedMaximumDryDensity", "corrected_maximum_dry_density"],
+            ["I. Corrected Optimum Moisture (%)", "correctedOptimumMoisture", "corrected_optimum_moisture"],
+            ["K. Percent Minimum Density Required (%)", "percentMinimumDensityRequired", "percent_minimum_density_required"]
+          ].map(([label, key, snakeKey]) => (
+            <Field key={key} label={label}>
+              <input
+                value={report[key] || report[snakeKey] || ""}
+                disabled={isReadOnly}
+                onChange={(event) => updateReport({ [key]: event.target.value, [snakeKey]: event.target.value })}
+                className={inputClass()}
+              />
+            </Field>
+          ))}
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2">
+            <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-400">Allowed Moisture Range</p>
+            <p className="mt-1 text-sm font-bold text-slate-950">{getCompactionMoistureRange(report)}</p>
+          </div>
+        </div>
+      </section>
+
+      <section className={cardClass()}>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <h2 className="text-lg font-bold text-slate-950">Test Records</h2>
+          {!isReadOnly && <button type="button" onClick={addTestRecord} className="min-h-10 rounded-xl bg-slate-950 px-4 text-sm font-bold text-white">Add Test Data</button>}
+        </div>
+        <div className="mt-4 space-y-4">
+          {records.map((record) => (
+            <div key={record.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <h3 className="text-base font-bold text-slate-950">Test No. {record.testNo || record.test_no}</h3>
+                {!isReadOnly && (
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => duplicateTestRecord(record.id)} className="min-h-9 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700">Duplicate Test</button>
+                    <button type="button" onClick={() => deleteTestRecord(record.id)} className="min-h-9 rounded-xl border border-rose-200 bg-white px-3 text-xs font-bold text-rose-700">Delete Test</button>
+                  </div>
+                )}
+              </div>
+              <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
+                {recordSectionTitle("Section 1 - Location Information")}
+                {[
+                  ["Location", "location"],
+                  ["Station (ft)", "stationFt", "station_ft"],
+                  ["Reference To Center Line", "referenceToCenterLine", "reference_to_center_line"],
+                  ["Elevation", "elevation"],
+                  ["Compacted Depth (in)", "compactedDepth", "compacted_depth"],
+                  ["Method Of Compaction", "methodOfCompaction", "method_of_compaction"]
+                ].map(([label, key, snakeKey]) => (
+                  <Field key={key} label={label}>
+                    <input value={record[key] || ""} disabled={isReadOnly} onChange={(event) => updateTestRecord(record.id, { [key]: event.target.value, ...(snakeKey ? { [snakeKey]: event.target.value } : {}) })} className={inputClass()} />
+                  </Field>
+                ))}
+
+                {recordSectionTitle("Section 2 - Nuclear Test Inputs")}
+                {[
+                  ["A. Wet Density (lbs/ft3)", "wetDensity", "wet_density"],
+                  ["B. Moisture Unit Mass (lbs/ft3)", "moistureUnitMass", "moisture_unit_mass"]
+                ].map(([label, key, snakeKey]) => (
+                  <Field key={key} label={label}>
+                    <input value={record[key] || ""} disabled={isReadOnly} onChange={(event) => updateTestRecord(record.id, { [key]: event.target.value, ...(snakeKey ? { [snakeKey]: event.target.value } : {}) })} className={inputClass()} />
+                  </Field>
+                ))}
+
+                {recordSectionTitle("Section 3 - Auto Calculated")}
+                {calculatedCard("C. Dry Density (lbs/ft3)", record.dryDensity || record.dry_density, { formula: "A - B" })}
+                {calculatedCard("D. Moisture Content (%)", record.moistureContent || record.moisture_content, { danger: record.moistureOutOfRange || record.moisture_out_of_range, formula: "(B / C) x 100" })}
+                {calculatedCard("J. Percent Dry Density (%)", record.percentDryDensity || record.percent_dry_density, { formula: "(C / H) x 100" })}
+
+                {recordSectionTitle("Section 4 - Test Status")}
+                <Field label="Test Result">
+                  <select
+                    value={record.densityResult || record.density_result || ""}
+                    disabled={isReadOnly}
+                    onChange={(event) => updateTestRecord(record.id, { densityResult: event.target.value, density_result: event.target.value, resultOverridden: true, result_overridden: true })}
+                    className={inputClass()}
+                  >
+                    <option value="">Select</option>
+                    <option>PASS</option>
+                    <option>FAIL</option>
+                    <option>RETEST</option>
+                  </select>
+                </Field>
+                <Field label="Test Status">
+                  <select
+                    value={record.testStatus || record.test_status || "Pending"}
+                    disabled={isReadOnly}
+                    onChange={(event) => updateTestRecord(record.id, { testStatus: event.target.value, test_status: event.target.value })}
+                    className={inputClass()}
+                  >
+                    <option>Tested</option>
+                    <option>Retest Required</option>
+                    <option>Pending</option>
+                    <option>Approved</option>
+                  </select>
+                </Field>
+                <div className={`rounded-2xl border px-4 py-3 ${resultTone(record.densityResult || record.density_result)}`}>
+                  <p className="text-xs font-bold uppercase tracking-[0.14em]">Density Result</p>
+                  <p className="mt-1 text-2xl font-bold">{record.densityResult || record.density_result || "-"}</p>
+                  {(record.resultOverridden || record.result_overridden) && <p className="mt-1 text-xs font-bold">Manual Override</p>}
+                </div>
+
+                <div className="md:col-span-3">
+                  <Field label="Remarks">
+                    <textarea
+                      value={record.remarks || ""}
+                      disabled={isReadOnly}
+                      onChange={(event) => updateTestRecord(record.id, { remarks: event.target.value })}
+                      rows={4}
+                      className={`${inputClass()} py-3 leading-6`}
+                      placeholder="Material within specification. Retest required due to moisture. Gauge recalibrated. Soft area observed."
+                    />
+                  </Field>
+                </div>
+              </div>
+            </div>
+          ))}
+          {!records.length && <p className="rounded-2xl border border-dashed border-slate-300 bg-white p-4 text-sm font-semibold text-slate-600">No test records yet. Add test data to begin.</p>}
+        </div>
+      </section>
+
+      {requiredMissing.length > 0 && (
+        <p className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm font-bold text-amber-900">
+          Missing required fields: {requiredMissing.map(([, label]) => label).join(", ")}
+        </p>
+      )}
+
+      <div className="sticky bottom-0 z-20 -mx-4 flex flex-col gap-2 border-t border-slate-200 bg-white/95 p-4 backdrop-blur sm:mx-0 sm:flex-row sm:justify-end sm:rounded-2xl sm:border">
+        <button type="button" onClick={onBack} className="min-h-11 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-800">Back</button>
+        {!isReadOnly && <button type="button" onClick={() => saveReport(report)} className="min-h-11 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-800">Save Draft</button>}
+        {!isReadOnly && <button type="button" onClick={completeReport} disabled={!canComplete} className="min-h-11 rounded-2xl bg-emerald-700 px-4 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-600">Finish Report</button>}
+      </div>
+    </div>
+  );
+}
+
 const DAILY_LOG_TABS = [
   { id: "draft", label: "Draft" },
   { id: "submitted", label: "Submitted" },
@@ -1393,6 +1830,10 @@ const DAILY_LOG_TABS = [
 function DailyLogsPage({ logCollections, initialTab = "draft", onOpenLog, onCreateLog, onDuplicateLog, onDeleteLog, onRecallLog, onResubmitLog, onDownloadLogPdf }) {
   const [activeTab, setActiveTab] = useState(initialTab);
   const [searchTerm, setSearchTerm] = useState("");
+  useEffect(() => {
+    setActiveTab(initialTab);
+  }, [initialTab]);
+
   const logsByTab = {
     draft: logCollections.draftLogs,
     submitted: logCollections.submittedLogs,
@@ -1483,9 +1924,9 @@ function TimeCardListRow({ card, activeTab, onOpen, onDelete, onRecall, onDownlo
   const pdfStatus = card.pdfGenerationStatus || card.pdf_generation_status || (card.pdfStoragePath || card.pdf_storage_path ? "generated" : "pending");
   const canDownloadPdf = pdfStatus === "generated";
   const projectNumber = card.projectNumber || card.project_number || "";
-  const displayDate = card.date
-    ? new Intl.DateTimeFormat(undefined, { month: "short", day: "2-digit", year: "numeric" }).format(new Date(`${card.date}T00:00:00`))
-    : "-";
+  const weekStart = card.weekStartDate || card.week_start_date || card.date;
+  const weekEnd = card.weekEndDate || card.week_end_date;
+  const weekPeriod = `${formatShortDate(weekStart)} - ${formatShortDate(weekEnd)}`;
   const statusDateLabel = {
     draft: "Last Modified",
     submitted: "Submitted Date",
@@ -1518,22 +1959,20 @@ function TimeCardListRow({ card, activeTab, onOpen, onDelete, onRecall, onDownlo
       tabIndex={0}
       onClick={onOpen}
       onKeyDown={handleKeyDown}
-      className="cursor-pointer rounded-xl border border-slate-200 bg-white px-4 py-3 transition hover:border-slate-300 hover:bg-slate-50/60"
+      className="cursor-pointer rounded-md border border-slate-200 bg-white px-4 py-3 transition hover:border-slate-300 hover:bg-slate-50/60"
     >
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div className="min-w-0 lg:max-w-[38%]">
-          <p className="truncate text-sm font-bold leading-5 text-slate-950">{card.projectName}</p>
-          {projectNumber && <p className="mt-0.5 truncate text-xs font-semibold leading-4 text-slate-500">Project #{projectNumber}</p>}
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-[150px_1fr_170px_110px_90px_100px_110px_110px] lg:items-center">
+        <p className="font-semibold text-slate-950">{getTimesheetNumber(card)}</p>
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold text-slate-950">{card.technicianName || card.technician_name || "Worker"}</p>
+          <p className="truncate text-xs font-semibold text-slate-500">{card.projectName || "Assignment"}{projectNumber ? ` | ${projectNumber}` : ""}</p>
         </div>
-
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-4 gap-y-2 text-sm font-semibold text-slate-700">
-          <span className="whitespace-nowrap">{displayDate} • {card.shift || "-"}</span>
-          <span className="whitespace-nowrap text-base font-bold text-slate-950 lg:text-sm">{card.totalHours || "0.00"} Hours</span>
-          <span className="whitespace-nowrap">
-            <span className="font-bold text-slate-500">{statusDateLabel.replace(" Date", "")}</span>{" "}
-            <span>{statusDate ? formatDateTime(statusDate) : "-"}</span>
-          </span>
-        </div>
+        <p className="text-sm font-semibold text-slate-700">{weekPeriod}</p>
+        <p className="text-sm font-semibold text-slate-900">{card.totalRegularHours || card.total_regular_hours || "0.00"}</p>
+        <p className="text-sm font-semibold text-slate-900">{card.totalOvertimeHours || card.total_overtime_hours || "0.00"}</p>
+        <p className="text-sm font-semibold text-slate-900">{card.totalHours || card.total_hours || "0.00"}</p>
+        <p className="text-sm font-semibold text-slate-700">{formatTimeCardStatus(card.status)}</p>
+        <p className="text-xs font-semibold text-slate-500">{statusDate ? formatDateTime(statusDate) : "-"}</p>
 
         <div className="flex shrink-0 flex-nowrap items-center gap-2 whitespace-nowrap" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
           <button type="button" onClick={onOpen} className="min-h-10 max-w-[120px] rounded-xl bg-slate-950 px-4 text-sm font-bold text-white lg:min-h-9 lg:w-[110px] lg:px-3 lg:text-xs">
@@ -1565,19 +2004,85 @@ function TimeCardListRow({ card, activeTab, onOpen, onDelete, onRecall, onDownlo
   );
 }
 
-function TimeCardEditor({ card, onChange, onSubmit, onDelete, assignedProjects = [] }) {
-  const isReturned = card.status === TIME_CARD_STATUS.RETURNED;
+function getEntryWarnings(entry) {
+  const warnings = [];
+  const regular = Number(entry.regularHours ?? entry.regular_hours ?? 0) || 0;
+  const overtime = Number(entry.overtimeHours ?? entry.overtime_hours ?? 0) || 0;
+  if (regular < 0 || overtime < 0) warnings.push("Hours cannot be negative");
+  if (regular + overtime > 24) warnings.push("Daily hours exceed 24");
+  return warnings;
+}
+
+function hasEntryHours(entry) {
+  return (Number(entry.regularHours ?? entry.regular_hours ?? 0) || 0) + (Number(entry.overtimeHours ?? entry.overtime_hours ?? 0) || 0) > 0;
+}
+
+function isWeekendEntry(entry) {
+  return ["Saturday", "Sunday"].includes(entry.dayName || entry.day_name);
+}
+
+function formatWeekRange(weekStartDate, weekEndDate) {
+  return `${formatShortDate(weekStartDate).replace(/, \d{4}$/, "")} - ${formatShortDate(weekEndDate)}`;
+}
+
+const TIMESHEET_DAY_COLUMNS = ["Saturday", "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
+const TIMESHEET_DAY_LABELS = {
+  Saturday: "Sat",
+  Sunday: "Sun",
+  Monday: "Mon",
+  Tuesday: "Tue",
+  Wednesday: "Wed",
+  Thursday: "Thu",
+  Friday: "Fri"
+};
+
+function TimeCardEditor({ card, onChange, onSubmit }) {
+  const isReturned = [TIME_CARD_STATUS.RETURNED, TIME_CARD_STATUS.REJECTED].includes(card.status);
   const isDraft = card.status === TIME_CARD_STATUS.DRAFT;
+  const canEditHours = isDraft || isReturned;
   const [signatureModalOpen, setSignatureModalOpen] = useState(false);
   const [technicianSignatureDraft, setTechnicianSignatureDraft] = useState(getTimesheetSignature(card));
+  const entries = Array.isArray(card.entries) ? card.entries : [];
+  const weekStartDate = card.weekStartDate || card.week_start_date || card.date || "";
+  const weekEndDate = card.weekEndDate || card.week_end_date || "";
+  const totalRegular = card.totalRegularHours || card.total_regular_hours || "0.00";
+  const totalOvertime = card.totalOvertimeHours || card.total_overtime_hours || "0.00";
+  const totalHours = card.totalHours || card.total_hours || "0.00";
+  const missingEntries = entries.filter((entry) => getEntryWarnings(entry).length > 0).length;
+  const hasEntries = entries.length > 0;
+  const comments = card.timesheetComments || card.timesheet_comments || card.comments || "";
+  const orderedEntries = TIMESHEET_DAY_COLUMNS
+    .map((dayName) => entries.find((entry) => (entry.dayName || entry.day_name) === dayName))
+    .filter(Boolean);
+  const weeklyLimitWarning = Number(totalHours) > 168 ? "Weekly hours cannot exceed 168." : "";
+  const dailyValidationMessages = orderedEntries.flatMap((entry) => (
+    getEntryWarnings(entry).map((warning) => `${entry.dayName || entry.day_name}: ${warning}`)
+  ));
 
   useEffect(() => {
     setTechnicianSignatureDraft(getTimesheetSignature(card));
   }, [card.id]);
 
-  function updateCard(patch) {
-    onChange(saveTimeCard({ ...card, ...patch }));
-  }
+  useEffect(() => {
+    if (!canEditHours || hasEntries) return;
+    onChange(saveTimeCard({
+      ...card,
+      entries: createWeeklyEntries({
+        weekStartDate,
+        projectId: card.projectId || card.project_id || "",
+        projectName: card.projectName || card.project_name || "",
+        dailyLogs: []
+      })
+    }));
+  }, [card.id, canEditHours, hasEntries, weekStartDate]);
+
+  useEffect(() => {
+    if (!canEditHours) return undefined;
+    const autosaveId = window.setInterval(() => {
+      onChange(saveTimeCard(card));
+    }, 30000);
+    return () => window.clearInterval(autosaveId);
+  }, [card, canEditHours, onChange]);
 
   function getTechnicianSignatureStorageKey() {
     return `qcore-timesheet-technician-signature-${String(card.technicianName || card.technician_name || "technician").trim().toLowerCase()}`;
@@ -1593,14 +2098,36 @@ function TimeCardEditor({ card, onChange, onSubmit, onDelete, assignedProjects =
     }
   }
 
-  function updateProject(projectId) {
-    const selectedProject = assignedProjects.find((project) => String(project.id) === String(projectId));
-    updateCard({
-      projectId: selectedProject?.id || projectId,
-      projectName: selectedProject?.name || "",
-      projectNumber: selectedProject?.number || "",
-      projectLocation: selectedProject?.location || ""
-    });
+  function updateEntry(index, patch) {
+    if (index < 0) return;
+    onChange(saveTimeCard({
+      ...card,
+      entries: entries.map((entry, entryIndex) => (
+        entryIndex === index
+          ? {
+              ...entry,
+              ...patch,
+              regular_hours: patch.regularHours ?? patch.regular_hours ?? entry.regularHours ?? entry.regular_hours,
+              overtime_hours: patch.overtimeHours ?? patch.overtime_hours ?? entry.overtimeHours ?? entry.overtime_hours
+            }
+          : entry
+      ))
+    }));
+  }
+
+  function updateHourEntry(index, field, value) {
+    if (!/^\d{0,2}(\.\d{0,2})?$/.test(value)) return;
+    if (Number(value) > 24) return;
+    updateEntry(index, { [field]: value });
+  }
+
+  function updateComments(value) {
+    onChange(saveTimeCard({
+      ...card,
+      comments: value,
+      timesheetComments: value,
+      timesheet_comments: value
+    }));
   }
 
   async function submitCardWithSignature(signature) {
@@ -1613,7 +2140,7 @@ function TimeCardEditor({ card, onChange, onSubmit, onDelete, assignedProjects =
       signed_at: signedAt
     });
     onSubmit(recalculated);
-    if (!recalculated.projectId || !recalculated.timeIn || !recalculated.timeOut || !recalculated.workDescription || recalculated.validationError) return;
+    if (recalculated.validationError || Number(recalculated.totalHours || 0) <= 0) return;
     const submitted = submitTimeCard(recalculated);
     onSubmit(submitted);
     const withPdf = await regenerateTimeCardPdf(submitted);
@@ -1644,19 +2171,41 @@ function TimeCardEditor({ card, onChange, onSubmit, onDelete, assignedProjects =
     await submitCardWithSignature(signature);
   }
 
-  const canSubmit = Boolean(card.projectId && card.timeIn && card.timeOut && card.workDescription && !card.validationError);
+  const canSubmit = Boolean(Number(totalHours) > 0 && missingEntries === 0 && !weeklyLimitWarning && !card.validationError && (isDraft || isReturned));
 
   return (
-    <section className={cardClass()}>
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div className="min-w-0">
-          <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-400">Time Management</p>
-          <h1 className="mt-2 text-2xl font-bold text-slate-950 sm:text-3xl">Timesheet</h1>
+    <section className={cardClass("overflow-hidden !rounded-lg")}>
+      <div className="border-b border-slate-200 bg-white pb-3">
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+          <div>
+            <div>
+              <h1 className="text-2xl font-semibold text-slate-950">Weekly Timesheet</h1>
+              <p className="mt-1 text-sm font-semibold text-slate-500">Timesheet Number: <span className="text-slate-950">{getTimesheetNumber(card)}</span></p>
+            </div>
+            <div className="mt-3 grid gap-x-6 gap-y-2 text-sm md:grid-cols-3 xl:grid-cols-7">
+              {[
+                ["Project Name", card.projectName || "-"],
+                ["Project Number", card.projectNumber || card.project_number || "-"],
+                ["Client", card.clientName || card.client_name || "Client"],
+                ["Employee Name", card.technicianName || card.technician_name || "-"],
+                ["Approver", card.managerName || card.manager_name || card.reviewedBy || card.reviewed_by || "Project Manager"],
+                ["Week Period", formatWeekRange(weekStartDate, weekEndDate)]
+              ].map(([label, value]) => (
+                <div key={label}>
+                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">{label}</p>
+                  <p className="mt-1 font-semibold text-slate-950">{value}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+          <span className="w-fit rounded-full border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-slate-800">
+            {formatTimeCardStatus(card.status)}
+          </span>
         </div>
       </div>
 
       {isReturned && (
-        <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-4">
+        <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3">
           <p className="text-sm font-bold text-amber-950">Returned For Correction</p>
           <p className="mt-2 text-sm font-semibold leading-6 text-amber-900">
             {card.managerComment || "Manager comments and correction notes will appear here. Update the Timesheet and resubmit when complete."}
@@ -1664,67 +2213,114 @@ function TimeCardEditor({ card, onChange, onSubmit, onDelete, assignedProjects =
         </div>
       )}
 
-      <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2">
-        <Field label="Date">
-          <input type="date" value={card.date || ""} onChange={(event) => updateCard({ date: event.target.value })} className={inputClass()} />
-        </Field>
-        <Field label="Project">
-          <select value={card.projectId || ""} onChange={(event) => updateProject(event.target.value)} required className={inputClass()}>
-            <option value="">Select project</option>
-            {assignedProjects.map((project) => (
-              <option key={project.id} value={project.id}>{project.name}</option>
-            ))}
-          </select>
-        </Field>
-        <Field label="Shift">
-          <select value={card.shift || "Day Shift"} onChange={(event) => updateCard({ shift: event.target.value })} className={inputClass()}>
-            <option>Day Shift</option>
-            <option>Night Shift</option>
-            <option>Swing Shift</option>
-          </select>
-        </Field>
-        <Field label="Break (minutes)">
-          <input type="number" min="0" value={card.breakMinutes || ""} onChange={(event) => updateCard({ breakMinutes: event.target.value })} className={inputClass()} />
-        </Field>
-        <Field label="Time In">
-          <input type="time" value={card.timeIn || ""} onChange={(event) => updateCard({ timeIn: event.target.value })} className={inputClass()} />
-        </Field>
-        <Field label="Time Out">
-          <input type="time" value={card.timeOut || ""} onChange={(event) => updateCard({ timeOut: event.target.value })} className={inputClass()} />
-        </Field>
-        <div className="md:col-span-2">
-          <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4">
-            <p className="text-xs font-bold uppercase tracking-[0.18em] text-blue-700">Total Hours</p>
-            <p className="mt-2 text-3xl font-bold text-slate-950">{card.totalHours || "0.00"}</p>
-            {card.isOvernightShift && <p className="mt-1 text-sm font-bold text-blue-800">Overnight shift</p>}
-            {card.validationError && <p className="mt-2 text-sm font-bold text-rose-700">{card.validationError}</p>}
-            {!card.validationError && card.validationWarning && <p className="mt-2 text-sm font-bold text-amber-700">{card.validationWarning}</p>}
-          </div>
+      <div className="mt-4 rounded-md border border-slate-200">
+        <div className="hidden lg:block">
+          <table className="w-full table-fixed border-collapse text-left text-sm">
+            <thead className="bg-slate-100 text-xs font-semibold uppercase tracking-[0.08em] text-slate-600">
+              <tr>
+                <th className="border-b border-slate-200 px-3 py-2">Hours Type</th>
+                {TIMESHEET_DAY_COLUMNS.map((dayName) => (
+                  <th key={dayName} className="border-b border-slate-200 px-3 py-2 text-center">{TIMESHEET_DAY_LABELS[dayName]}</th>
+                ))}
+                <th className="border-b border-slate-200 px-3 py-2 text-right">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {[
+                ["Regular Hours", "regularHours", totalRegular],
+                ["Overtime Hours", "overtimeHours", totalOvertime]
+              ].map(([rowLabel, field, rowTotal]) => (
+                <tr key={field} className="border-b border-slate-100 last:border-b-0">
+                  <td className="px-3 py-3 font-semibold text-slate-950">{rowLabel}</td>
+                  {TIMESHEET_DAY_COLUMNS.map((dayName) => {
+                    const entry = entries.find((item) => (item.dayName || item.day_name) === dayName);
+                    const entryIndex = entries.findIndex((item) => (item.dayName || item.day_name) === dayName);
+                    return (
+                      <td key={dayName} className="px-2 py-2 text-center">
+                        {canEditHours ? (
+                          <input type="text" inputMode="decimal" value={entry?.[field] ?? entry?.[field === "regularHours" ? "regular_hours" : "overtime_hours"] ?? "0.00"} onBlur={() => onChange(saveTimeCard(card))} onChange={(event) => updateHourEntry(entryIndex, field, event.target.value)} className="h-9 w-full max-w-[72px] rounded-md border border-slate-200 px-2 text-right font-semibold outline-none focus:border-blue-700" />
+                        ) : (
+                          <span className="font-semibold text-slate-950">{entry?.[field] ?? entry?.[field === "regularHours" ? "regular_hours" : "overtime_hours"] ?? "0.00"}</span>
+                        )}
+                      </td>
+                    );
+                  })}
+                  <td className="px-3 py-3 text-right font-bold text-slate-950">{rowTotal}</td>
+                </tr>
+              ))}
+              <tr className="bg-slate-50">
+                <td className="px-3 py-3 font-semibold text-slate-950">Daily Total</td>
+                {TIMESHEET_DAY_COLUMNS.map((dayName) => {
+                  const entry = entries.find((item) => (item.dayName || item.day_name) === dayName);
+                  return (
+                    <td key={dayName} className="px-2 py-3 text-center font-bold text-slate-950">
+                      {entry?.totalHours ?? entry?.total_hours ?? "0.00"}
+                    </td>
+                  );
+                })}
+                <td className="px-3 py-3 text-right font-bold text-slate-950">{totalHours}</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
-        <div className="md:col-span-2">
-          <Field label="Work Description">
-            <textarea
-              value={card.workDescription || ""}
-              onChange={(event) => updateCard({ workDescription: event.target.value })}
-              rows={8}
-              placeholder="Summarize labor performed for this shift."
-              className={`${inputClass()} min-h-44 py-3 leading-6`}
-            />
-          </Field>
+        <div className="grid gap-3 p-3 lg:hidden">
+          {orderedEntries.map((entry) => {
+            const entryIndex = entries.findIndex((item) => (item.id || item.workDate || item.work_date) === (entry.id || entry.workDate || entry.work_date));
+            return (
+              <div key={entry.id || entry.workDate || entry.work_date} className="rounded-md border border-slate-200 bg-white p-3">
+                <p className="font-semibold text-slate-950">{entry.dayName || entry.day_name}</p>
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  {[
+                    ["Regular", "regularHours"],
+                    ["OT", "overtimeHours"]
+                  ].map(([label, field]) => (
+                    <label key={field} className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+                      {label}
+                      <input type="text" inputMode="decimal" value={entry?.[field] ?? entry?.[field === "regularHours" ? "regular_hours" : "overtime_hours"] ?? "0.00"} disabled={!canEditHours} onBlur={() => onChange(saveTimeCard(card))} onChange={(event) => updateHourEntry(entryIndex, field, event.target.value)} className="mt-1 h-9 w-full rounded-md border border-slate-200 px-2 text-right text-sm font-semibold text-slate-950 outline-none focus:border-blue-700 disabled:bg-slate-50" />
+                    </label>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      {dailyValidationMessages.length > 0 && (
+        <div className="mt-3 rounded-md border border-rose-200 bg-rose-50 p-3 text-sm font-semibold text-rose-700">
+          {dailyValidationMessages.map((message) => <p key={message}>{message}</p>)}
+        </div>
+      )}
+
+      <label className="mt-4 block">
+        <span className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Comments</span>
+        <textarea value={comments} disabled={!canEditHours} onBlur={() => onChange(saveTimeCard(card))} onChange={(event) => updateComments(event.target.value)} rows={3} className="mt-1 w-full rounded-md border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-950 outline-none focus:border-blue-700 disabled:bg-slate-50" />
+      </label>
+
+      <div className="mt-4 rounded-md border border-slate-200 bg-slate-50 px-3 py-3">
+        <div className="grid gap-3 sm:grid-cols-3">
+          {[
+            ["Regular Hours", totalRegular],
+            ["Overtime Hours", totalOvertime],
+            ["Total Hours", totalHours]
+          ].map(([label, value]) => (
+            <div key={label}>
+              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">{label}</p>
+              <p className="mt-1 text-lg font-bold text-slate-950">{value}</p>
+            </div>
+          ))}
         </div>
       </div>
 
-      <div className="sticky bottom-0 z-10 -mx-3 mt-5 flex flex-col gap-3 border-t border-slate-200 bg-white/95 p-3 backdrop-blur sm:static sm:mx-0 sm:flex-row sm:justify-end sm:border-t-0 sm:bg-transparent sm:p-0 sm:backdrop-blur-0">
-        {isDraft && (
-          <button type="button" onClick={onDelete} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-rose-200 bg-white px-4 text-sm font-bold text-rose-700">
-            Delete
-          </button>
-        )}
-        <button type="button" onClick={() => onChange(saveTimeCard(card))} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-800">
+      {card.validationError && <p className="mt-3 rounded-md border border-rose-200 bg-rose-50 p-3 text-sm font-semibold text-rose-700">{card.validationError}</p>}
+      {weeklyLimitWarning && <p className="mt-3 rounded-md border border-rose-200 bg-rose-50 p-3 text-sm font-semibold text-rose-700">{weeklyLimitWarning}</p>}
+      {!card.validationError && card.validationWarning && <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm font-semibold text-amber-700">{card.validationWarning}</p>}
+
+      <div className="sticky bottom-0 z-10 -mx-3 mt-4 flex flex-col gap-2 border-t border-slate-200 bg-white/95 p-3 backdrop-blur sm:static sm:mx-0 sm:flex-row sm:justify-end sm:border-t-0 sm:bg-transparent sm:p-0 sm:backdrop-blur-0">
+        <button type="button" onClick={() => onChange(saveTimeCard(card))} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-800">
           <Save className="h-4 w-4" /> {isReturned ? "Save" : "Save Draft"}
         </button>
-        <button type="button" onClick={submitCard} disabled={!canSubmit} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-60">
-          <Send className="h-4 w-4" /> {isReturned ? "Resubmit Timesheet" : "Submit Timesheet"}
+        <button type="button" onClick={submitCard} disabled={!canSubmit} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-slate-950 px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60">
+          <Send className="h-4 w-4" /> {isReturned ? "Resubmit" : "Submit for Approval"}
         </button>
       </div>
       <SignatureModal
@@ -1763,13 +2359,12 @@ function ReadOnlyValue({ label, value }) {
   );
 }
 
-function TimeCardReadOnlyView({ card, onRecall, onViewPdf, onDownloadPdf, onRegeneratePdf }) {
+function TimeCardReadOnlyView({ card, onRecall, onViewPdf, onRegeneratePdf }) {
   const isSubmitted = card.status === TIME_CARD_STATUS.SUBMITTED;
   const isApproved = card.status === TIME_CARD_STATUS.APPROVED;
   const isCompleted = card.status === TIME_CARD_STATUS.COMPLETED;
   const pdfStatus = card.pdfGenerationStatus || card.pdf_generation_status || (card.pdfStoragePath || card.pdf_storage_path ? "generated" : "pending");
   const canUsePdf = pdfStatus === "generated";
-  const statusLabel = formatTimeCardStatus(card.status);
   const statusDetail = isApproved
     ? `Approved${card.approvedAt ? ` ${formatDateTime(card.approvedAt)}` : ""}`
     : isCompleted
@@ -1778,54 +2373,88 @@ function TimeCardReadOnlyView({ card, onRecall, onViewPdf, onDownloadPdf, onRege
   const timesheetNumber = getTimesheetNumber(card);
   const submittedAt = card.submittedAt || card.submitted_at;
   const canRecall = isSubmitted;
-  const hours = getRegularAndOvertimeHours(card.totalHours || card.total_hours);
-  const statusTone = {
-    [TIME_CARD_STATUS.SUBMITTED]: "border-purple-200 bg-purple-50 text-purple-800",
-    [TIME_CARD_STATUS.RETURNED]: "border-rose-200 bg-rose-50 text-rose-800",
+  const entries = Array.isArray(card.entries) ? card.entries : [];
+  const displayEntries = entries.filter((entry) => !isWeekendEntry(entry) || hasEntryHours(entry));
+  const weekStart = card.weekStartDate || card.week_start_date || card.date;
+  const weekEnd = card.weekEndDate || card.week_end_date;
+  const totalRegular = card.totalRegularHours || card.total_regular_hours || "0.00";
+  const totalOvertime = card.totalOvertimeHours || card.total_overtime_hours || "0.00";
+  const totalHours = card.totalHours || card.total_hours || "0.00";
+  const managerName = card.reviewedBy || card.reviewed_by || card.managerName || card.manager_name || "Project Manager";
+  const reviewComments = card.reviewComments || card.review_comments || card.managerComment || "";
+  const approvedAt = card.approvedAt || card.approved_at;
+  const createdAt = card.createdAt || card.created_at;
+  const weeklyWarnings = [
+    Number(totalRegular) > 40 ? "Regular hours exceed 40. Confirm overtime classification before approval." : null,
+    entries.length >= 7 && entries.every(hasEntryHours) ? "Seven consecutive workdays entered. Review fatigue/rest policy." : null,
+    Number(totalHours) > 60 ? "Total weekly hours exceed the default company threshold of 60 hours." : null
+  ].filter(Boolean);
+  const timelineItems = [
+    ["Draft Created", createdAt ? formatDateTime(createdAt) : "-"],
+    ["Submitted", submittedAt ? formatDateTime(submittedAt) : "-"],
+    [isApproved || isCompleted ? "Approved" : statusDetail, isApproved || isCompleted ? (approvedAt ? formatDateTime(approvedAt) : "-") : "Current Stage"]
+  ];
+  const statusBadgeClass = {
+    [TIME_CARD_STATUS.DRAFT]: "border-slate-200 bg-slate-100 text-slate-700",
+    [TIME_CARD_STATUS.SUBMITTED]: "border-amber-200 bg-amber-50 text-amber-800",
+    [TIME_CARD_STATUS.PENDING_REVIEW]: "border-amber-200 bg-amber-50 text-amber-800",
     [TIME_CARD_STATUS.APPROVED]: "border-emerald-200 bg-emerald-50 text-emerald-800",
-    [TIME_CARD_STATUS.DRAFT]: "border-blue-200 bg-blue-50 text-blue-800",
-    [TIME_CARD_STATUS.COMPLETED]: "border-slate-200 bg-slate-100 text-slate-800"
-  }[card.status] || "border-blue-200 bg-blue-50 text-blue-800";
-  const pendingReviewTone = isSubmitted ? "border-amber-200 bg-amber-50 text-amber-800" : statusTone;
-  const workDescription = String(card.workDescription || "").trim();
-
+    [TIME_CARD_STATUS.COMPLETED]: "border-emerald-200 bg-emerald-50 text-emerald-800",
+    [TIME_CARD_STATUS.REJECTED]: "border-rose-200 bg-rose-50 text-rose-800",
+    [TIME_CARD_STATUS.RETURNED]: "border-rose-200 bg-rose-50 text-rose-800"
+  }[card.status] || "border-slate-200 bg-slate-100 text-slate-700";
+  const showCommentsColumn = displayEntries.some((entry) => String(entry.reviewComments || entry.review_comments || entry.comments || "").trim());
   return (
-    <div className="space-y-4">
-      <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
-        <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+    <div className="space-y-3">
+      <section className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm sm:p-4">
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
           <div className="min-w-0">
             <h1 className="text-xl font-bold text-slate-950 sm:text-2xl">Timesheet #{timesheetNumber}</h1>
             <p className="mt-1 text-sm font-bold text-slate-700">{card.projectName || "-"}</p>
-            <div className="mt-3 flex flex-wrap items-center gap-2 text-sm font-semibold text-slate-600">
-              <span className={`rounded-full border px-3 py-1 text-xs font-bold uppercase tracking-[0.12em] ${statusTone}`}>{statusLabel}</span>
-              <span className={`rounded-full border px-3 py-1 text-xs font-bold uppercase tracking-[0.12em] ${pendingReviewTone}`}>{statusDetail}</span>
+            <div className="mt-2 text-sm">
+              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Week</p>
+              <p className="mt-0.5 font-semibold text-slate-950">{formatWeekRange(weekStart, weekEnd)}</p>
             </div>
-            <p className="mt-3 text-sm font-semibold text-slate-600">
-              {formatShortDate(card.date)} <span className="text-slate-300">•</span> {card.shift || "-"} <span className="text-slate-300">•</span> Project #{card.projectNumber || card.project_number || "-"}
-            </p>
-            <p className="mt-1 text-sm font-semibold text-slate-500">
-              Submitted: {submittedAt ? formatDateTime(submittedAt) : "-"}
-            </p>
+            <div className="mt-3 grid gap-x-8 gap-y-2 text-sm md:grid-cols-3">
+              {[
+                ["Submitted Date", submittedAt ? formatDateTime(submittedAt) : "-"],
+                ["Assigned Manager", managerName],
+                ["Project Number", card.projectNumber || card.project_number || "-"]
+              ].map(([label, value]) => (
+                <div key={label}>
+                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">{label}</p>
+                  <p className="mt-1 font-semibold text-slate-950">{value}</p>
+                </div>
+              ))}
+            </div>
           </div>
-          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-start">
+            <span className={`inline-flex min-h-9 items-center justify-center rounded-full border px-3 text-xs font-bold uppercase tracking-[0.12em] ${statusBadgeClass}`}>{statusDetail}</span>
             {canUsePdf && (
-              <>
-                <button type="button" onClick={onViewPdf} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-800">
-                  <FileText className="h-4 w-4" />
-                  View PDF
-                </button>
-                <button type="button" onClick={onDownloadPdf} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 text-sm font-bold text-white">
+              <button type="button" onClick={onViewPdf} className="inline-flex min-h-9 items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 text-sm font-bold text-white">
+                <FileText className="h-4 w-4" />
+                View PDF
+              </button>
+            )}
+            <details className="relative">
+              <summary className="inline-flex min-h-9 cursor-pointer list-none items-center justify-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-800">Actions</summary>
+              <div className="absolute right-0 z-20 mt-2 w-48 rounded-xl border border-slate-200 bg-white p-2 shadow-lg">
+                <button type="button" onClick={onViewPdf} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-semibold text-slate-800 hover:bg-slate-50">
                   <Download className="h-4 w-4" />
                   Download PDF
                 </button>
-              </>
-            )}
-            {canRecall && (
-              <button type="button" onClick={onRecall} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-800">
-                <RotateCcw className="h-4 w-4" />
-                Recall Timesheet
-              </button>
-            )}
+                <button type="button" onClick={() => window.print()} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-semibold text-slate-800 hover:bg-slate-50">
+                  <FileText className="h-4 w-4" />
+                  Print
+                </button>
+                {canRecall && (
+                  <button type="button" onClick={onRecall} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-semibold text-slate-800 hover:bg-slate-50">
+                    <RotateCcw className="h-4 w-4" />
+                    Recall Timesheet
+                  </button>
+                )}
+              </div>
+            </details>
           </div>
         </div>
         {(isSubmitted || isApproved || isCompleted) && pdfStatus === "pending" && (
@@ -1845,37 +2474,84 @@ function TimeCardReadOnlyView({ card, onRecall, onViewPdf, onDownloadPdf, onRege
         )}
       </section>
 
-      <section className={cardClass()}>
-        <p className="text-xs font-bold uppercase tracking-[0.2em] text-slate-400">Hours Summary</p>
-        <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-[1.1fr_1fr_1fr]">
-          <div className="rounded-2xl bg-slate-950 p-4 text-white">
-            <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-300">Total Hours</p>
-            <p className="mt-1 text-3xl font-bold">{card.totalHours || "0.00"} <span className="text-lg">Hours</span></p>
+      {(isApproved || isCompleted) && (
+        <section className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
+          <h2 className="text-sm font-semibold text-slate-950">Approval Details</h2>
+          <div className="mt-2 grid gap-2 text-sm md:grid-cols-3">
+            <p><span className="block text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Approved Date</span><span className="font-semibold text-slate-950">{approvedAt ? formatDateTime(approvedAt) : "-"}</span></p>
+            <p><span className="block text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Approver</span><span className="font-semibold text-slate-950">{managerName}</span></p>
+            <p><span className="block text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Approval Comments</span><span className="font-semibold text-slate-950">{reviewComments || "-"}</span></p>
           </div>
-          <div className="rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3">
-            <p className="text-xs font-bold uppercase tracking-[0.16em] text-blue-500">Regular Hours</p>
-            <p className="mt-1 break-words text-sm font-bold text-blue-950">{hours.regular} Hours</p>
+        </section>
+      )}
+
+      <section className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="grid gap-x-8 gap-y-2 text-sm md:grid-cols-3">
+            {[
+              ["Status", statusDetail],
+              ["Submitted Date", submittedAt ? formatDateTime(submittedAt) : "-"],
+              ["Assigned Manager", managerName]
+            ].map(([label, value]) => (
+              <p key={label}><span className="block text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">{label}</span><span className="font-semibold text-slate-950">{value}</span></p>
+            ))}
           </div>
-          <div className="rounded-2xl border border-orange-100 bg-orange-50 px-4 py-3">
-            <p className="text-xs font-bold uppercase tracking-[0.16em] text-orange-500">OT Hours</p>
-            <p className="mt-1 break-words text-sm font-bold text-orange-950">{hours.overtime} Hours</p>
-          </div>
+          <details className="relative">
+            <summary className="cursor-pointer list-none text-sm font-bold text-blue-700">View History</summary>
+            <div className="absolute right-0 z-20 mt-2 w-72 rounded-xl border border-slate-200 bg-white p-2 shadow-lg">
+              {timelineItems.map(([label, value]) => (
+                <div key={label} className="rounded-md px-3 py-2 hover:bg-slate-50">
+                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">{label}</p>
+                  <p className="mt-1 text-sm font-semibold text-slate-950">{value}</p>
+                </div>
+              ))}
+            </div>
+          </details>
         </div>
-        <dl className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <ReadOnlyValue label="Time In" value={formatTimeLabel(card.timeIn || card.time_in)} />
-          <ReadOnlyValue label="Time Out" value={formatTimeLabel(card.timeOut || card.time_out)} />
-          <ReadOnlyValue label="Break" value={`${card.breakMinutes ?? card.break_minutes ?? 0} Minutes`} />
-        </dl>
       </section>
 
+      {weeklyWarnings.length > 0 && (
+        <section className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-semibold text-amber-900">
+          {weeklyWarnings.map((warning) => (
+            <p key={warning}>{warning}</p>
+          ))}
+        </section>
+      )}
+
       <section className={cardClass()}>
-        <h2 className="text-xl font-bold text-slate-950">Work Performed</h2>
-        <div className="mt-4 rounded-2xl border border-slate-100 bg-slate-50 px-5 py-4">
-          {workDescription ? (
-            <p className="whitespace-pre-wrap text-sm font-semibold leading-7 text-slate-800">{workDescription}</p>
-          ) : (
-            <p className="text-sm font-semibold leading-7 text-slate-500">No work description provided.</p>
-          )}
+        <div className="grid grid-cols-3 gap-0 rounded-md border border-slate-200 bg-slate-50 shadow-sm">
+          {[
+            ["Regular Hours", totalRegular],
+            ["OT Hours", totalOvertime],
+            ["Total Hours", totalHours]
+          ].map(([label, value]) => (
+            <div key={label} className="border-r border-slate-200 px-3 py-2 last:border-r-0">
+              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">{label}</p>
+              <p className="mt-0.5 text-base font-semibold text-slate-950">{value}</p>
+            </div>
+          ))}
+        </div>
+        <div className="mt-3 overflow-x-auto rounded-xl border border-slate-200">
+          <table className="min-w-[560px] w-full border-collapse text-left text-sm">
+            <thead className="bg-slate-950 text-xs font-bold uppercase tracking-[0.08em] text-white">
+              <tr>
+                {["Day", "Date", "Regular Hours", "OT Hours", ...(showCommentsColumn ? ["Comments"] : [])].map((header) => (
+                  <th key={header} className="px-3 py-3">{header}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {displayEntries.map((entry, index) => (
+                <tr key={entry.id || index} className="border-t border-slate-200">
+                  <td className="px-3 py-3 font-bold text-slate-900">{entry.dayName || entry.day_name}</td>
+                  <td className="px-3 py-3 font-semibold">{formatShortDate(entry.workDate || entry.work_date)}</td>
+                  <td className="px-3 py-3 font-bold">{entry.regularHours || entry.regular_hours || "0.00"}</td>
+                  <td className="px-3 py-3 font-bold">{entry.overtimeHours || entry.overtime_hours || "0.00"}</td>
+                  {showCommentsColumn && <td className="px-3 py-3 font-semibold">{entry.reviewComments || entry.review_comments || entry.comments || "-"}</td>}
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </section>
     </div>
@@ -1939,7 +2615,7 @@ function TimeCardsPage({
             </div>
           </div>
           <button type="button" onClick={onCreateTimeCard} className="sticky top-20 z-10 min-h-11 rounded-2xl bg-slate-950 px-4 text-sm font-bold text-white lg:static">
-            Start Timesheet
+            Open Current Timesheet
           </button>
         </div>
       </section>
@@ -1968,9 +2644,7 @@ function TimeCardsPage({
       {!cards.length && (
         <EmptyState
           title={`No ${label.toLowerCase()} Timesheets`}
-          description="Timesheets will appear here as labor entries are saved and submitted."
-          actionLabel="Start Timesheet"
-          onAction={onCreateTimeCard}
+          description="Use Open Current Timesheet to create or reopen the weekly draft for the selected project and week."
         />
       )}
     </>
@@ -2250,6 +2924,7 @@ export default function FieldEngineerWorkspace({
   const allowedViews = new Set([
     "command-center",
     "concrete-report",
+    "compaction-report",
     "daily-logs",
     "create-daily-log",
     "draft-logs",
@@ -2455,23 +3130,47 @@ export default function FieldEngineerWorkspace({
   }
 
   async function regenerateLogPdf(log) {
-    const withPdf = await regenerateDailyLogPdf(log);
-    refreshLogs(withPdf);
-    if ((withPdf.pdfGenerationStatus || withPdf.pdf_generation_status) === "failed") {
-      window.alert("PDF generation failed. Please regenerate.");
+    if (!log) {
+      window.alert("Unable to regenerate Daily Log PDF because the Daily Log could not be found.");
+      return null;
+    }
+
+    try {
+      const withPdf = await regenerateDailyLogPdf(log);
+      refreshLogs(withPdf);
+      if ((withPdf.pdfGenerationStatus || withPdf.pdf_generation_status) === "failed") {
+        window.alert(withPdf.pdfGenerationFailureReason || withPdf.pdf_generation_failure_reason || "PDF generation failed. Please regenerate.");
+        return withPdf;
+      }
+      window.alert("Daily Log PDF regenerated. Click View PDF to open the latest version.");
+      return withPdf;
+    } catch (error) {
+      window.alert(error.message || "Unable to regenerate Daily Log PDF. Please try again.");
+      throw error;
     }
   }
 
   function createNewTimeCard() {
     const defaultProject = projectOptions[0] || {};
-    const card = saveTimeCard(createTimeCard({
+    const draftCard = createTimeCard({
       projectName: defaultProject.name || projectLabel,
       projectId: defaultProject.id || defaultProjectId,
       projectNumber: defaultProject.number || String(defaultProject.id || defaultProjectId || ""),
       projectLocation: defaultProject.location || "",
       companyId: profile?.company_id || profile?.organization_id || "",
-      technicianName: profile?.full_name || "Field Technician"
-    }));
+      technicianName: profile?.full_name || "Field Technician",
+      dailyLogs: logCollections.approvedLogs || []
+    });
+    const projectId = String(defaultProject.id || defaultProjectId || "");
+    const weekStart = draftCard.weekStartDate || draftCard.week_start_date || draftCard.date;
+    const existingCard = getTimeCards()
+      .filter((card) => String(card.projectId || card.project_id || "") === projectId && (card.weekStartDate || card.week_start_date || card.date) === weekStart)
+      .sort((left, right) => {
+        const leftEditable = [TIME_CARD_STATUS.DRAFT, TIME_CARD_STATUS.REJECTED, TIME_CARD_STATUS.RETURNED].includes(left.status) ? 0 : 1;
+        const rightEditable = [TIME_CARD_STATUS.DRAFT, TIME_CARD_STATUS.REJECTED, TIME_CARD_STATUS.RETURNED].includes(right.status) ? 0 : 1;
+        return leftEditable - rightEditable;
+      })[0];
+    const card = existingCard || saveTimeCard(draftCard);
     refreshTimeCards(card);
     navigate("/technician/dashboard?view=time-card");
   }
@@ -2543,6 +3242,10 @@ export default function FieldEngineerWorkspace({
       returnTo: `/technician/daily-log/${log.id}`
     });
     return `/technician/daily-log/${log.id}/activity/${activityId}/concrete-report/${routeReportId}?${query.toString()}`;
+  }
+
+  function getCompactionReportRoute(log, activityId, report) {
+    return `/technician/daily-log/${log.id}/activity/${activityId}/compaction-report/${report?.id || "new"}?returnTo=${encodeURIComponent(`/technician/daily-log/${log.id}`)}`;
   }
 
   function openReportRoute(reportUrl) {
@@ -2645,6 +3348,93 @@ export default function FieldEngineerWorkspace({
     return report;
   }
 
+  function createCompactionReportForActivity(log, activityId) {
+    const activity = (log.activities || []).find((item) => item.id === activityId);
+    if (!activity) return null;
+    const existingActivityReport = [...(activity.concreteReports || []), ...(activity.reports || [])][0];
+    if (existingActivityReport) {
+      if (String(existingActivityReport.type || existingActivityReport.reportType || "").toLowerCase().includes("compaction")) {
+        openReportRoute(getCompactionReportRoute(log, activityId, existingActivityReport));
+      } else {
+        window.alert("Only one report can be attached to each activity.");
+      }
+      return existingActivityReport;
+    }
+    const reportYear = new Date(log.date || Date.now()).getFullYear();
+    const nextSequence = String((activity.reports || []).length + 1).padStart(6, "0");
+    const report = {
+      id: crypto.randomUUID(),
+      type: "Compaction Report",
+      reportType: "Compaction Report",
+      report_type: "Compaction Report",
+      status: "draft",
+      reportNumber: `CDR-${reportYear}-${nextSequence}`,
+      report_number: `CDR-${reportYear}-${nextSequence}`,
+      dailyLogId: log.id,
+      daily_log_id: log.id,
+      activityId,
+      activity_id: activityId,
+      projectName: log.projectName || projectLabel,
+      project_name: log.projectName || projectLabel,
+      projectNumber: log.projectNumber || log.project_number || String(defaultProjectId || ""),
+      project_number: log.projectNumber || log.project_number || String(defaultProjectId || ""),
+      section: activity.location || "",
+      date: log.date || new Date().toISOString().slice(0, 10),
+      client: log.client || log.clientName || companyName || "",
+      testFor: "",
+      test_for: "",
+      serialNumber: "",
+      serial_number: "",
+      gaugeModel: "",
+      gauge_model: "",
+      calibrationDueDate: "",
+      calibration_due_date: "",
+      standardizedGauge: "",
+      standardized_gauge: "",
+      standardDensity: "",
+      standard_density: "",
+      standardMoisture: "",
+      standard_moisture: "",
+      specificGravityPlus4: "",
+      specific_gravity_plus4: "",
+      materialType: "",
+      material_type: "",
+      materialName: "",
+      material_name: "",
+      maximumDryDensity: "",
+      maximum_dry_density: "",
+      percentOptimumMoisture: "",
+      percent_optimum_moisture: "",
+      percentPassingNo4: "",
+      percent_passing_no4: "",
+      correctedMaximumDryDensity: "",
+      corrected_maximum_dry_density: "",
+      correctedOptimumMoisture: "",
+      corrected_optimum_moisture: "",
+      percentMinimumDensityRequired: "",
+      percent_minimum_density_required: "",
+      testRecords: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    const nextLog = saveDailyLog({
+      ...log,
+      activities: log.activities.map((item) => (
+        item.id === activityId
+          ? {
+              ...item,
+              reports: [...(item.reports || []), report],
+              updatedAt: new Date().toISOString()
+            }
+          : item
+      )),
+      updatedAt: new Date().toISOString()
+    });
+    refreshLogs(nextLog);
+    openReportRoute(getCompactionReportRoute(nextLog, activityId, report));
+    return report;
+  }
+
   function openConcreteReport(log, activityId, reportId, options = {}) {
     if (!log?.id || !activityId || !reportId) return;
     const activity = (log.activities || []).find((item) => item.id === activityId);
@@ -2668,6 +3458,13 @@ export default function FieldEngineerWorkspace({
       return;
     }
     openReportRoute(getConcreteReportRoute(log, activityId, report || { id: reportId }));
+  }
+
+  function openCompactionReport(log, activityId, reportId) {
+    if (!log?.id || !activityId || !reportId) return;
+    const activity = (log.activities || []).find((item) => item.id === activityId);
+    const report = (activity?.reports || []).find((item) => item.id === reportId);
+    openReportRoute(getCompactionReportRoute(log, activityId, report || { id: reportId }));
   }
 
   function backToDailyLog(logId = selectedDailyLog?.id) {
@@ -2701,17 +3498,29 @@ export default function FieldEngineerWorkspace({
           userId: userId || profile?.id || null
         });
   const isDailyLogReadOnly = selectedDailyLog && [DAILY_LOG_STATUS.SUBMITTED, DAILY_LOG_STATUS.APPROVED].includes(selectedDailyLog.status);
-  const selectedTimeCard = activeTimeCard
-    || timeCardCollections.openTimeCards[0]
-    || createTimeCard({
+  const currentTimeCardTemplate = createTimeCard({
       projectName: projectOptions[0]?.name || projectLabel,
       projectId: projectOptions[0]?.id || defaultProjectId,
       projectNumber: projectOptions[0]?.number || String(projectOptions[0]?.id || defaultProjectId || ""),
       projectLocation: projectOptions[0]?.location || "",
       companyId: profile?.company_id || profile?.organization_id || "",
-      technicianName: profile?.full_name || "Field Technician"
+      technicianName: profile?.full_name || "Field Technician",
+      dailyLogs: logCollections.approvedLogs || []
     });
-  const isTimeCardReadOnly = selectedTimeCard && [TIME_CARD_STATUS.SUBMITTED, TIME_CARD_STATUS.APPROVED, TIME_CARD_STATUS.COMPLETED].includes(selectedTimeCard.status);
+  const currentTimeCardProjectId = String(currentTimeCardTemplate.projectId || currentTimeCardTemplate.project_id || "");
+  const currentTimeCardWeekStart = currentTimeCardTemplate.weekStartDate || currentTimeCardTemplate.week_start_date || currentTimeCardTemplate.date;
+  const existingCurrentTimeCard = timeCards
+    .filter((card) => String(card.projectId || card.project_id || "") === currentTimeCardProjectId && (card.weekStartDate || card.week_start_date || card.date) === currentTimeCardWeekStart)
+    .sort((left, right) => {
+      const leftEditable = [TIME_CARD_STATUS.DRAFT, TIME_CARD_STATUS.REJECTED, TIME_CARD_STATUS.RETURNED].includes(left.status) ? 0 : 1;
+      const rightEditable = [TIME_CARD_STATUS.DRAFT, TIME_CARD_STATUS.REJECTED, TIME_CARD_STATUS.RETURNED].includes(right.status) ? 0 : 1;
+      return leftEditable - rightEditable;
+    })[0];
+  const selectedTimeCard = activeTimeCard
+    || existingCurrentTimeCard
+    || timeCardCollections.openTimeCards[0]
+    || currentTimeCardTemplate;
+  const isTimeCardReadOnly = selectedTimeCard && [TIME_CARD_STATUS.SUBMITTED, TIME_CARD_STATUS.PENDING_REVIEW, TIME_CARD_STATUS.APPROVED, TIME_CARD_STATUS.COMPLETED].includes(selectedTimeCard.status);
 
   return (
     <div className="min-h-screen w-full max-w-full overflow-x-hidden bg-slate-100 px-4 py-5 sm:px-6 lg:p-8">
@@ -2739,7 +3548,7 @@ export default function FieldEngineerWorkspace({
               onEdit={() => openLog(selectedDailyLog)}
               onViewPdf={() => viewLogPdf(selectedDailyLog)}
               onDownloadPdf={() => downloadLogPdf(selectedDailyLog)}
-              onRegeneratePdf={() => regenerateLogPdf(selectedDailyLog)}
+              onRegeneratePdf={regenerateLogPdf}
             />
           ) : (
             <DailyLogEditor
@@ -2748,17 +3557,29 @@ export default function FieldEngineerWorkspace({
               onSubmitted={(submittedLog) => {
                 refreshLogs(submittedLog);
                 if (submittedLog?.status === DAILY_LOG_STATUS.SUBMITTED) {
-                  navigate("/technician/dashboard?view=submitted-logs");
+                  navigate(`/technician/daily-log/${submittedLog.id}/submitted`);
                 }
               }}
               onCreateConcreteReport={createConcreteReportForActivity}
               onOpenConcreteReport={openConcreteReport}
+              onCreateCompactionReport={createCompactionReportForActivity}
+              onOpenCompactionReport={openCompactionReport}
             />
           )
         )}
 
         {currentView === "concrete-report" && selectedDailyLog && (
           <ConcreteReportPage
+            log={selectedDailyLog}
+            activityId={activeActivityId}
+            reportId={activeReportId}
+            onChange={refreshLogs}
+            onBack={() => backToDailyLog(selectedDailyLog.id)}
+          />
+        )}
+
+        {currentView === "compaction-report" && selectedDailyLog && (
+          <CompactionReportPage
             log={selectedDailyLog}
             activityId={activeActivityId}
             reportId={activeReportId}
@@ -2797,7 +3618,9 @@ export default function FieldEngineerWorkspace({
               onChange={refreshTimeCards}
               onSubmit={refreshTimeCards}
               onDelete={() => removeTimeCard(selectedTimeCard)}
+              onCancel={() => navigate("/technician/dashboard?view=time-cards")}
               assignedProjects={projectOptions}
+              dailyLogs={visibleDailyLogs || []}
             />
           )
         )}

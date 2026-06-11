@@ -15,20 +15,35 @@ export default function SignatureModal({
   signatureActionLabel = 'Save Signature'
 }) {
   const [savedValue, setSavedValue] = useState(value || '');
+  const [isConfirming, setIsConfirming] = useState(false);
 
   useEffect(() => {
-    if (open) setSavedValue(value || '');
+    if (open) {
+      setSavedValue(value || '');
+      setIsConfirming(false);
+    }
   }, [open, value]);
 
   if (!open) return null;
 
-  const handleSignatureSave = (nextValue) => {
+  const handleSignatureSave = async (nextValue) => {
     setSavedValue(nextValue);
     onSave(nextValue);
     if (autoConfirmOnSave && nextValue) {
-      onConfirm?.(nextValue);
+      setIsConfirming(true);
+      try {
+        const confirmed = await onConfirm?.(nextValue);
+        // Anything other than an explicit success must re-enable the modal,
+        // otherwise it stays locked with every control disabled.
+        if (confirmed !== true) setIsConfirming(false);
+      } catch (error) {
+        console.error("Signature confirmation failed", error);
+        setIsConfirming(false);
+      }
     }
   };
+
+  const isDisabled = disabled || isConfirming;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">
@@ -40,6 +55,7 @@ export default function SignatureModal({
           </div>
           <button
             onClick={onClose}
+            disabled={isDisabled}
             className="rounded-full border border-slate-200 bg-slate-50 p-2 text-slate-600 hover:bg-slate-100"
           >
             Close
@@ -51,7 +67,7 @@ export default function SignatureModal({
             label="Draw your signature"
             value={savedValue}
             onSave={handleSignatureSave}
-            disabled={disabled}
+            disabled={isDisabled}
             saveLabel={signatureActionLabel}
             typedSaveLabel={signatureActionLabel}
           />
@@ -64,7 +80,7 @@ export default function SignatureModal({
                 setSavedValue('');
                 onClear?.();
               }}
-              disabled={disabled}
+              disabled={isDisabled}
               className="rounded-2xl bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-900 hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
             >
               Clear
@@ -72,14 +88,24 @@ export default function SignatureModal({
           )}
           <button
             onClick={onClose}
-            className="rounded-2xl bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-900 hover:bg-slate-200"
+            disabled={isDisabled}
+            className="rounded-2xl bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-900 hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
           >
             Cancel
           </button>
           {!autoConfirmOnSave && (
             <button
-              onClick={() => onConfirm?.(savedValue)}
-              disabled={disabled}
+              onClick={async () => {
+                setIsConfirming(true);
+                try {
+                  const confirmed = await onConfirm?.(savedValue);
+                  if (confirmed !== true) setIsConfirming(false);
+                } catch (error) {
+                  console.error("Signature confirmation failed", error);
+                  setIsConfirming(false);
+                }
+              }}
+              disabled={isDisabled}
               className="rounded-2xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
             >
               Confirm Signature

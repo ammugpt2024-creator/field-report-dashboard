@@ -73,6 +73,32 @@ function isStrengthRequired(record) {
     record?.strengthVerificationRequired === true;
 }
 
+const CONSOLIDATED_RECORD_COLUMNS = [
+  "Test #",
+  "Ticket #",
+  "Truck #",
+  "CY",
+  "Batch",
+  "Arrival",
+  "Tested",
+  "Finish",
+  "Minutes",
+  "Result",
+  "Water Added",
+  "Air °F",
+  "Conc °F",
+  "Slump",
+  "Air %",
+  "Unit Wt",
+  "Spread",
+  "J-Ring",
+  "Strength",
+  "Set #",
+  "Lab",
+  "Field",
+  "Comments"
+];
+
 function getSummary(report, records) {
   const summary = report.summary || {};
   const totalQuantity = summary.totalCubicYards ?? records.reduce((sum, record) => {
@@ -159,7 +185,7 @@ export default function ConcreteReportInlineContent({ report, reportLabel = "Rep
 
   return (
     <div className="mt-4 space-y-4 rounded-2xl border border-slate-200 bg-white p-4">
-      <section>
+      <section className="report-section keep-together">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">Concrete Report Details</p>
@@ -171,7 +197,7 @@ export default function ConcreteReportInlineContent({ report, reportLabel = "Rep
         </div>
       </section>
 
-      <section>
+      <section className="report-section keep-together specification-summary">
         <h5 className="text-sm font-bold text-slate-950">Inspection Requirements</h5>
         <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
           {specifications.map(([label, value]) => (
@@ -180,16 +206,16 @@ export default function ConcreteReportInlineContent({ report, reportLabel = "Rep
         </div>
       </section>
 
-      <section>
+      <section className="report-section keep-together">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <h5 className="text-sm font-bold text-slate-950">Material Delivery & Verification Records</h5>
           <span className="text-xs font-bold text-slate-500">{loadingDetails ? "Loading records..." : `${records.length} records`}</span>
         </div>
         <div className="mt-3 overflow-x-auto rounded-2xl border border-slate-200">
-          <table className="min-w-[1120px] w-full border-collapse text-left text-xs">
+          <table className="min-w-[1680px] w-full border-collapse text-left text-xs">
             <thead className="bg-slate-950 text-white">
               <tr>
-                {["Test #", "Ticket #", "Truck #", "CY", "Batch", "Arrival", "Tested", "Finish", "Result", "Air °F", "Conc °F", "Slump", "Air %", "Unit Wt", "Spread", "J-Ring", "Strength", "Set #", "Lab", "Field", "Comments"].map((heading) => (
+                {CONSOLIDATED_RECORD_COLUMNS.map((heading) => (
                   <th key={heading} className="border-r border-slate-800 px-2 py-2 font-bold last:border-r-0">{heading}</th>
                 ))}
               </tr>
@@ -207,9 +233,11 @@ export default function ConcreteReportInlineContent({ report, reportLabel = "Rep
                     <td className="border-r border-t border-slate-200 px-2 py-2 font-semibold">{valueOrDash(record.arrival_time ?? record.arrivalTime)}</td>
                     <td className="border-r border-t border-slate-200 px-2 py-2 font-semibold">{valueOrDash(record.time_tested ?? record.timeTested)}</td>
                     <td className="border-r border-t border-slate-200 px-2 py-2 font-semibold">{valueOrDash(record.finish_unload ?? record.finishUnload)}</td>
+                    <td className="border-r border-t border-slate-200 px-2 py-2 font-semibold">{valueOrDash(record.actual_minutes ?? record.actualMinutes)}</td>
                     <td className="border-r border-t border-slate-200 px-2 py-2">
                       <span className={`rounded-full border px-2 py-1 text-[10px] font-bold ${statusClass(result)}`}>{normalizeStatus(result)}</span>
                     </td>
+                    <td className="border-r border-t border-slate-200 px-2 py-2 font-semibold">{valueOrDash(record.water_added_gal ?? record.waterAdded)}</td>
                     <td className="border-r border-t border-slate-200 px-2 py-2 font-semibold">{valueOrDash(record.air_temp_f ?? record.airTempF)}</td>
                     <td className="border-r border-t border-slate-200 px-2 py-2 font-semibold">{valueOrDash(record.concrete_temp_f ?? record.concreteTempF)}</td>
                     <td className="border-r border-t border-slate-200 px-2 py-2 font-semibold">{valueOrDash(record.slump_in ?? record.slump)}</td>
@@ -219,8 +247,8 @@ export default function ConcreteReportInlineContent({ report, reportLabel = "Rep
                     <td className="border-r border-t border-slate-200 px-2 py-2 font-semibold">{valueOrDash(record.j_ring_in ?? record.jRing)}</td>
                     <td className="border-r border-t border-slate-200 px-2 py-2 font-semibold">{isStrengthRequired(record) ? "Required" : "No"}</td>
                     <td className="border-r border-t border-slate-200 px-2 py-2 font-semibold">{valueOrDash(record.set_number ?? record.setNumber)}</td>
-                    <td className="border-r border-t border-slate-200 px-2 py-2 font-semibold">{valueOrDash(record.lab_cylinders ?? record.labSamples)}</td>
-                    <td className="border-r border-t border-slate-200 px-2 py-2 font-semibold">{valueOrDash(record.field_cylinders ?? record.fieldSamples)}</td>
+                    <td className="border-r border-t border-slate-200 px-2 py-2 font-semibold">{valueOrDash(record.lab_cylinders ?? record.lab_samples ?? record.labSamples)}</td>
+                    <td className="border-r border-t border-slate-200 px-2 py-2 font-semibold">{valueOrDash(record.field_cylinders ?? record.field_samples ?? record.fieldSamples)}</td>
                     <td className="border-t border-slate-200 px-2 py-2 font-semibold">{valueOrDash(record.comments ?? record.inspectorNotes)}</td>
                   </tr>
                 );
@@ -230,7 +258,7 @@ export default function ConcreteReportInlineContent({ report, reportLabel = "Rep
         </div>
       </section>
 
-      <section>
+      <section className="report-section keep-together">
         <h5 className="text-sm font-bold text-slate-950">Compliance Summary</h5>
         <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-5">
           <FieldValue label="Total Records" value={summary.totalRecords} />

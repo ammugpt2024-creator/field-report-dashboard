@@ -1,9 +1,12 @@
+import { supabase } from "./supabase.js";
+
 const STORAGE_KEY = "imqcore:field-execution-logs";
 
 export const DAILY_LOG_STATUS = {
   DRAFT: "draft",
   ACTIVE: "active",
-  SUBMITTED: "pending_manager_review",
+  SUBMITTED: "submitted",
+  PENDING_MANAGER_REVIEW: "pending_manager_review",
   RETURNED: "returned_corrections",
   APPROVED: "approved"
 };
@@ -42,27 +45,31 @@ function isUnsafeStatusDowngrade(nextLog, existingLog, options = {}) {
 }
 
 function normalizeDailyLogFromStorage(log = {}) {
+  const status = log.status === DAILY_LOG_STATUS.PENDING_MANAGER_REVIEW
+    ? DAILY_LOG_STATUS.SUBMITTED
+    : log.status;
+  const normalizedLog = status === log.status ? log : { ...log, status };
   const recalledAt = log.recalledAt || log.recalled_at;
-  if (isDraftLikeDailyLog(log) && recalledAt) {
-    return log;
+  if (isDraftLikeDailyLog(normalizedLog) && recalledAt) {
+    return normalizedLog;
   }
 
-  const submittedEvidence = log.submittedAt ||
-    log.submitted_at ||
-    log.pdfGeneratedAt ||
-    log.pdf_generated_at ||
-    log.pdfStoragePath ||
-    log.pdf_storage_path ||
-    log.pdfDataUrl ||
-    log.pdf_data_url;
+  const submittedEvidence = normalizedLog.submittedAt ||
+    normalizedLog.submitted_at ||
+    normalizedLog.pdfGeneratedAt ||
+    normalizedLog.pdf_generated_at ||
+    normalizedLog.pdfStoragePath ||
+    normalizedLog.pdf_storage_path ||
+    normalizedLog.pdfDataUrl ||
+    normalizedLog.pdf_data_url;
 
-  if (!isDraftLikeDailyLog(log) || !submittedEvidence) return log;
+  if (!isDraftLikeDailyLog(normalizedLog) || !submittedEvidence) return normalizedLog;
 
   return {
-    ...log,
+    ...normalizedLog,
     status: DAILY_LOG_STATUS.SUBMITTED,
-    submittedAt: log.submittedAt || log.submitted_at || log.pdfGeneratedAt || log.pdf_generated_at || log.updatedAt || new Date().toISOString(),
-    submitted_at: log.submitted_at || log.submittedAt || log.pdf_generated_at || log.pdfGeneratedAt || log.updatedAt || new Date().toISOString()
+    submittedAt: normalizedLog.submittedAt || normalizedLog.submitted_at || normalizedLog.pdfGeneratedAt || normalizedLog.pdf_generated_at || normalizedLog.updatedAt || new Date().toISOString(),
+    submitted_at: normalizedLog.submitted_at || normalizedLog.submittedAt || normalizedLog.pdf_generated_at || normalizedLog.pdfGeneratedAt || normalizedLog.updatedAt || new Date().toISOString()
   };
 }
 
@@ -276,8 +283,179 @@ function readLogs() {
   }
 }
 
+function isQuotaExceededError(error) {
+  return error?.name === "QuotaExceededError" ||
+    error?.name === "NS_ERROR_DOM_QUOTA_REACHED" ||
+    error?.code === 22 ||
+    error?.code === 1014;
+}
+
+function stripCachedPdfData(log = {}) {
+  if (!log.pdfDataUrl && !log.pdf_data_url) return log;
+  return { ...log, pdfDataUrl: "", pdf_data_url: "" };
+}
+
+function stripSignatureData(log = {}) {
+  if (!log.technicianSignature && !log.technician_signature) return log;
+  return { ...log, technicianSignature: "", technician_signature: "" };
+}
+
 function writeLogs(logs) {
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(logs.map(sanitizeDailyLogForBrowserStorage)));
+  const sanitized = logs.map(sanitizeDailyLogForBrowserStorage);
+  // Cached PDF data URLs (up to ~2.5MB per log) can blow past the localStorage
+  // quota; submitted PDFs live in Supabase Storage, so the cache is shed first.
+  const attempts = [
+    () => sanitized,
+    () => sanitized.map(stripCachedPdfData),
+    () => sanitized.map((log) => stripSignatureData(stripCachedPdfData(log)))
+  ];
+  let lastError;
+  for (const buildAttempt of attempts) {
+    try {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(buildAttempt()));
+      return;
+    } catch (error) {
+      if (!isQuotaExceededError(error)) throw error;
+      lastError = error;
+    }
+  }
+  throw lastError;
+}
+
+function toNullableBigInt(value) {
+  const normalized = String(value ?? "").trim();
+  if (!/^\d+$/.test(normalized)) return null;
+  return Number(normalized);
+}
+
+async function getCurrentSupabaseUser() {
+  // Prefer the locally cached session: auth.getUser() makes a network round
+  // trip on every call and is a known stall point during submission.
+  const { data: sessionData } = await supabase.auth.getSession();
+  if (sessionData?.session?.user?.id) return sessionData.session.user;
+  const { data, error } = await supabase.auth.getUser();
+  if (error) throw error;
+  return data?.user || null;
+}
+
+function getDailyLogDate(log = {}) {
+  return log.date || log.log_date || log.reportDate || log.report_date || new Date().toISOString().slice(0, 10);
+}
+
+function getWeatherSummary(log = {}) {
+  return log.weatherSummary ||
+    log.weather_summary ||
+    log.weatherCondition ||
+    log.weather_condition ||
+    log.weather ||
+    "";
+}
+
+// The jsonb payload column must stay small: cached PDF data URLs add megabytes
+// to every upsert and can push the request past the submission timeout.
+function sanitizeDailyLogForSupabasePayload(log = {}) {
+  return stripCachedPdfData(sanitizeDailyLogForBrowserStorage(log));
+}
+
+function buildSupabaseDailyLogPayload(log = {}, userId, patch = {}) {
+  return {
+    client_log_id: String(log.id),
+    organization_id: toNullableBigInt(log.organizationId || log.organization_id || log.companyId || log.company_id),
+    project_id: toNullableBigInt(log.projectId || log.project_id),
+    technician_id: userId || log.technicianId || log.technician_id || log.userId || log.user_id || null,
+    log_date: getDailyLogDate(log),
+    shift: log.shift || "",
+    weather_summary: getWeatherSummary(log),
+    supervisor_name: log.supervisor || log.supervisorName || log.supervisor_name || "",
+    payload: sanitizeDailyLogForSupabasePayload(log),
+    updated_at: new Date().toISOString(),
+    ...patch
+  };
+}
+
+export async function saveDailyLogSignatureToSupabase(log, signatureDataUrl) {
+  if (!signatureDataUrl) {
+    throw new Error("Signature could not be saved. Please try again.");
+  }
+
+  const user = await getCurrentSupabaseUser();
+  if (!user?.id) {
+    throw new Error("Signature could not be saved. Please try again.");
+  }
+
+  const { data, error } = await supabase
+    .from("daily_log_signatures")
+    .insert({
+      client_daily_log_id: String(log.id),
+      signed_by: user.id,
+      signature_data_url: signatureDataUrl
+    })
+    .select("id")
+    .single();
+
+  if (error || !data?.id) {
+    if (error) console.error("Daily Log signature insert failed", error);
+    throw new Error("Signature could not be saved. Please try again.");
+  }
+
+  return { id: data.id, userId: user.id };
+}
+
+export async function submitDailyLogToSupabase(log, { signatureId, submittedAt, submittedBy } = {}) {
+  const user = submittedBy ? { id: submittedBy } : await getCurrentSupabaseUser();
+  if (!user?.id) {
+    throw new Error("Daily Log submission failed. Please try again.");
+  }
+
+  const payload = buildSupabaseDailyLogPayload(log, user.id, {
+    status: DAILY_LOG_STATUS.SUBMITTED,
+    submitted_at: submittedAt || new Date().toISOString(),
+    submitted_by: user.id,
+    signature_id: signatureId || null
+  });
+
+  // The upsert returns the persisted row, so its status is already the
+  // authoritative verification; a separate read-back round trip only adds
+  // another failure point inside the submission timeout budget.
+  const { data, error } = await supabase
+    .from("daily_logs")
+    .upsert(payload, { onConflict: "client_log_id" })
+    .select("id,status,submitted_at,submitted_by,signature_id,pdf_url,pdf_storage_path")
+    .single();
+
+  if (error || data?.status !== DAILY_LOG_STATUS.SUBMITTED) {
+    if (error) console.error("Daily Log submission upsert failed", error);
+    throw new Error("Daily Log submission failed. Please try again.");
+  }
+
+  if (signatureId && data?.id) {
+    await supabase
+      .from("daily_log_signatures")
+      .update({ daily_log_id: data.id })
+      .eq("id", signatureId);
+  }
+
+  return data;
+}
+
+export async function updateDailyLogPdfMetadataInSupabase(log, pdfPatch = {}) {
+  const payload = {
+    pdf_url: pdfPatch.pdfUrl || pdfPatch.pdf_url || pdfPatch.finalPdfUrl || pdfPatch.final_pdf_url || "",
+    pdf_storage_path: pdfPatch.pdfStoragePath || pdfPatch.pdf_storage_path || "",
+    pdf_generated_at: pdfPatch.pdfGeneratedAt || pdfPatch.pdf_generated_at || new Date().toISOString(),
+    pdf_generated: true,
+    pdf_generation_status: pdfPatch.pdfGenerationStatus || pdfPatch.pdf_generation_status || "generated",
+    pdf_generation_failure_reason: pdfPatch.pdfGenerationFailureReason || pdfPatch.pdf_generation_failure_reason || "",
+    payload: sanitizeDailyLogForSupabasePayload({ ...log, ...pdfPatch }),
+    updated_at: new Date().toISOString()
+  };
+
+  const { error } = await supabase
+    .from("daily_logs")
+    .update(payload)
+    .eq("client_log_id", String(log.id));
+
+  if (error) throw error;
 }
 
 function sanitizeAttachmentForStorage(attachment = {}) {
@@ -524,10 +702,12 @@ export function attachConcreteReportToActivity(logId, activityId, reportSummary)
 }
 
 export function submitDailyLog(log) {
+  const submittedAt = new Date().toISOString();
   return saveDailyLog({
     ...log,
     status: DAILY_LOG_STATUS.SUBMITTED,
-    submittedAt: new Date().toISOString(),
+    submittedAt,
+    submitted_at: submittedAt,
     syncStatus: "Pending sync"
   });
 }
@@ -586,7 +766,8 @@ export function formatLogStatus(status) {
   const labels = {
     [DAILY_LOG_STATUS.DRAFT]: "Draft",
     [DAILY_LOG_STATUS.ACTIVE]: "Active Execution",
-    [DAILY_LOG_STATUS.SUBMITTED]: "Pending Manager Review",
+    [DAILY_LOG_STATUS.SUBMITTED]: "Submitted",
+    [DAILY_LOG_STATUS.PENDING_MANAGER_REVIEW]: "Submitted",
     [DAILY_LOG_STATUS.RETURNED]: "Returned Corrections",
     [DAILY_LOG_STATUS.APPROVED]: "Approved"
   };

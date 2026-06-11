@@ -1,11 +1,11 @@
 import { FileText, Plus } from "lucide-react";
 
-export default function ActivityReportSelector({ onAddConcreteReport, disabled = false }) {
+export default function ActivityReportSelector({ onAddConcreteReport, onAddCompactionReport, disabled = false }) {
   const reportTypes = [
-    { label: "Concrete Report", description: "Create concrete testing documentation.", available: true },
+    { label: "Concrete Report", description: "Create concrete testing documentation.", available: true, onClick: onAddConcreteReport },
     { label: "Inspection Report", description: "Coming soon", available: false },
-    { label: "Density Report", description: "Coming soon", available: false },
-    { label: "Nuclear Gauge Report", description: "Coming soon", available: false },
+    { label: "Density Report", description: "Create nuclear density compaction documentation.", available: true, onClick: onAddCompactionReport },
+    { label: "Nuclear Gauge Report", description: "Create nuclear gauge compaction documentation.", available: true, onClick: onAddCompactionReport },
     { label: "Asphalt Report", description: "Coming soon", available: false },
     { label: "Other", description: "Coming soon", available: false }
   ];
@@ -23,7 +23,7 @@ export default function ActivityReportSelector({ onAddConcreteReport, disabled =
           <button
             key={reportType.label}
             type="button"
-            onClick={reportType.available ? onAddConcreteReport : undefined}
+            onClick={reportType.available ? reportType.onClick : undefined}
             disabled={disabled || !reportType.available}
             className={`min-h-16 rounded-2xl border px-4 py-3 text-left transition ${
               reportType.available

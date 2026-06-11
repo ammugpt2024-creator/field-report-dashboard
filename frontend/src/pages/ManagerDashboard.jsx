@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   AlertTriangle,
@@ -14,6 +14,7 @@ import { supabase } from "../services/supabase";
 import StatusBadge from "../components/StatusBadge";
 import { REPORT_STATUS, normalizeReportStatus } from "../workflow/workflowEngine";
 import { MODULE_NAMES } from "../config/branding";
+import { approveTimeCard, formatTimeCardStatus, getTimeCards, rejectTimeCard, TIME_CARD_STATUS } from "../services/timeCardService";
 
 function isToday(value) {
   if (!value) return false;
@@ -29,6 +30,7 @@ function ManagerDashboard() {
   const navigate = useNavigate();
   const [reports, setReports] = useState([]);
   const [projects, setProjects] = useState([]);
+  const [timeCards, setTimeCards] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -47,6 +49,7 @@ function ManagerDashboard() {
 
         setReports(reportsResponse.data || []);
         setProjects(projectsResponse.data || []);
+        setTimeCards(getTimeCards());
       } catch (err) {
         console.error("Manager dashboard failed", err);
         setError(err.message || "Unable to load manager dashboard.");
@@ -72,6 +75,23 @@ function ManagerDashboard() {
   const rejectedReports = enrichedReports.filter((report) =>
     [REPORT_STATUS.REJECTED, REPORT_STATUS.REVISION_REQUIRED].includes(report.normalizedStatus)
   );
+  const submittedTimesheets = timeCards.filter((card) => [TIME_CARD_STATUS.SUBMITTED, TIME_CARD_STATUS.PENDING_REVIEW].includes(card.status));
+
+  function refreshTimeCards(nextCards = getTimeCards()) {
+    setTimeCards([...nextCards]);
+  }
+
+  function approveTimesheet(card) {
+    approveTimeCard(card, "Manager");
+    refreshTimeCards();
+  }
+
+  function rejectTimesheet(card) {
+    const comments = window.prompt("Reject comments are required.");
+    if (!comments || !comments.trim()) return;
+    rejectTimeCard(card, comments.trim());
+    refreshTimeCards();
+  }
 
   const kpis = [
     { label: "Active Project Operations", value: projects.length || new Set(enrichedReports.map((report) => report.project_id).filter(Boolean)).size, icon: FolderKanban, tone: "bg-slate-50 text-slate-900" },
@@ -188,6 +208,78 @@ function ManagerDashboard() {
               ))}
             </div>
           </aside>
+        </section>
+
+        <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-400">Weekly Timesheets</p>
+              <h2 className="mt-2 text-xl font-bold text-slate-950">Manager review queue</h2>
+            </div>
+          </div>
+          <div className="mt-5 overflow-x-auto rounded-2xl border border-slate-200">
+            <table className="min-w-[980px] w-full border-collapse text-left text-sm">
+              <thead className="bg-slate-950 text-xs font-bold uppercase tracking-[0.08em] text-white">
+                <tr>
+                  {["Timesheet", "Employee", "Project", "Week Period", "Regular", "OT", "Total", "Status", "Actions"].map((header) => (
+                    <th key={header} className="px-3 py-3">{header}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {submittedTimesheets.map((card) => (
+                  <Fragment key={card.id}>
+                    <tr className="border-t border-slate-200">
+                      <td className="px-3 py-3 font-bold text-slate-950">{card.timesheetNumber || card.timesheet_number}</td>
+                      <td className="px-3 py-3 font-semibold">{card.technicianName || card.technician_name}</td>
+                      <td className="px-3 py-3 font-semibold">{card.projectName}</td>
+                      <td className="px-3 py-3 font-semibold">{card.weekStartDate || card.week_start_date} - {card.weekEndDate || card.week_end_date}</td>
+                      <td className="px-3 py-3 font-bold">{card.totalRegularHours || card.total_regular_hours || "0.00"}</td>
+                      <td className="px-3 py-3 font-bold">{card.totalOvertimeHours || card.total_overtime_hours || "0.00"}</td>
+                      <td className="px-3 py-3 font-bold">{card.totalHours || card.total_hours || "0.00"}</td>
+                      <td className="px-3 py-3 font-bold">{formatTimeCardStatus(card.status)}</td>
+                      <td className="px-3 py-3">
+                        <div className="flex flex-wrap gap-2">
+                          <button type="button" onClick={() => approveTimesheet(card)} className="min-h-9 rounded-xl bg-emerald-700 px-3 text-xs font-bold text-white">Approve</button>
+                          <button type="button" onClick={() => rejectTimesheet(card)} className="min-h-9 rounded-xl border border-rose-200 bg-white px-3 text-xs font-bold text-rose-700">Reject</button>
+                        </div>
+                      </td>
+                    </tr>
+                    <tr className="border-t border-slate-100 bg-slate-50">
+                      <td colSpan={9} className="px-3 py-3">
+                        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+                          <table className="min-w-[560px] w-full border-collapse text-left text-xs">
+                            <thead className="bg-slate-100 font-bold uppercase tracking-[0.08em] text-slate-600">
+                              <tr>
+                                {["Day", "Date", "Regular Hours", "OT Hours"].map((header) => (
+                                  <th key={header} className="px-3 py-2">{header}</th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {(card.entries || []).map((entry) => (
+                                <tr key={entry.id || entry.workDate || entry.work_date} className="border-t border-slate-100">
+                                  <td className="px-3 py-2 font-bold text-slate-950">{entry.dayName || entry.day_name}</td>
+                                  <td className="px-3 py-2 font-semibold text-slate-700">{entry.workDate || entry.work_date}</td>
+                                  <td className="px-3 py-2 font-bold">{entry.regularHours || entry.regular_hours || "0.00"}</td>
+                                  <td className="px-3 py-2 font-bold">{entry.overtimeHours || entry.overtime_hours || "0.00"}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </td>
+                    </tr>
+                  </Fragment>
+                ))}
+                {!submittedTimesheets.length && (
+                  <tr>
+                    <td colSpan={9} className="px-3 py-8 text-center text-sm font-semibold text-slate-500">No weekly timesheets are pending review.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </section>
       </div>
     </div>
