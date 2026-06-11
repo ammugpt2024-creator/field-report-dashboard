@@ -14,7 +14,11 @@ import { supabase } from "../services/supabase";
 import StatusBadge from "../components/StatusBadge";
 import { REPORT_STATUS, normalizeReportStatus } from "../workflow/workflowEngine";
 import { MODULE_NAMES } from "../config/branding";
-import { approveTimeCard, formatTimeCardStatus, getTimeCards, rejectTimeCard, TIME_CARD_STATUS } from "../services/timeCardService";
+import { WEEK_DAYS, approveTimeCard, formatTimeCardStatus, getRowTotal, getTimeCards, rejectTimeCard, TIME_CARD_STATUS } from "../services/timeCardService";
+import { regenerateTimeCardPdf } from "../services/timeCardPdfService";
+
+const DAY_LABELS = { Monday: "Mon", Tuesday: "Tue", Wednesday: "Wed", Thursday: "Thu", Friday: "Fri", Saturday: "Sat", Sunday: "Sun" };
+const fmtHours = (value) => (Number(value) || 0).toFixed(2);
 
 function isToday(value) {
   if (!value) return false;
@@ -82,8 +86,12 @@ function ManagerDashboard() {
   }
 
   function approveTimesheet(card) {
-    approveTimeCard(card, "Manager");
+    const approved = approveTimeCard(card, "Manager");
     refreshTimeCards();
+    // Regenerate the stored PDF so it carries the approval date and reviewer.
+    regenerateTimeCardPdf(approved)
+      .then(() => refreshTimeCards())
+      .catch((err) => console.warn("Approved timesheet PDF could not be regenerated:", err));
   }
 
   function rejectTimesheet(card) {
@@ -232,7 +240,7 @@ function ManagerDashboard() {
                     <tr className="border-t border-slate-200">
                       <td className="px-3 py-3 font-bold text-slate-950">{card.timesheetNumber || card.timesheet_number}</td>
                       <td className="px-3 py-3 font-semibold">{card.technicianName || card.technician_name}</td>
-                      <td className="px-3 py-3 font-semibold">{card.projectName}</td>
+                      <td className="px-3 py-3 font-semibold">{(card.projectRows || []).map((row) => row.projectName || row.project_name).filter(Boolean).join(", ") || card.projectName || "-"}</td>
                       <td className="px-3 py-3 font-semibold">{card.weekStartDate || card.week_start_date} - {card.weekEndDate || card.week_end_date}</td>
                       <td className="px-3 py-3 font-bold">{card.totalRegularHours || card.total_regular_hours || "0.00"}</td>
                       <td className="px-3 py-3 font-bold">{card.totalOvertimeHours || card.total_overtime_hours || "0.00"}</td>
@@ -248,23 +256,33 @@ function ManagerDashboard() {
                     <tr className="border-t border-slate-100 bg-slate-50">
                       <td colSpan={9} className="px-3 py-3">
                         <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
-                          <table className="min-w-[560px] w-full border-collapse text-left text-xs">
+                          <table className="min-w-[680px] w-full border-collapse text-left text-xs">
                             <thead className="bg-slate-100 font-bold uppercase tracking-[0.08em] text-slate-600">
                               <tr>
-                                {["Day", "Date", "Regular Hours", "OT Hours"].map((header) => (
-                                  <th key={header} className="px-3 py-2">{header}</th>
+                                <th className="px-3 py-2">Project</th>
+                                {WEEK_DAYS.map((day) => (
+                                  <th key={day} className="px-2 py-2 text-center">{DAY_LABELS[day]}</th>
                                 ))}
+                                <th className="px-3 py-2 text-right">Total</th>
                               </tr>
                             </thead>
                             <tbody>
-                              {(card.entries || []).map((entry) => (
-                                <tr key={entry.id || entry.workDate || entry.work_date} className="border-t border-slate-100">
-                                  <td className="px-3 py-2 font-bold text-slate-950">{entry.dayName || entry.day_name}</td>
-                                  <td className="px-3 py-2 font-semibold text-slate-700">{entry.workDate || entry.work_date}</td>
-                                  <td className="px-3 py-2 font-bold">{entry.regularHours || entry.regular_hours || "0.00"}</td>
-                                  <td className="px-3 py-2 font-bold">{entry.overtimeHours || entry.overtime_hours || "0.00"}</td>
+                              {(card.projectRows || []).map((row) => (
+                                <tr key={row.id} className="border-t border-slate-100">
+                                  <td className="px-3 py-2 font-bold text-slate-950">{row.projectName || row.project_name || "-"}</td>
+                                  {WEEK_DAYS.map((day) => (
+                                    <td key={day} className="px-2 py-2 text-center font-semibold">{fmtHours(row.hours?.[day])}</td>
+                                  ))}
+                                  <td className="px-3 py-2 text-right font-bold">{fmtHours(getRowTotal(row))}</td>
                                 </tr>
                               ))}
+                              <tr className="border-t border-slate-200 bg-slate-50">
+                                <td className="px-3 py-2 font-bold text-slate-950">Daily Total</td>
+                                {WEEK_DAYS.map((day) => (
+                                  <td key={day} className="px-2 py-2 text-center font-bold">{fmtHours((card.dailyTotals || {})[day])}</td>
+                                ))}
+                                <td className="px-3 py-2 text-right font-bold">{card.totalHours || card.total_hours || "0.00"}</td>
+                              </tr>
                             </tbody>
                           </table>
                         </div>
