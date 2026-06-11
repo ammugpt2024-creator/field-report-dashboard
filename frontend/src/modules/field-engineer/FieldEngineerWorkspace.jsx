@@ -30,7 +30,8 @@ import {
   getDailyLogCollections,
   getDailyLogs,
   saveDailyLog,
-  submitDailyLog
+  submitDailyLog,
+  syncDailyLogsFromSupabase
 } from "../../services/dailyLogService";
 import { openDailyLogPdf, regenerateDailyLogPdf } from "../../services/dailyLogPdfService";
 import { generateAndUploadConcreteReportPdf, openConcreteReportPdf } from "../../services/concreteReportPdfService";
@@ -3385,6 +3386,17 @@ export default function FieldEngineerWorkspace({
       if (changed) setTimeCards(getTimeCards());
     }
     syncFromDatabase();
+  }, []);
+
+  useEffect(() => {
+    // Same pattern for daily logs: restore logs submitted from another device
+    // and merge approve/return decisions made on the manager's machine.
+    async function syncDailyLogsFromDatabase() {
+      const changed = await syncDailyLogsFromSupabase({ userId: userId || profile?.id });
+      if (changed) setDailyLogs(getDailyLogs());
+    }
+    syncDailyLogsFromDatabase();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {

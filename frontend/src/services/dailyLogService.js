@@ -756,6 +756,101 @@ export function submitDailyLog(log) {
   });
 }
 
+// Mirrors the technician's daily logs from the database into localStorage:
+// restores logs submitted from another device and merges review decisions
+// (approve / return) made on the manager's machine into the local copies.
+// Local drafts are never overwritten. Returns true when anything changed.
+export async function syncDailyLogsFromSupabase({ userId } = {}) {
+  try {
+    const technicianId = userId || (await getCurrentSupabaseUser())?.id;
+    if (!technicianId) return false;
+
+    const { data, error } = await supabase
+      .from("daily_logs")
+      .select("*")
+      .eq("technician_id", technicianId);
+    if (error || !Array.isArray(data)) {
+      if (error) console.warn("Daily log sync from the database failed.", error);
+      return false;
+    }
+
+    let changed = false;
+    const logs = readLogs();
+    const byClientId = new Map(logs.map((log) => [String(log.id), log]));
+
+    for (const row of data) {
+      const clientId = String(row.client_log_id || "");
+      const rowStatus = String(row.status || "").toLowerCase();
+      // Archived rows are manager-side housekeeping; drafts have no remote truth.
+      if (!clientId || !rowStatus || rowStatus === "archived" || rowStatus === DAILY_LOG_STATUS.DRAFT) continue;
+
+      let payload = row.payload || {};
+      if (typeof payload === "string") {
+        try {
+          payload = JSON.parse(payload);
+        } catch {
+          payload = {};
+        }
+      }
+
+      const local = byClientId.get(clientId);
+      if (!local) {
+        // Restore a log that was submitted from another device or browser.
+        changed = true;
+        byClientId.set(clientId, {
+          ...payload,
+          id: clientId,
+          status: rowStatus,
+          supabaseDailyLogId: row.id,
+          supabase_daily_log_id: row.id,
+          submittedAt: row.submitted_at || payload.submittedAt || payload.submitted_at || "",
+          submitted_at: row.submitted_at || payload.submitted_at || payload.submittedAt || "",
+          pdfStoragePath: row.pdf_storage_path || payload.pdfStoragePath || payload.pdf_storage_path || "",
+          pdf_storage_path: row.pdf_storage_path || payload.pdf_storage_path || payload.pdfStoragePath || "",
+          pdfUrl: row.pdf_url || payload.pdfUrl || payload.pdf_url || "",
+          pdf_url: row.pdf_url || payload.pdf_url || payload.pdfUrl || ""
+        });
+        continue;
+      }
+
+      // Merge review decisions into local copies that are still waiting on the
+      // manager; recalled/edited drafts keep local truth.
+      const localStatus = String(local.status || "").toLowerCase();
+      const isReviewDecision = [DAILY_LOG_STATUS.APPROVED, DAILY_LOG_STATUS.RETURNED].includes(rowStatus);
+      const localAwaitingReview = [DAILY_LOG_STATUS.SUBMITTED, DAILY_LOG_STATUS.PENDING_MANAGER_REVIEW].includes(localStatus);
+      if (rowStatus !== localStatus && isReviewDecision && localAwaitingReview) {
+        changed = true;
+        byClientId.set(clientId, {
+          ...local,
+          status: rowStatus,
+          approvedBy: payload.approvedBy || payload.approved_by || local.approvedBy || "",
+          approved_by: payload.approved_by || payload.approvedBy || local.approved_by || "",
+          approvedAt: payload.approvedAt || row.approved_at || local.approvedAt || "",
+          approved_at: payload.approved_at || row.approved_at || local.approved_at || "",
+          returnedAt: payload.returnedAt || row.returned_at || local.returnedAt || "",
+          returned_at: payload.returned_at || row.returned_at || local.returned_at || "",
+          managerComments: Array.isArray(payload.managerComments) && payload.managerComments.length
+            ? payload.managerComments
+            : (local.managerComments || []),
+          qcSignature: payload.qcSignature || payload.qc_signature || local.qcSignature || "",
+          qc_signature: payload.qc_signature || payload.qcSignature || local.qc_signature || "",
+          pdfStoragePath: row.pdf_storage_path || local.pdfStoragePath || local.pdf_storage_path || "",
+          pdf_storage_path: row.pdf_storage_path || local.pdf_storage_path || local.pdfStoragePath || "",
+          supabaseDailyLogId: row.id,
+          supabase_daily_log_id: row.id,
+          syncStatus: "Synced"
+        });
+      }
+    }
+
+    if (changed) writeLogs(Array.from(byClientId.values()));
+    return changed;
+  } catch (error) {
+    console.warn("Daily log sync failed.", error);
+    return false;
+  }
+}
+
 // Loads a submitted daily log from the database (for reviewers on devices that
 // don't hold the technician's local copy). Accepts the local client uuid or
 // the numeric daily_logs id.
