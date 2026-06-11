@@ -87,6 +87,12 @@ function App() {
           element={<TechnicianDashboard />}
         />
 
+        {/* Timesheets are universal — managers and admins file their own too. */}
+        <Route
+          path="/timesheets"
+          element={<TechnicianDashboard />}
+        />
+
         <Route
           path="/technician/activity-history"
           element={<TechnicianDashboard />}

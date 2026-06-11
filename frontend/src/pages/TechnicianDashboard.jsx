@@ -116,6 +116,10 @@ function TechnicianDashboard() {
   }, [defaultProjectId, enrichedReports, projectLabel, projects]);
   const routeView = location.pathname === "/technician/activity-history"
     ? "activity-history"
+    // Timesheets are universal — every role (manager included) files their own,
+    // so the timesheet workspace also mounts at the role-neutral /timesheets.
+    : location.pathname === "/timesheets"
+      ? "time-card"
     : location.pathname.includes("/compaction-report/")
       ? "compaction-report"
     : location.pathname.includes("/concrete-report/")

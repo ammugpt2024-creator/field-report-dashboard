@@ -434,6 +434,7 @@ function ManagerDashboard() {
 
   const managerActions = [
     { label: `Open ${MODULE_NAMES.validationCenter}`, icon: ClipboardCheck, onClick: () => navigate("/qc/dashboard") },
+    { label: "My Timesheet", icon: CalendarDays, onClick: () => navigate("/timesheets") },
     { label: `Open ${MODULE_NAMES.projectHub}`, icon: FolderKanban, onClick: () => navigate("/project/1") },
     { label: "Assign Reviewers", icon: Users, onClick: () => navigate("/qc/dashboard") },
     { label: "Monitor Teams", icon: BarChart3, onClick: () => navigate("/manager/dashboard?view=teams") },
