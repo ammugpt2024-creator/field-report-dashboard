@@ -17,9 +17,25 @@ function TechnicianDashboard() {
   const { logId, activityId, reportId } = useParams();
   const { session, profile, role, companyName } = useAuth();
   const [reports, setReports] = useState([]);
+  const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [discardingId, setDiscardingId] = useState(null);
+
+  useEffect(() => {
+    async function loadProjects() {
+      const { data, error: projectsError } = await supabase
+        .from("projects")
+        .select("*")
+        .order("project_name", { ascending: true });
+      if (projectsError) {
+        console.warn("Unable to load projects for assignment list.", projectsError);
+        return;
+      }
+      setProjects(data || []);
+    }
+    loadProjects();
+  }, []);
 
   useEffect(() => {
     async function loadReports() {
@@ -64,10 +80,23 @@ function TechnicianDashboard() {
   const projectLabel = getCurrentProjectLabel(enrichedReports);
   const assignedProjects = useMemo(() => {
     const map = new Map();
+    // Active projects from the projects table are the source of truth.
+    projects
+      .filter((project) => String(project.status || "Active").toLowerCase() === "active")
+      .forEach((project) => {
+        map.set(String(project.id), {
+          id: project.id,
+          name: project.project_name || project.name || `Project ${project.id}`,
+          number: project.project_number || String(project.id),
+          location: project.project_location || project.location || "",
+          overtimeExempt: Boolean(project.overtime_exempt)
+        });
+      });
+    // Keep any project the technician has reported on, even if no longer active.
     enrichedReports.forEach((report) => {
       const id = report.project_id || defaultProjectId;
       const name = report.project_name || report.projectLabel || projectLabel;
-      if (!id || !name) return;
+      if (!id || !name || map.has(String(id))) return;
       map.set(String(id), {
         id,
         name,
@@ -84,7 +113,7 @@ function TechnicianDashboard() {
       });
     }
     return Array.from(map.values());
-  }, [defaultProjectId, enrichedReports, projectLabel]);
+  }, [defaultProjectId, enrichedReports, projectLabel, projects]);
   const routeView = location.pathname === "/technician/activity-history"
     ? "activity-history"
     : location.pathname.includes("/compaction-report/")

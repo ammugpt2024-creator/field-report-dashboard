@@ -40,7 +40,10 @@ Deno.serve(async (req) => {
 
     const envResendKey = Deno.env.get("RESEND_API_KEY");
     const resendApiKey = HARDCODED_RESEND_KEY || envResendKey;
-    const fromEmail = "QCore <onboarding@resend.dev>";
+    // Send from the verified domain so Resend delivers to any recipient.
+    // Falls back to the sandbox sender (delivers only to the account owner)
+    // when the secret is not configured.
+    const fromEmail = Deno.env.get("RESEND_FROM_EMAIL") || "QCore <onboarding@resend.dev>";
 
     console.log("RESEND KEY EXISTS:", Boolean(envResendKey));
     console.log("HARDCODED RESEND KEY EXISTS:", Boolean(HARDCODED_RESEND_KEY));

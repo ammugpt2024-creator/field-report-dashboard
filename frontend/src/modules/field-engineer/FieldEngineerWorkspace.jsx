@@ -20,7 +20,6 @@ import {
 import DailyLogEditor from "../../components/daily-log/DailyLogEditor";
 import DailyLogSummaryView from "../../components/daily-log/DailyLogSummaryView";
 import PhotosAttachmentsSection, { isAllowedDailyLogAttachment } from "../../components/daily-log/PhotosAttachmentsSection";
-import SignatureModal from "../../components/SignatureModal";
 import {
   DAILY_LOG_STATUS,
   createConcreteReport,
@@ -54,7 +53,8 @@ import {
   TIME_CARD_STATUS
 } from "../../services/timeCardService";
 import { formatDateTime } from "./fieldEngineerData";
-import { sendTimesheetApprovalEmail } from "../../services/notificationService";
+import { resolveFallbackManager, resolveManagerForProject, sendTimesheetApprovalEmail } from "../../services/notificationService";
+import { fetchTimesheetStatusUpdates, fetchTimesheetsForTechnician } from "../../services/timesheetSyncService";
 
 function cardClass(extra = "") {
   return `rounded-2xl border border-slate-200 bg-white p-3 shadow-sm sm:p-4 ${extra}`;
@@ -101,10 +101,6 @@ function formatShortDate(value) {
 
 function getTimesheetNumber(card) {
   return card?.timesheetNumber || card?.timesheet_number || `TS-${String(card?.id || "").slice(0, 8).toUpperCase()}`;
-}
-
-function getTimesheetSignature(card) {
-  return card?.technicianSignature || card?.technician_signature || "";
 }
 
 function getRegularAndOvertimeHours(totalHours) {
@@ -2127,17 +2123,70 @@ function lastSavedLabel(savedAt) {
   return `at ${savedAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
 }
 
+// Resolve the approving manager for each project row (project record first,
+// org-level fallback second) and group rows by manager — shared by the editor
+// and the read-only view so both show the same routing the emails use.
+function useTimesheetApprovers(projectRows) {
+  const [projectManagers, setProjectManagers] = useState({});
+  const projectIdsKey = projectRows.map((row) => String(row.projectId || row.project_id || "")).filter(Boolean).sort().join(",");
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadManagers() {
+      const ids = projectIdsKey ? projectIdsKey.split(",") : [];
+      const managerMap = {};
+      let fallback = null;
+      for (const projectId of ids) {
+        let manager = null;
+        try {
+          manager = await resolveManagerForProject(projectId);
+        } catch {
+          manager = null;
+        }
+        if (!manager) {
+          if (!fallback) {
+            try {
+              fallback = await resolveFallbackManager();
+            } catch {
+              fallback = null;
+            }
+          }
+          manager = fallback;
+        }
+        managerMap[projectId] = manager;
+      }
+      if (!cancelled) setProjectManagers(managerMap);
+    }
+    loadManagers();
+    return () => { cancelled = true; };
+  }, [projectIdsKey]);
+
+  const byManager = new Map();
+  projectRows.forEach((row) => {
+    const projectId = String(row.projectId || row.project_id || "");
+    const projectName = row.projectName || row.project_name;
+    if (!projectId || !projectName) return;
+    const manager = projectManagers[projectId];
+    const key = manager?.email || "unassigned";
+    if (!byManager.has(key)) byManager.set(key, { manager, projects: [] });
+    byManager.get(key).projects.push({
+      name: projectName,
+      number: row.projectNumber || row.project_number || ""
+    });
+  });
+  return { approvers: Array.from(byManager.values()), managerByProject: projectManagers };
+}
+
 function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, assignedProjects = [] }) {
   const isReturned = [TIME_CARD_STATUS.RETURNED, TIME_CARD_STATUS.REJECTED].includes(card.status);
   const isDraft = card.status === TIME_CARD_STATUS.DRAFT;
   const canEditHours = isDraft || isReturned;
-  const [signatureModalOpen, setSignatureModalOpen] = useState(false);
-  const [technicianSignatureDraft, setTechnicianSignatureDraft] = useState(getTimesheetSignature(card));
   // Local buffer so a cell can hold an in-progress value like "8." while typing decimals.
   const [hourDrafts, setHourDrafts] = useState({});
   const [lastSaved, setLastSaved] = useState(null);
   const [futureHoursCleared, setFutureHoursCleared] = useState(false);
   const projectRows = Array.isArray(card.projectRows) ? card.projectRows : [];
+  const { managerByProject } = useTimesheetApprovers(projectRows);
   const dailyTotals = card.dailyTotals || {};
   const weekStartDate = card.weekStartDate || card.week_start_date || card.date || "";
   const weekEndDate = card.weekEndDate || card.week_end_date || "";
@@ -2150,7 +2199,6 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, assignedProj
   const weeklyLimitWarning = Number(totalHours) > 168 ? "Weekly hours cannot exceed 168." : "";
 
   useEffect(() => {
-    setTechnicianSignatureDraft(getTimesheetSignature(card));
     setHourDrafts({});
     setLastSaved(null);
     setFutureHoursCleared(false);
@@ -2196,20 +2244,6 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, assignedProj
     return () => window.clearInterval(tickerId);
   }, [lastSaved?.at]);
 
-  function getTechnicianSignatureStorageKey() {
-    return `qcore-timesheet-technician-signature-${String(card.technicianName || card.technician_name || "technician").trim().toLowerCase()}`;
-  }
-
-  function findExistingTechnicianSignature() {
-    const directSignature = getTimesheetSignature(card) || technicianSignatureDraft;
-    if (directSignature) return directSignature;
-    try {
-      return window.localStorage.getItem(getTechnicianSignatureStorageKey()) || "";
-    } catch {
-      return "";
-    }
-  }
-
   function handleAddProject() {
     // Pre-select the first assigned project not already on the card; fall back to a blank row.
     const used = new Set(projectRows.map((row) => String(row.projectId || row.project_id || "")));
@@ -2217,7 +2251,8 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, assignedProj
     persistCard(addProjectRow(card, {
       projectId: nextProject.id || "",
       projectName: nextProject.name || "",
-      projectNumber: nextProject.number || String(nextProject.id || "")
+      projectNumber: nextProject.number || String(nextProject.id || ""),
+      overtimeExempt: Boolean(nextProject.overtimeExempt)
     }));
   }
 
@@ -2230,7 +2265,8 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, assignedProj
     persistCard(setRowProject(card, rowId, {
       projectId: project.id ?? projectId,
       projectName: project.name ?? "",
-      projectNumber: project.number ?? String(project.id ?? projectId ?? "")
+      projectNumber: project.number ?? String(project.id ?? projectId ?? ""),
+      overtimeExempt: Boolean(project.overtimeExempt)
     }));
   }
 
@@ -2276,17 +2312,12 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, assignedProj
     });
   }
 
-  async function submitCardWithSignature(signature) {
-    const signedAt = card.signedAt || card.signed_at || new Date().toISOString();
+  async function submitCard() {
     // Drop rows with no project and no hours so a leftover blank row never reaches the manager.
     const submittableRows = (card.projectRows || []).filter((row) => !isEmptyProjectRow(row));
     const recalculated = saveTimeCard({
       ...card,
-      projectRows: submittableRows,
-      technicianSignature: signature,
-      technician_signature: signature,
-      signedAt,
-      signed_at: signedAt
+      projectRows: submittableRows
     });
     onSubmit(recalculated);
     if (recalculated.validationError || Number(recalculated.totalHours || 0) <= 0) return;
@@ -2314,20 +2345,6 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, assignedProj
         }, delay);
       });
     }
-  }
-
-  async function submitCard() {
-    const signature = findExistingTechnicianSignature();
-    if (!signature) {
-      setSignatureModalOpen(true);
-      return;
-    }
-    try {
-      window.localStorage.setItem(getTechnicianSignatureStorageKey(), signature);
-    } catch {
-      // Local storage may be unavailable in hardened/private browser modes.
-    }
-    await submitCardWithSignature(signature);
   }
 
   // Rows that are fully empty (no project, no hours) are stripped on submit, so they
@@ -2447,33 +2464,41 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, assignedProj
                   <tr key={row.id} className="group border-t border-stone-200">
                     <td className="px-2 py-3 align-middle">
                       {canEditHours ? (
-                        <div className="flex items-center gap-1.5">
-                          <div className="relative min-w-0 flex-1">
-                            <select
-                              value={String(row.projectId || row.project_id || "")}
-                              onChange={(event) => handleProjectChange(row.id, event.target.value)}
-                              title={row.projectName || row.project_name || "Select project"}
-                              className="h-11 w-full appearance-none overflow-hidden text-ellipsis whitespace-nowrap rounded-xl border border-stone-300 bg-white pl-3 pr-8 text-[15px] font-semibold text-stone-900 outline-none transition hover:border-stone-400 focus:border-amber-500 focus:ring-2 focus:ring-amber-200"
-                            >
-                              <option value="">Select project…</option>
-                              {projectOptionsFor(row).map((option) => (
-                                <option key={option.id} value={option.id}>{option.name}{option.number ? ` (#${option.number})` : ""}</option>
-                              ))}
-                            </select>
-                            <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400" />
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <div className="relative min-w-0 flex-1">
+                              <select
+                                value={String(row.projectId || row.project_id || "")}
+                                onChange={(event) => handleProjectChange(row.id, event.target.value)}
+                                title={row.projectName || row.project_name || "Select project"}
+                                className="h-11 w-full appearance-none overflow-hidden text-ellipsis whitespace-nowrap rounded-xl border border-stone-300 bg-white pl-3 pr-8 text-[15px] font-semibold text-stone-900 outline-none transition hover:border-stone-400 focus:border-amber-500 focus:ring-2 focus:ring-amber-200"
+                              >
+                                <option value="">Select project…</option>
+                                {projectOptionsFor(row).map((option) => (
+                                  <option key={option.id} value={option.id}>{option.name}{option.number ? ` (#${option.number})` : ""}</option>
+                                ))}
+                              </select>
+                              <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400" />
+                            </div>
+                            <button type="button" onClick={() => handleRemoveProject(row.id)} className="shrink-0 rounded-lg p-1 text-stone-400 opacity-0 transition-opacity hover:bg-stone-100 hover:text-rose-600 focus-visible:opacity-100 group-focus-within:opacity-100 group-hover:opacity-100" aria-label="Remove project">
+                              <X className="h-4 w-4" />
+                            </button>
                           </div>
-                          <button type="button" onClick={() => handleRemoveProject(row.id)} className="shrink-0 rounded-lg p-1 text-stone-400 opacity-0 transition-opacity hover:bg-stone-100 hover:text-rose-600 focus-visible:opacity-100 group-focus-within:opacity-100 group-hover:opacity-100" aria-label="Remove project">
-                            <X className="h-4 w-4" />
-                          </button>
+                          {managerByProject[String(row.projectId || row.project_id || "")] && (
+                            <p className="mt-1 pl-1 text-xs font-medium text-stone-400" title={managerByProject[String(row.projectId || row.project_id || "")]?.email || ""}>
+                              Approver: <span className="text-stone-600">{managerByProject[String(row.projectId || row.project_id || "")]?.name}</span>
+                            </p>
+                          )}
                         </div>
                       ) : (
                         <div className="min-w-0">
                           <p className="truncate text-[15px] font-semibold text-stone-900" title={row.projectName || row.project_name || ""}>
                             {row.projectName || row.project_name || <span className="font-medium text-stone-400">No project</span>}
                           </p>
-                          {(row.projectNumber || row.project_number) && (
-                            <p className="text-[13px] font-medium text-stone-500">#{row.projectNumber || row.project_number}</p>
-                          )}
+                          <p className="text-[13px] font-medium text-stone-500">
+                            {(row.projectNumber || row.project_number) ? `#${row.projectNumber || row.project_number}` : ""}
+                            {managerByProject[String(row.projectId || row.project_id || "")] ? `${(row.projectNumber || row.project_number) ? " · " : ""}Approver: ${managerByProject[String(row.projectId || row.project_id || "")]?.name}` : ""}
+                          </p>
                         </div>
                       )}
                     </td>
@@ -2559,7 +2584,11 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, assignedProj
         </p>
         <p className="flex items-baseline gap-2">
           <span className={`text-[13px] font-medium ${Number(totalOvertime) > 0 ? "text-amber-700" : "text-stone-500"}`}>Overtime</span>
-          <span className={`text-base font-bold ${Number(totalOvertime) > 0 ? "text-amber-800" : "text-stone-900"}`}>{totalOvertime}</span>
+          {(card.overtimeExempt || card.overtime_exempt) ? (
+            <span className="text-[13px] font-semibold text-stone-400" title="Office-based employees are overtime exempt; all hours are recorded as regular time.">Exempt</span>
+          ) : (
+            <span className={`text-base font-bold ${Number(totalOvertime) > 0 ? "text-amber-800" : "text-stone-900"}`}>{totalOvertime}</span>
+          )}
         </p>
         <p className="ml-auto flex items-baseline gap-2">
           <span className="text-[13px] font-medium text-stone-500">Total hours</span>
@@ -2617,29 +2646,6 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, assignedProj
         </button>
       </div>
 
-      <SignatureModal
-        open={signatureModalOpen}
-        title="Technician Signature"
-        description="Use your saved signature or draw a new signature before submitting this Timesheet for manager review."
-        value={technicianSignatureDraft}
-        onSave={setTechnicianSignatureDraft}
-        onClear={() => setTechnicianSignatureDraft("")}
-        onClose={() => setSignatureModalOpen(false)}
-        onConfirm={() => {
-          if (!technicianSignatureDraft) {
-            window.alert("Please sign before submitting the Timesheet.");
-            return;
-          }
-          try {
-            window.localStorage.setItem(getTechnicianSignatureStorageKey(), technicianSignatureDraft);
-          } catch {
-            // Local storage may be unavailable in hardened/private browser modes.
-          }
-          setSignatureModalOpen(false);
-          submitCardWithSignature(technicianSignatureDraft);
-        }}
-        signatureActionLabel="Save Technician Signature"
-      />
     </section>
   );
 }
@@ -2663,6 +2669,7 @@ function TimeCardReadOnlyView({ card, onRecall, onViewPdf, onDownloadPdf, onRege
   const submittedAt = card.submittedAt || card.submitted_at;
   const canRecall = isSubmitted;
   const projectRows = Array.isArray(card.projectRows) ? card.projectRows : [];
+  const { managerByProject } = useTimesheetApprovers(projectRows);
   const dailyTotals = card.dailyTotals || {};
   const comments = card.timesheetComments || card.timesheet_comments || card.comments || "";
   const weekStart = card.weekStartDate || card.week_start_date || card.date;
@@ -2674,7 +2681,7 @@ function TimeCardReadOnlyView({ card, onRecall, onViewPdf, onDownloadPdf, onRege
   const reviewComments = card.reviewComments || card.review_comments || card.managerComment || "";
   const approvedAt = card.approvedAt || card.approved_at;
   const weeklyWarnings = [
-    Number(totalOvertime) > 0 ? "Weekly hours exceed 40. Overtime hours apply." : null,
+    !(card.overtimeExempt || card.overtime_exempt) && Number(totalOvertime) > 0 ? "Weekly hours exceed 40. Overtime hours apply." : null,
     Number(totalHours) > 60 ? "Total weekly hours exceed the default company threshold of 60 hours." : null
   ].filter(Boolean);
   return (
@@ -2707,10 +2714,6 @@ function TimeCardReadOnlyView({ card, onRecall, onViewPdf, onDownloadPdf, onRege
             <div>
               <dt className="text-[13px] font-medium text-stone-500">Submitted</dt>
               <dd className="mt-0.5 text-[15px] font-semibold text-stone-900">{submittedAt ? formatDateTime(submittedAt) : "-"}</dd>
-            </div>
-            <div>
-              <dt className="text-[13px] font-medium text-stone-500">Assigned manager</dt>
-              <dd className="mt-0.5 text-[15px] font-semibold text-stone-900">{managerName}</dd>
             </div>
           </dl>
           <div className="flex flex-wrap items-center gap-2">
@@ -2809,9 +2812,10 @@ function TimeCardReadOnlyView({ card, onRecall, onViewPdf, onDownloadPdf, onRege
               <tr key={row.id} className="border-t border-stone-200">
                 <td className="px-2 py-3">
                   <p className="truncate text-[15px] font-semibold text-stone-900" title={row.projectName || row.project_name || ""}>{row.projectName || row.project_name || "-"}</p>
-                  {(row.projectNumber || row.project_number) && (
-                    <p className="text-[13px] font-medium text-stone-500">#{row.projectNumber || row.project_number}</p>
-                  )}
+                  <p className="text-[13px] font-medium text-stone-500">
+                    {(row.projectNumber || row.project_number) ? `#${row.projectNumber || row.project_number}` : ""}
+                    {managerByProject[String(row.projectId || row.project_id || "")] ? `${(row.projectNumber || row.project_number) ? " · " : ""}Approver: ${managerByProject[String(row.projectId || row.project_id || "")]?.name}` : ""}
+                  </p>
                 </td>
                 {TIMESHEET_DAY_COLUMNS.map((dayName) => (
                   <td key={dayName} className="px-1 py-3 text-center text-[15px] font-medium text-stone-900">{formatHours(row.hours?.[dayName])}</td>
@@ -2838,7 +2842,11 @@ function TimeCardReadOnlyView({ card, onRecall, onViewPdf, onDownloadPdf, onRege
         </p>
         <p className="flex items-baseline gap-2">
           <span className={`text-[13px] font-medium ${Number(totalOvertime) > 0 ? "text-amber-700" : "text-stone-500"}`}>Overtime</span>
-          <span className={`text-base font-bold ${Number(totalOvertime) > 0 ? "text-amber-800" : "text-stone-900"}`}>{totalOvertime}</span>
+          {(card.overtimeExempt || card.overtime_exempt) ? (
+            <span className="text-[13px] font-semibold text-stone-400" title="Office-based employees are overtime exempt; all hours are recorded as regular time.">Exempt</span>
+          ) : (
+            <span className={`text-base font-bold ${Number(totalOvertime) > 0 ? "text-amber-800" : "text-stone-900"}`}>{totalOvertime}</span>
+          )}
         </p>
         <p className="ml-auto flex items-baseline gap-2">
           <span className="text-[13px] font-medium text-stone-500">Total hours</span>
@@ -3303,6 +3311,14 @@ export default function FieldEngineerWorkspace({
       location: ""
     }];
   }, [assignedProjects, defaultProjectId, projectLabel]);
+  // Office-based employees are overtime-exempt: every hour logs as regular time,
+  // so a 9- or 10-hour day never produces OT. Driven by the profile's exempt flag
+  // or an office employment type/role.
+  const isOfficeEmployee = Boolean(
+    profile?.overtime_exempt ||
+    String(profile?.employment_type || "").toLowerCase().includes("office") ||
+    String(profile?.role || "").toLowerCase().includes("office")
+  );
 
   useEffect(() => {
     const logs = getDailyLogs();
@@ -3329,6 +3345,46 @@ export default function FieldEngineerWorkspace({
     const cards = getTimeCards();
     setTimeCards(cards);
     setActiveTimeCard(cards.find((card) => card.status === TIME_CARD_STATUS.DRAFT || card.status === TIME_CARD_STATUS.RETURNED) || null);
+
+    // Sync with the shared timesheets table: restore any timesheet missing from
+    // this browser (new device/profile) and merge approval/return decisions made
+    // on the manager's machine into the local copies.
+    async function syncFromDatabase() {
+      let changed = false;
+      const technicianName = profile?.full_name || "";
+      if (technicianName) {
+        const remoteCards = await fetchTimesheetsForTechnician(technicianName);
+        const localIds = new Set(getTimeCards().map((card) => String(card.id)));
+        remoteCards.forEach((remoteCard) => {
+          if (localIds.has(String(remoteCard.id))) return;
+          changed = true;
+          saveTimeCard(remoteCard);
+        });
+      }
+      const syncableIds = getTimeCards()
+        .filter((card) => card.status !== TIME_CARD_STATUS.DRAFT)
+        .map((card) => String(card.id));
+      if (syncableIds.length) {
+        const updates = await fetchTimesheetStatusUpdates(syncableIds);
+        updates.forEach((update) => {
+          const local = getTimeCards().find((card) => String(card.id) === String(update.id));
+          if (!local || local.status === update.status) return;
+          changed = true;
+          saveTimeCard({
+            ...local,
+            status: update.status,
+            reviewedBy: update.reviewed_by || local.reviewedBy || "",
+            reviewed_by: update.reviewed_by || local.reviewed_by || "",
+            reviewedAt: update.reviewed_at || local.reviewedAt || "",
+            reviewed_at: update.reviewed_at || local.reviewed_at || "",
+            ...(update.status === TIME_CARD_STATUS.APPROVED ? { approvedAt: update.reviewed_at, approved_at: update.reviewed_at } : {}),
+            ...(update.status === TIME_CARD_STATUS.RETURNED ? { returnedAt: update.reviewed_at, returned_at: update.reviewed_at, managerComment: update.manager_comment || "", reviewComments: update.manager_comment || "", review_comments: update.manager_comment || "" } : {})
+          });
+        });
+      }
+      if (changed) setTimeCards(getTimeCards());
+    }
+    syncFromDatabase();
   }, []);
 
   useEffect(() => {
@@ -3985,7 +4041,9 @@ export default function FieldEngineerWorkspace({
             />
           ) : (
             <TimeCardEditor
-              card={selectedTimeCard}
+              card={Boolean(selectedTimeCard.overtimeExempt || selectedTimeCard.overtime_exempt) !== isOfficeEmployee
+                ? normalizeWeeklyCard({ ...selectedTimeCard, overtimeExempt: isOfficeEmployee, overtime_exempt: isOfficeEmployee })
+                : selectedTimeCard}
               onChange={refreshTimeCards}
               onSubmit={refreshTimeCards}
               onDelete={() => removeTimeCard(selectedTimeCard)}

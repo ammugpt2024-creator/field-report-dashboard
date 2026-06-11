@@ -3,7 +3,7 @@ import { getReportStatusLabel } from '../constants/reportWorkflow';
 import { BRAND, MODULE_NAMES } from '../config/branding';
 
 const DEFAULT_QC_REVIEWER_EMAIL = 'ammugpt2024@gmail.com';
-const FORCE_RESEND_TEST_RECIPIENT = true;
+const FORCE_RESEND_TEST_RECIPIENT = false;
 
 function formatDateTime(value = new Date()) {
   return new Intl.DateTimeFormat(undefined, {
@@ -73,28 +73,46 @@ export function buildQcReviewEmail({ report, reviewUrl, pdfUrl }) {
   };
 }
 
-export function buildTimesheetApprovalEmail({ card, reviewUrl }) {
+function sumRowHours(row) {
+  return Object.values(row?.hours || {}).reduce((total, value) => total + (Number(value) || 0), 0);
+}
+
+// Build the approval request for one manager. When `managerRows` is provided the
+// email is scoped to that manager's projects only (Fieldglass-style routing: each
+// project manager approves their own project's hours).
+export function buildTimesheetApprovalEmail({ card, reviewUrl, managerRows = null }) {
   const timesheetNumber = card.timesheetNumber || card.timesheet_number || `TS-${String(card.id || '').slice(0, 8).toUpperCase()}`;
-  const projects = (card.projectRows || [])
-    .map((row) => row.projectName || row.project_name)
+  const scopedRows = Array.isArray(managerRows) ? managerRows : (card.projectRows || []);
+  const projects = scopedRows
+    .map((row) => {
+      const name = row.projectName || row.project_name;
+      if (!name) return null;
+      return `${name} — ${sumRowHours(row).toFixed(2)} hrs`;
+    })
     .filter(Boolean)
-    .join(', ');
+    .join('<br/>');
+  const scopedTotal = scopedRows.reduce((total, row) => total + sumRowHours(row), 0).toFixed(2);
+  const weekTotal = card.totalHours || card.total_hours || '0.00';
+  const isScoped = Array.isArray(managerRows) && Number(scopedTotal) !== Number(weekTotal);
   return {
     subject: `[APPROVAL REQUIRED] Timesheet ${timesheetNumber}`,
     html: baseEmailShell({
       title: 'Weekly Timesheet Submitted For Approval',
-      intro: `A weekly timesheet has been submitted and is awaiting your approval in ${BRAND.name}.`,
+      intro: isScoped
+        ? `A weekly timesheet with hours on your project has been submitted and is awaiting your approval in ${BRAND.name}. Hours for your project are listed below; other projects on this timesheet are routed to their own managers.`
+        : `A weekly timesheet has been submitted and is awaiting your approval in ${BRAND.name}.`,
       rows: [
         ['Timesheet #', timesheetNumber],
         ['Employee', card.technicianName || card.technician_name],
         ['Week', `${card.weekStartDate || card.week_start_date || card.date || '-'} to ${card.weekEndDate || card.week_end_date || '-'}`],
-        ['Projects', projects],
-        ['Regular Hours', card.totalRegularHours || card.total_regular_hours || '0.00'],
-        ['Overtime Hours', card.totalOvertimeHours || card.total_overtime_hours || '0.00'],
-        ['Total Hours', card.totalHours || card.total_hours || '0.00'],
+        ['Your Project Hours', projects || '-'],
+        ...(isScoped ? [['Hours For Your Approval', `${scopedTotal}`]] : []),
+        ['Regular Hours (week)', card.totalRegularHours || card.total_regular_hours || '0.00'],
+        ['Overtime Hours (week)', card.totalOvertimeHours || card.total_overtime_hours || '0.00'],
+        ['Total Hours (week)', weekTotal],
         ['Submitted On', formatDateTime(card.submittedAt || card.submitted_at || new Date())]
       ],
-      ctaLabel: 'Open Manager Dashboard',
+      ctaLabel: 'Review Timesheet',
       ctaUrl: reviewUrl
     })
   };
@@ -111,84 +129,116 @@ function looksLikeEmail(value) {
   return typeof value === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
 }
 
-// Resolve the manager for a timesheet from its project record (same pattern as the
-// concrete log flow, which derives the reviewer from project information first).
-async function resolveProjectManagerForCard(card) {
-  const projectIds = Array.from(new Set(
-    (card.projectRows || [])
-      .map((row) => row.projectId || row.project_id)
-      .filter(Boolean)
-  ));
+// Resolve the manager for one project record (same pattern as the concrete log
+// flow, which derives the reviewer from project information first).
+export async function resolveManagerForProject(projectId) {
+  if (!projectId) return null;
+  const { data: project } = await supabase
+    .from('projects')
+    .select('*')
+    .eq('id', projectId)
+    .maybeSingle();
+  if (!project) return null;
 
-  for (const projectId of projectIds) {
-    const { data: project } = await supabase
-      .from('projects')
-      .select('*')
-      .eq('id', projectId)
-      .maybeSingle();
-    if (!project) continue;
-
-    for (const column of PROJECT_MANAGER_EMAIL_COLUMNS) {
-      if (looksLikeEmail(project[column])) {
-        return { email: project[column].trim(), name: project.project_manager_name || project.manager_name || 'Project Manager' };
-      }
+  for (const column of PROJECT_MANAGER_EMAIL_COLUMNS) {
+    if (looksLikeEmail(project[column])) {
+      return { email: project[column].trim(), name: project.project_manager_name || project.manager_name || 'Project Manager' };
     }
-    for (const column of PROJECT_MANAGER_ID_COLUMNS) {
-      if (!project[column]) continue;
-      const { data: managerProfile } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', project[column])
-        .maybeSingle();
-      if (managerProfile?.email) {
-        return { email: managerProfile.email, name: managerProfile.full_name || 'Project Manager' };
-      }
+  }
+  for (const column of PROJECT_MANAGER_ID_COLUMNS) {
+    if (!project[column]) continue;
+    const { data: managerProfile } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', project[column])
+      .maybeSingle();
+    if (managerProfile?.email) {
+      return { email: managerProfile.email, name: managerProfile.full_name || 'Project Manager' };
     }
   }
   return null;
 }
 
-// Notify the assigned project manager that a timesheet needs approval.
-// Timesheets are not rows in concrete_test_logs, so the queue entry carries no report_id.
+// Org-level fallback when a project has no manager assigned.
+export async function resolveFallbackManager() {
+  const { data: managerProfiles } = await supabase
+    .from('profiles')
+    .select('*')
+    .in('role', PROJECT_MANAGER_ROLES);
+  const assignedManager =
+    (managerProfiles || []).find((item) => item.role === 'project_manager') ||
+    (managerProfiles || []).find((item) => item.role === 'manager') ||
+    (managerProfiles || []).find((item) => item.role === 'qc_manager') ||
+    (managerProfiles || [])[0] ||
+    null;
+  if (assignedManager?.email) {
+    return { email: assignedManager.email, name: assignedManager.full_name || 'Project Manager' };
+  }
+  return null;
+}
+
+// Notify every project manager whose project carries hours on this timesheet.
+// Rows are grouped by their project's manager; each manager receives one approval
+// request scoped to their own projects (Fieldglass-style routing). Projects without
+// an assigned manager roll up to the org-level fallback manager.
 export async function sendTimesheetApprovalEmail(card, { pdfBlob, pdfFileName } = {}) {
-  // 1) Manager derived from the project record itself.
-  let manager = null;
-  try {
-    manager = await resolveProjectManagerForCard(card);
-  } catch (error) {
-    console.warn('Project manager lookup from project info failed.', error);
-  }
+  const rows = (card.projectRows || []).filter((row) => row.projectId || row.project_id || row.projectName || row.project_name);
+  const managerByProject = new Map();
+  let fallbackManager = null;
 
-  // 2) Fall back to any profile holding a manager role.
-  if (!manager) {
-    const { data: managerProfiles } = await supabase
-      .from('profiles')
-      .select('*')
-      .in('role', PROJECT_MANAGER_ROLES);
-    const assignedManager =
-      (managerProfiles || []).find((item) => item.role === 'project_manager') ||
-      (managerProfiles || []).find((item) => item.role === 'manager') ||
-      (managerProfiles || []).find((item) => item.role === 'qc_manager') ||
-      (managerProfiles || [])[0] ||
-      null;
-    if (assignedManager?.email) {
-      manager = { email: assignedManager.email, name: assignedManager.full_name || 'Project Manager' };
+  async function managerForRow(row) {
+    const projectId = row.projectId || row.project_id || null;
+    const cacheKey = String(projectId || '');
+    if (managerByProject.has(cacheKey)) return managerByProject.get(cacheKey);
+    let manager = null;
+    try {
+      manager = await resolveManagerForProject(projectId);
+    } catch (error) {
+      console.warn('Project manager lookup from project info failed.', error);
     }
+    if (!manager) {
+      if (!fallbackManager) {
+        try {
+          fallbackManager = await resolveFallbackManager();
+        } catch (error) {
+          console.warn('Fallback manager lookup failed.', error);
+        }
+      }
+      manager = fallbackManager;
+    }
+    managerByProject.set(cacheKey, manager);
+    return manager;
   }
 
-  const email = buildTimesheetApprovalEmail({
-    card,
-    reviewUrl: `${window.location.origin}/manager/dashboard`
-  });
-  return queueAndSendNotification({
-    reportId: null,
-    recipientEmail: manager?.email || DEFAULT_QC_REVIEWER_EMAIL,
-    subject: email.subject,
-    html: email.html,
-    notificationType: 'timesheet_approval_required',
-    pdfBlob,
-    pdfFileName
-  });
+  // Group project rows by recipient email so each manager gets exactly one email.
+  const groups = new Map();
+  for (const row of rows) {
+    const manager = await managerForRow(row);
+    const recipientEmail = manager?.email || DEFAULT_QC_REVIEWER_EMAIL;
+    if (!groups.has(recipientEmail)) groups.set(recipientEmail, { manager, rows: [] });
+    groups.get(recipientEmail).rows.push(row);
+  }
+  if (!groups.size) groups.set(DEFAULT_QC_REVIEWER_EMAIL, { manager: null, rows });
+
+  const timesheetRef = card.timesheetNumber || card.timesheet_number || card.id || '';
+  // Use the deployed app URL when configured; localhost links only work on the dev machine.
+  const appBaseUrl = import.meta.env.VITE_APP_URL || window.location.origin;
+  const reviewUrl = `${appBaseUrl}/manager/dashboard?timesheet=${encodeURIComponent(timesheetRef)}`;
+  const results = [];
+  for (const [recipientEmail, group] of groups) {
+    const email = buildTimesheetApprovalEmail({ card, reviewUrl, managerRows: group.rows });
+    const result = await queueAndSendNotification({
+      reportId: null,
+      recipientEmail,
+      subject: email.subject,
+      html: email.html,
+      notificationType: 'timesheet_approval_required',
+      pdfBlob,
+      pdfFileName
+    });
+    results.push(result);
+  }
+  return results;
 }
 
 export function blobToBase64(blob) {

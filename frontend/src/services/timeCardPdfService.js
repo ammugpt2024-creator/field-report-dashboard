@@ -71,10 +71,6 @@ function addInfoBox(doc, label, value, x, y, width, height = 42) {
   doc.text(lines.slice(0, 2), x + 10, y + 29);
 }
 
-function getSignature(card) {
-  return card.technicianSignature || card.technician_signature || card.signatureDataUrl || card.signature_data_url || "";
-}
-
 function getImageFormat(dataUrl) {
   if (String(dataUrl).includes("image/jpeg") || String(dataUrl).includes("image/jpg")) return "JPEG";
   return "PNG";
@@ -137,8 +133,6 @@ export function generateTimeCardPdfBlob(card) {
   let y = 34;
   const timesheetNumber = getTimesheetNumber(card);
   const generatedAt = card.pdfGeneratedAt || card.pdf_generated_at || new Date().toISOString();
-  const signedAt = card.signedAt || card.signed_at || card.submittedAt || card.submitted_at;
-  const signature = getSignature(card);
   const managerSignature = card.managerSignature || card.manager_signature || "";
   const projectRows = Array.isArray(card.projectRows) ? card.projectRows : [];
   const dailyTotals = card.dailyTotals || {};
@@ -181,12 +175,19 @@ export function generateTimeCardPdfBlob(card) {
       ["Submitted", formatDateTime(card.submittedAt || card.submitted_at)],
       ...(isApproved ? [["Approved", formatDateTime(card.approvedAt || card.approved_at)]] : [["", ""]])
     ],
-    [
-      ["Regular Hours (first 40)", `${pdfValue(totalRegular)} Hours`],
-      ["Overtime Hours (40+)", `${pdfValue(totalOvertime)} Hours`],
-      ["Total Hours", `${pdfValue(totalHours)} Hours`],
-      ["", ""]
-    ]
+    (card.overtimeExempt || card.overtime_exempt)
+      ? [
+          ["Regular Hours", `${pdfValue(totalRegular)} Hours`],
+          ["Overtime", "Exempt (Office)"],
+          ["Total Hours", `${pdfValue(totalHours)} Hours`],
+          ["", ""]
+        ]
+      : [
+          ["Regular Hours (first 40)", `${pdfValue(totalRegular)} Hours`],
+          ["Overtime Hours (40+)", `${pdfValue(totalOvertime)} Hours`],
+          ["Total Hours", `${pdfValue(totalHours)} Hours`],
+          ["", ""]
+        ]
   ];
   summaryRows.forEach((row) => {
     row.forEach(([label, value], index) => {
@@ -267,68 +268,44 @@ export function generateTimeCardPdfBlob(card) {
 
   // The certification/approval block (header + signature boxes + info row) is ~190pt
   // tall and is drawn at absolute coordinates, so start a new page if it would run off.
-  if (y + 190 > doc.internal.pageSize.getHeight() - 24) {
-    doc.addPage();
-    y = 34;
-  }
-  addSectionHeader(doc, isApproved ? "Approval" : "Employee Certification", margin, y, contentWidth);
-  y += 32;
-  const signatureBoxWidth = isApproved ? (contentWidth - 12) / 2 : contentWidth;
-  doc.setDrawColor(226, 232, 240);
-  doc.setFillColor(255, 255, 255);
-  doc.roundedRect(margin, y, signatureBoxWidth, 72, 5, 5, "FD");
-  if (signature) {
-    try {
-      doc.addImage(signature, getImageFormat(signature), margin + 12, y + 12, Math.min(signatureBoxWidth - 24, 220), 42);
-    } catch {
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(9);
-      doc.setTextColor(100, 116, 139);
-      doc.text("Signature image could not be embedded.", margin + 12, y + 34);
-    }
-  }
-  doc.setDrawColor(148, 163, 184);
-  doc.line(margin + 12, y + 58, margin + signatureBoxWidth - 12, y + 58);
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(8);
-  doc.setTextColor(100, 116, 139);
-  doc.text("EMPLOYEE SIGNATURE", margin + 12, y + 68);
-
+  // The approval section only appears on the post-approval version of the document.
   if (isApproved) {
-    const managerBoxX = margin + signatureBoxWidth + 12;
+    if (y + 190 > doc.internal.pageSize.getHeight() - 24) {
+      doc.addPage();
+      y = 34;
+    }
+    addSectionHeader(doc, "Approval", margin, y, contentWidth);
+    y += 32;
     doc.setDrawColor(226, 232, 240);
     doc.setFillColor(255, 255, 255);
-    doc.roundedRect(managerBoxX, y, signatureBoxWidth, 72, 5, 5, "FD");
+    doc.roundedRect(margin, y, contentWidth, 72, 5, 5, "FD");
     if (managerSignature) {
       try {
-        doc.addImage(managerSignature, getImageFormat(managerSignature), managerBoxX + 12, y + 12, signatureBoxWidth - 24, 42);
+        doc.addImage(managerSignature, getImageFormat(managerSignature), margin + 12, y + 12, Math.min(contentWidth - 24, 220), 42);
       } catch {
         doc.setFont("helvetica", "normal");
         doc.setFontSize(9);
         doc.setTextColor(100, 116, 139);
-        doc.text("Manager signature image could not be embedded.", managerBoxX + 12, y + 34);
+        doc.text("Manager signature image could not be embedded.", margin + 12, y + 34);
       }
     } else {
       doc.setFont("helvetica", "normal");
       doc.setFontSize(9);
       doc.setTextColor(100, 116, 139);
-      doc.text(`Approved electronically by ${pdfValue(card.reviewedBy || card.reviewed_by || "Manager")}`, managerBoxX + 12, y + 34);
+      doc.text(`Approved electronically by ${pdfValue(card.reviewedBy || card.reviewed_by || "Manager")}`, margin + 12, y + 34);
     }
     doc.setDrawColor(148, 163, 184);
-    doc.line(managerBoxX + 12, y + 58, managerBoxX + signatureBoxWidth - 12, y + 58);
+    doc.line(margin + 12, y + 58, margin + contentWidth - 12, y + 58);
     doc.setFont("helvetica", "bold");
     doc.setFontSize(8);
     doc.setTextColor(100, 116, 139);
-    doc.text("MANAGER SIGNATURE", managerBoxX + 12, y + 68);
-  }
-  y += 86;
+    doc.text("MANAGER SIGNATURE", margin + 12, y + 68);
+    y += 86;
 
-  addInfoBox(doc, "Date Signed", formatDateTime(signedAt), margin, y, columnWidth);
-  if (isApproved) {
-    addInfoBox(doc, "Approval Date", formatDateTime(card.reviewedAt || card.reviewed_at || card.approvedAt || card.approved_at), margin + columnWidth + columnGap, y, columnWidth);
+    addInfoBox(doc, "Approval Date", formatDateTime(card.reviewedAt || card.reviewed_at || card.approvedAt || card.approved_at), margin, y, columnWidth);
     const approvalComments = card.reviewComments || card.review_comments || card.managerComment || "";
     if (String(approvalComments).trim()) {
-      addInfoBox(doc, "Review Comments", approvalComments, margin + (columnWidth + columnGap) * 2, y, columnWidth);
+      addInfoBox(doc, "Review Comments", approvalComments, margin + columnWidth + columnGap, y, columnWidth);
     }
   }
 

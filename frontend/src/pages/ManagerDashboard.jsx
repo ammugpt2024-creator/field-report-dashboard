@@ -14,8 +14,9 @@ import { supabase } from "../services/supabase";
 import StatusBadge from "../components/StatusBadge";
 import { REPORT_STATUS, normalizeReportStatus } from "../workflow/workflowEngine";
 import { MODULE_NAMES } from "../config/branding";
-import { WEEK_DAYS, approveTimeCard, formatTimeCardStatus, getRowTotal, getTimeCards, rejectTimeCard, TIME_CARD_STATUS } from "../services/timeCardService";
+import { WEEK_DAYS, approveTimeCard, formatTimeCardStatus, getRowTotal, rejectTimeCard, TIME_CARD_STATUS } from "../services/timeCardService";
 import { regenerateTimeCardPdf } from "../services/timeCardPdfService";
+import { fetchTimesheetQueue, syncTimesheet } from "../services/timesheetSyncService";
 
 const DAY_LABELS = { Monday: "Mon", Tuesday: "Tue", Wednesday: "Wed", Thursday: "Thu", Friday: "Fri", Saturday: "Sat", Sunday: "Sun" };
 const fmtHours = (value) => (Number(value) || 0).toFixed(2);
@@ -32,6 +33,8 @@ function hoursSince(value) {
 
 function ManagerDashboard() {
   const navigate = useNavigate();
+  // Approval emails deep-link to a specific timesheet via ?timesheet=TS-….
+  const highlightedTimesheet = new URLSearchParams(window.location.search).get("timesheet") || "";
   const [reports, setReports] = useState([]);
   const [projects, setProjects] = useState([]);
   const [timeCards, setTimeCards] = useState([]);
@@ -53,7 +56,9 @@ function ManagerDashboard() {
 
         setReports(reportsResponse.data || []);
         setProjects(projectsResponse.data || []);
-        setTimeCards(getTimeCards());
+        // The review queue comes from the shared timesheets table so submissions
+        // made on any technician's device are visible here.
+        setTimeCards(await fetchTimesheetQueue());
       } catch (err) {
         console.error("Manager dashboard failed", err);
         setError(err.message || "Unable to load manager dashboard.");
@@ -81,16 +86,17 @@ function ManagerDashboard() {
   );
   const submittedTimesheets = timeCards.filter((card) => [TIME_CARD_STATUS.SUBMITTED, TIME_CARD_STATUS.PENDING_REVIEW].includes(card.status));
 
-  function refreshTimeCards(nextCards = getTimeCards()) {
-    setTimeCards([...nextCards]);
+  async function refreshTimeCards() {
+    setTimeCards(await fetchTimesheetQueue());
   }
 
   function approveTimesheet(card) {
     const approved = approveTimeCard(card, "Manager");
     refreshTimeCards();
-    // Regenerate the stored PDF so it carries the approval date and reviewer.
+    // Regenerate the stored PDF so it carries the approval date and reviewer,
+    // then sync the PDF storage path back to the shared record.
     regenerateTimeCardPdf(approved)
-      .then(() => refreshTimeCards())
+      .then((withPdf) => syncTimesheet(withPdf))
       .catch((err) => console.warn("Approved timesheet PDF could not be regenerated:", err));
   }
 
@@ -235,10 +241,16 @@ function ManagerDashboard() {
                 </tr>
               </thead>
               <tbody>
-                {submittedTimesheets.map((card) => (
+                {submittedTimesheets.map((card) => {
+                  const timesheetNumber = card.timesheetNumber || card.timesheet_number || "";
+                  const isHighlighted = Boolean(highlightedTimesheet) && (timesheetNumber === highlightedTimesheet || String(card.id) === highlightedTimesheet);
+                  return (
                   <Fragment key={card.id}>
-                    <tr className="border-t border-slate-200">
-                      <td className="px-3 py-3 font-bold text-slate-950">{card.timesheetNumber || card.timesheet_number}</td>
+                    <tr
+                      className={`border-t border-slate-200 ${isHighlighted ? "bg-amber-50" : ""}`}
+                      ref={isHighlighted ? (node) => node?.scrollIntoView({ behavior: "smooth", block: "center" }) : undefined}
+                    >
+                      <td className="px-3 py-3 font-bold text-slate-950">{timesheetNumber}</td>
                       <td className="px-3 py-3 font-semibold">{card.technicianName || card.technician_name}</td>
                       <td className="px-3 py-3 font-semibold">{(card.projectRows || []).map((row) => row.projectName || row.project_name).filter(Boolean).join(", ") || card.projectName || "-"}</td>
                       <td className="px-3 py-3 font-semibold">{card.weekStartDate || card.week_start_date} - {card.weekEndDate || card.week_end_date}</td>
@@ -289,7 +301,8 @@ function ManagerDashboard() {
                       </td>
                     </tr>
                   </Fragment>
-                ))}
+                  );
+                })}
                 {!submittedTimesheets.length && (
                   <tr>
                     <td colSpan={9} className="px-3 py-8 text-center text-sm font-semibold text-slate-500">No weekly timesheets are pending review.</td>

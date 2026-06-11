@@ -1,3 +1,5 @@
+import { syncTimesheet } from "./timesheetSyncService";
+
 const STORAGE_KEY = "imqcore:technician-time-cards";
 
 export const TIME_CARD_STATUS = {
@@ -109,7 +111,7 @@ function normalizeDayDescriptions(descriptions = {}) {
   return WEEK_DAYS.reduce((map, day) => ({ ...map, [day]: String(descriptions[day] ?? "") }), {});
 }
 
-export function createProjectRow({ projectId = "", projectName = "", projectNumber = "" } = {}) {
+export function createProjectRow({ projectId = "", projectName = "", projectNumber = "", overtimeExempt = false } = {}) {
   return {
     id: crypto.randomUUID(),
     projectId,
@@ -118,6 +120,9 @@ export function createProjectRow({ projectId = "", projectName = "", projectNumb
     project_name: projectName,
     projectNumber,
     project_number: projectNumber,
+    // Office/indirect projects: hours on this row never count toward overtime.
+    overtimeExempt: Boolean(overtimeExempt),
+    overtime_exempt: Boolean(overtimeExempt),
     hours: emptyHours()
   };
 }
@@ -133,11 +138,27 @@ export function calculateDailyTotals(projectRows = []) {
   }), {});
 }
 
-export function calculateWeeklyTotals(projectRows = []) {
+export function calculateWeeklyTotals(projectRows = [], { overtimeExempt = false } = {}) {
   const total = roundHours(projectRows.reduce((sum, row) => sum + getRowTotal(row), 0));
-  const regular = roundHours(Math.min(total, REGULAR_HOURS_CAP));
-  const overtime = roundHours(Math.max(total - REGULAR_HOURS_CAP, 0));
+  // Overtime-exempt employees (office staff) log all hours as regular time —
+  // the 40-hour split only applies to non-exempt field workers.
+  if (overtimeExempt) {
+    return { total, regular: total, overtime: 0 };
+  }
+  // Hours on overtime-exempt (office/indirect) projects are always regular and
+  // never count toward the 40-hour overtime threshold; only field-project hours
+  // split into regular and overtime.
+  const exemptHours = roundHours(projectRows
+    .filter((row) => row.overtimeExempt || row.overtime_exempt)
+    .reduce((sum, row) => sum + getRowTotal(row), 0));
+  const fieldHours = roundHours(total - exemptHours);
+  const regular = roundHours(Math.min(fieldHours, REGULAR_HOURS_CAP) + exemptHours);
+  const overtime = roundHours(Math.max(fieldHours - REGULAR_HOURS_CAP, 0));
   return { total, regular, overtime };
+}
+
+export function isOvertimeExemptCard(card = {}) {
+  return Boolean(card.overtimeExempt || card.overtime_exempt);
 }
 
 // Convert a legacy daily-shaped entries[] array into a single weekly project row.
@@ -182,7 +203,8 @@ export function normalizeWeeklyCard(card = {}) {
       ...createProjectRow({
         projectId: row.projectId || row.project_id || "",
         projectName: row.projectName || row.project_name || "",
-        projectNumber: row.projectNumber || row.project_number || ""
+        projectNumber: row.projectNumber || row.project_number || "",
+        overtimeExempt: Boolean(row.overtimeExempt || row.overtime_exempt)
       }),
       id: row.id || crypto.randomUUID(),
       hours: normalizeHours(row.hours)
@@ -195,7 +217,8 @@ export function normalizeWeeklyCard(card = {}) {
   }
 
   const dailyTotals = calculateDailyTotals(projectRows);
-  const totals = calculateWeeklyTotals(projectRows);
+  const overtimeExempt = isOvertimeExemptCard(card);
+  const totals = calculateWeeklyTotals(projectRows, { overtimeExempt });
   const overDailyLimit = WEEK_DAYS.find((day) => dailyTotals[day] > MAX_DAILY_HOURS);
   const validationError = totals.total > MAX_WEEKLY_HOURS
     ? `Weekly hours cannot exceed ${MAX_WEEKLY_HOURS}.`
@@ -219,6 +242,8 @@ export function normalizeWeeklyCard(card = {}) {
     projectRows,
     dayDescriptions,
     dailyTotals,
+    overtimeExempt,
+    overtime_exempt: overtimeExempt,
     totalRegularHours: totals.regular.toFixed(2),
     total_regular_hours: totals.regular.toFixed(2),
     totalOvertimeHours: totals.overtime.toFixed(2),
@@ -256,7 +281,9 @@ export function setRowProject(card, rowId, project = {}) {
           projectName: project.projectName ?? project.name ?? "",
           project_name: project.projectName ?? project.name ?? "",
           projectNumber: project.projectNumber ?? project.number ?? "",
-          project_number: project.projectNumber ?? project.number ?? ""
+          project_number: project.projectNumber ?? project.number ?? "",
+          overtimeExempt: Boolean(project.overtimeExempt ?? project.overtime_exempt ?? false),
+          overtime_exempt: Boolean(project.overtimeExempt ?? project.overtime_exempt ?? false)
         }
       : row
   ));
@@ -364,7 +391,7 @@ export function submitTimeCard(card) {
   const submittedAt = new Date().toISOString();
   const signature = card.technicianSignature || card.technician_signature || "";
   const signedAt = card.signedAt || card.signed_at || (signature ? submittedAt : "");
-  return saveTimeCard({
+  const submitted = saveTimeCard({
     ...card,
     status: TIME_CARD_STATUS.SUBMITTED,
     submittedAt,
@@ -374,20 +401,24 @@ export function submitTimeCard(card) {
     technicianSignature: signature,
     technician_signature: signature
   });
+  syncTimesheet(submitted);
+  return submitted;
 }
 
 export function recallTimeCard(card) {
-  return saveTimeCard({
+  const recalled = saveTimeCard({
     ...card,
     status: TIME_CARD_STATUS.DRAFT,
     submittedAt: "",
     submitted_at: ""
   });
+  syncTimesheet(recalled);
+  return recalled;
 }
 
 export function approveTimeCard(card, reviewer = "Manager") {
   const reviewedAt = new Date().toISOString();
-  return saveTimeCard({
+  const approved = saveTimeCard({
     ...card,
     status: TIME_CARD_STATUS.APPROVED,
     reviewedBy: reviewer,
@@ -399,11 +430,13 @@ export function approveTimeCard(card, reviewer = "Manager") {
     reviewComments: "",
     review_comments: ""
   });
+  syncTimesheet(approved);
+  return approved;
 }
 
 export function rejectTimeCard(card, comments) {
   const reviewedAt = new Date().toISOString();
-  return saveTimeCard({
+  const rejected = saveTimeCard({
     ...card,
     status: TIME_CARD_STATUS.RETURNED,
     reviewedAt,
@@ -414,6 +447,8 @@ export function rejectTimeCard(card, comments) {
     review_comments: comments,
     managerComment: comments
   });
+  syncTimesheet(rejected);
+  return rejected;
 }
 
 export function getTimeCardCollections(cards) {
