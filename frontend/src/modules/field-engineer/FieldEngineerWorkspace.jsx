@@ -1405,8 +1405,8 @@ function ConcreteReportPage({ log, activityId, reportId, onChange, onBack }) {
       )}
 
       {previewAttachment && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4" role="dialog" aria-modal="true">
-          <div className="max-h-[90vh] w-full max-w-4xl overflow-hidden rounded-2xl bg-white shadow-2xl">
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/70 sm:items-center sm:p-4" role="dialog" aria-modal="true">
+          <div className="max-h-[94vh] w-full max-w-4xl overflow-hidden rounded-t-2xl bg-white shadow-2xl sm:rounded-2xl">
             <div className="flex items-center justify-between gap-3 border-b border-slate-200 p-4">
               <div className="min-w-0">
                 <h3 className="truncate text-base font-bold text-slate-950">{previewAttachment.fileName}</h3>

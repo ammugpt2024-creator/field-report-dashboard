@@ -46,9 +46,9 @@ export default function SignatureModal({
   const isDisabled = disabled || isConfirming;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">
-      <div className="w-full max-w-3xl rounded-3xl bg-white shadow-2xl ring-1 ring-slate-200">
-        <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/60 sm:items-center sm:p-4">
+      <div className="max-h-[94vh] w-full max-w-3xl overflow-y-auto rounded-t-3xl bg-white shadow-2xl ring-1 ring-slate-200 sm:rounded-3xl">
+        <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-4 py-4 sm:px-6 sm:py-5">
           <div>
             <h2 className="text-2xl font-semibold text-slate-900">{title}</h2>
             <p className="mt-1 text-sm text-slate-600">{description}</p>
@@ -62,7 +62,7 @@ export default function SignatureModal({
           </button>
         </div>
 
-        <div className="p-6">
+        <div className="p-4 sm:p-6">
           <SignaturePad
             label="Draw your signature"
             value={savedValue}
@@ -73,7 +73,7 @@ export default function SignatureModal({
           />
         </div>
 
-        <div className="flex flex-wrap items-center justify-end gap-3 border-t border-slate-200 bg-slate-50 px-6 py-4">
+        <div className="sticky bottom-0 flex flex-wrap items-center justify-end gap-3 border-t border-slate-200 bg-slate-50 px-4 py-3 sm:px-6 sm:py-4">
           {!autoConfirmOnSave && (
             <button
               onClick={() => {

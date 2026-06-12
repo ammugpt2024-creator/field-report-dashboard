@@ -3953,8 +3953,8 @@ function ConcreteTestLog() {
       </div>
 
       {showSubmitConfirmation && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 px-4 py-6">
-          <div className="w-full max-w-2xl rounded-[32px] bg-white p-6 shadow-2xl shadow-slate-950/10">
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/60 sm:items-center sm:px-4 sm:py-6">
+          <div className="max-h-[94vh] w-full max-w-2xl overflow-y-auto rounded-t-3xl bg-white p-4 shadow-2xl shadow-slate-950/10 sm:rounded-[32px] sm:p-6">
             <div className="flex items-start justify-between gap-4">
               <div>
                 <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Ready to submit for validation</p>
