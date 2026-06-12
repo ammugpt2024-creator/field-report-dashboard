@@ -14,6 +14,7 @@ import AdminDashboard from "./pages/AdminDashboard";
 import ClientDashboard from "./pages/ClientDashboard";
 import ManagerDashboard from "./pages/ManagerDashboard";
 import TechnicianDashboard from "./pages/TechnicianDashboard";
+import TimesheetsPage from "./pages/TimesheetsPage";
 import ProjectWorkspace from "./pages/ProjectWorkspace";
 import FieldReports from "./pages/FieldReports";
 import LabReports from "./pages/LabReports";
@@ -90,7 +91,7 @@ function App() {
         {/* Timesheets are universal — managers and admins file their own too. */}
         <Route
           path="/timesheets"
-          element={<TechnicianDashboard />}
+          element={<TimesheetsPage />}
         />
 
         <Route
