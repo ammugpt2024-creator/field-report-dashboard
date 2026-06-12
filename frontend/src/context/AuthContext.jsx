@@ -79,6 +79,9 @@ export function AuthProvider({ children }) {
       return;
     }
     try {
+      // First sign-in after a Company Admin / employee invitation: attach this
+      // account to its pending roster row before resolving membership.
+      await supabase.rpc("claim_company_invite").catch(() => {});
       const [membershipRes, platformRes] = await Promise.all([
         supabase.from("company_users").select("company_id, role, status").eq("user_id", userId).eq("status", "active").maybeSingle(),
         supabase.from("platform_admins").select("user_id, status").eq("user_id", userId).eq("status", "active").maybeSingle()
