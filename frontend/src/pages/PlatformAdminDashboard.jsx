@@ -55,7 +55,8 @@ export default function PlatformAdminDashboard() {
       setCompanies(rows);
       const usagePairs = await Promise.all(rows.map(async (c) => [c.id, await getCompanyUsage(c.id)]));
       setUsageById(Object.fromEntries(usagePairs));
-      setAuditLogs(await fetchAuditLogs({ limit: 50 }));
+      const logs = await fetchAuditLogs({ limit: 50 });
+      setAuditLogs(logs);
       const { data: sessions } = await supabase
         .from("platform_support_sessions")
         .select("*")
@@ -67,8 +68,8 @@ export default function PlatformAdminDashboard() {
   }
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- initial data load on mount
     refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const totals = useMemo(() => ({
@@ -112,22 +113,25 @@ export default function PlatformAdminDashboard() {
   }
 
   async function removeCompany(company) {
+    if (company.status === "active") {
+      window.alert("This company is active. Suspend or cancel it first, then delete.");
+      return;
+    }
     const typed = window.prompt(
-      `PERMANENTLY delete ${company.company_name}?\n\nThis removes its roster, settings, subscription, clients, and equipment. Companies with projects or reports cannot be deleted — suspend them instead.\n\nType the company name to confirm:`
+      `PERMANENTLY delete ${company.company_name}?\n\nFull clean sweep: every project, daily log, field test report, timesheet, uploaded file, and user account belonging to this company will be destroyed. This cannot be undone.\n\nType the company name to confirm:`
     );
     if (typed !== company.company_name) {
       if (typed !== null) window.alert("Name did not match — nothing was deleted.");
       return;
     }
     try {
-      await deleteCompany(company);
+      const counts = await deleteCompany(company);
       await refresh();
-    } catch (err) {
       window.alert(
-        /foreign key|violates/i.test(err.message)
-          ? "This company has projects or reports and cannot be deleted. Suspend it instead."
-          : err.message
+        `${company.company_name} deleted.\n\nRemoved: ${counts.projects ?? 0} projects, ${counts.daily_reports ?? 0} daily logs, ${counts.field_test_reports ?? 0} field test reports, ${counts.timesheets ?? 0} timesheets, ${counts.storage_files ?? 0} files, ${counts.auth_users ?? 0} user accounts.`
       );
+    } catch (err) {
+      window.alert(err.message);
     }
   }
 
@@ -241,8 +245,9 @@ export default function PlatformAdminDashboard() {
                       <button
                         type="button"
                         onClick={() => removeCompany(company)}
-                        title="Permanently delete — only possible for companies without projects or reports"
-                        className="min-h-9 rounded-lg bg-rose-700 px-3 text-xs font-bold text-white hover:bg-rose-600"
+                        disabled={company.status === "active"}
+                        title={company.status === "active" ? "Suspend or cancel first, then delete" : "Permanently delete the company and ALL of its records and files"}
+                        className="min-h-9 rounded-lg bg-rose-700 px-3 text-xs font-bold text-white hover:bg-rose-600 disabled:cursor-not-allowed disabled:opacity-40"
                       >
                         Delete
                       </button>

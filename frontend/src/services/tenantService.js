@@ -111,22 +111,23 @@ export async function setSubscriptionPlan(companyId, plan) {
   });
 }
 
-// Permanent removal. Cascades through the company's roster, settings,
-// subscription, clients, and equipment. Tenant report tables (projects,
-// daily logs, concrete reports, timesheets) reference companies WITHOUT
-// cascade, so a company with operational data cannot be deleted — the
-// database refuses, and suspension is the right tool instead.
+// Permanent removal: a full clean sweep of the company's records — projects,
+// daily logs, concrete reports, timesheets, roster, exclusive user accounts,
+// and every storage file under its tenant prefix. Runs server-side in the
+// delete-company edge function (storage needs the service role). Active
+// companies are refused; suspend or cancel first. The platform-level audit
+// record is written by the SQL sweep itself.
 export async function deleteCompany(company) {
-  const { error } = await supabase.from('companies').delete().eq('id', company.id);
-  if (error) throw error;
-  // The company's own audit trail cascades away with it; record the deletion
-  // at platform level (no company scope).
-  logAuditEvent({
-    action: 'company_deleted',
-    entityType: 'company',
-    entityId: company.id,
-    oldValue: { companyName: company.company_name, status: company.status }
+  const { data, error } = await supabase.functions.invoke('delete-company', {
+    body: { companyId: company.id, confirmName: company.company_name }
   });
+  if (error) {
+    // FunctionsHttpError hides the body; surface the real message.
+    const body = await error.context?.json?.().catch(() => null);
+    throw new Error(body?.error || error.message);
+  }
+  if (data?.error) throw new Error(data.error);
+  return data?.counts || {};
 }
 
 // Support access is explicit, read-only, and audited.
