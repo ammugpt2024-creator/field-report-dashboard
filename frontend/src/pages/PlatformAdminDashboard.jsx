@@ -3,6 +3,7 @@ import { useLocation } from "react-router-dom";
 import { BarChart3, Building2, ListChecks, Plus, ShieldCheck, X } from "lucide-react";
 import {
   createCompany,
+  deleteCompany,
   endSupportSession,
   getCompanyUsage,
   listCompanies,
@@ -108,6 +109,26 @@ export default function PlatformAdminDashboard() {
 
   function activeSupportFor(companyId) {
     return supportSessions.find((s) => s.company_id === companyId);
+  }
+
+  async function removeCompany(company) {
+    const typed = window.prompt(
+      `PERMANENTLY delete ${company.company_name}?\n\nThis removes its roster, settings, subscription, clients, and equipment. Companies with projects or reports cannot be deleted — suspend them instead.\n\nType the company name to confirm:`
+    );
+    if (typed !== company.company_name) {
+      if (typed !== null) window.alert("Name did not match — nothing was deleted.");
+      return;
+    }
+    try {
+      await deleteCompany(company);
+      await refresh();
+    } catch (err) {
+      window.alert(
+        /foreign key|violates/i.test(err.message)
+          ? "This company has projects or reports and cannot be deleted. Suspend it instead."
+          : err.message
+      );
+    }
   }
 
   async function toggleSupport(company) {
@@ -216,6 +237,14 @@ export default function PlatformAdminDashboard() {
                         className={`min-h-9 rounded-lg px-3 text-xs font-bold ${company.status === "suspended" ? "bg-emerald-700 text-white" : "border border-rose-200 bg-white text-rose-700"}`}
                       >
                         {company.status === "suspended" ? "Activate" : "Suspend"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => removeCompany(company)}
+                        title="Permanently delete — only possible for companies without projects or reports"
+                        className="min-h-9 rounded-lg bg-rose-700 px-3 text-xs font-bold text-white hover:bg-rose-600"
+                      >
+                        Delete
                       </button>
                     </div>
                   </article>
