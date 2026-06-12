@@ -462,12 +462,27 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, onJumpToDate
 
   function handleProjectChange(rowId, projectId) {
     const project = assignedProjects.find((item) => String(item.id) === String(projectId)) || {};
-    persistCard(setRowProject(card, rowId, {
+    const row = (card.projectRows || []).find((item) => item.id === rowId);
+    const previousProjectId = String(row?.projectId || row?.project_id || "");
+    let next = setRowProject(card, rowId, {
       projectId: project.id ?? projectId,
       projectName: project.name ?? "",
       projectNumber: project.number ?? String(project.id ?? projectId ?? ""),
       overtimeExempt: Boolean(project.overtimeExempt)
-    }));
+    });
+    // Switching an already-filled row to a different project: ask whether the
+    // entered hours move with it or the new project starts blank.
+    if (previousProjectId && String(projectId) && previousProjectId !== String(projectId) && getRowTotal(row) > 0) {
+      const keepHours = window.confirm(
+        `Keep the entered hours (${formatHours(getRowTotal(row))}) for ${project.name || "the selected project"}?\n\nPress Cancel to start it with empty hours.`
+      );
+      if (!keepHours) {
+        WEEK_DAYS.forEach((day) => {
+          next = setRowHours(next, rowId, day, "");
+        });
+      }
+    }
+    persistCard(next);
   }
 
   // Dropdown options per row; include the row's existing project so legacy rows still render.
@@ -627,7 +642,9 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, onJumpToDate
             onClick={handleAddProject}
             className="inline-flex min-h-9 items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 text-[13px] font-semibold text-slate-800 transition hover:border-slate-400 hover:bg-slate-50 sm:min-h-10 sm:gap-1.5 sm:rounded-xl sm:px-4 sm:text-sm"
           >
-            <Plus className="h-4 w-4" /> Add project
+            <Plus className="h-4 w-4" />
+            <span className="sm:hidden">Add another project</span>
+            <span className="hidden sm:inline">Add project</span>
           </button>
         )}
       </div>
@@ -758,68 +775,60 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, onJumpToDate
             </table>
           </div>
 
-          {/* Mobile: project pickers, then stacked day cards */}
-          {canEditHours && (
-            <div className="mt-2.5 space-y-2 lg:hidden">
-              {projectRows.map((row) => (
-                <div key={row.id} className="flex items-center gap-1.5">
-                  <div className="relative min-w-0 flex-1">
-                    <select
-                      value={String(row.projectId || row.project_id || "")}
-                      onChange={(event) => handleProjectChange(row.id, event.target.value)}
-                      title={row.projectName || row.project_name || "Select project"}
-                      className="h-10 w-full appearance-none overflow-hidden text-ellipsis whitespace-nowrap rounded-xl border border-slate-300 bg-white pl-3 pr-8 text-sm font-semibold text-slate-900 outline-none transition focus:border-blue-700 focus:ring-2 focus:ring-blue-100"
-                    >
-                      <option value="">Select project…</option>
-                      {projectOptionsFor(row).map((option) => (
-                        <option key={option.id} value={option.id}>{option.name}{option.number ? ` (#${option.number})` : ""}</option>
-                      ))}
-                    </select>
-                    <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                  </div>
-                  <button type="button" onClick={() => handleRemoveProject(row.id)} className="shrink-0 rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-rose-600" aria-label="Remove project">
-                    <X className="h-4 w-4" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-          <div className="mt-2.5 divide-y divide-slate-100 overflow-hidden rounded-2xl border border-slate-200 bg-white lg:hidden">
-            {TIMESHEET_DAY_COLUMNS.map((dayName, dayIndex) => {
-              const dayDate = dayDates[dayIndex];
-              const isFutureDay = isFutureTimesheetDay(dayDate);
-              const isToday = Boolean(dayDate) && dayDate.toDateString() === todayKey;
-              const singleProject = projectRows.length === 1;
-              const dayLabel = dayDate
-                ? `${TIMESHEET_DAY_LABELS[dayName]}, ${dayDate.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`
-                : dayName;
-              const hourInput = (row) => (
-                <input type="text" inputMode="decimal" value={isFutureDay ? "" : hourCellValue(row, dayName)} placeholder={isFutureDay ? "–" : ""} disabled={!canEditHours || isFutureDay} onChange={(event) => handleHoursChange(row.id, dayName, event.target.value)} onBlur={() => handleHoursBlur(row.id, dayName)} className="h-9 w-16 rounded-lg border border-slate-300 px-2 text-center text-[15px] font-semibold text-slate-900 outline-none transition focus:border-blue-700 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:border-dashed disabled:bg-slate-50 disabled:text-slate-400" />
-              );
-              return (
-                <div key={dayName} className={isToday ? "bg-blue-50/60" : ""}>
-                  <div className="flex min-h-11 items-center justify-between gap-3 px-3 py-1">
-                    <span className={`text-sm font-semibold ${isFutureDay ? "text-slate-400" : isToday ? "text-blue-900" : "text-slate-900"}`}>
-                      {dayLabel}
-                      {isToday && <span className="ml-1.5 rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] font-bold uppercase text-blue-700">Today</span>}
-                    </span>
-                    {singleProject
-                      ? hourInput(projectRows[0])
-                      : <span className={`text-sm font-bold ${isFutureDay ? "text-slate-400" : "text-slate-900"}`}>{isFutureDay ? "–" : `${formatHours(dailyTotals[dayName])} hrs`}</span>}
-                  </div>
-                  {!singleProject && !isFutureDay && (
-                    <div className="space-y-2 px-3 pb-2.5">
-                      {projectRows.map((row) => (
-                        <label key={row.id} className="flex items-center justify-between gap-3 text-sm">
-                          <span className="min-w-0 flex-1 truncate font-medium text-slate-600">{row.projectName || row.project_name || "No project"}</span>
-                          {hourInput(row)}
-                        </label>
-                      ))}
+          {/* Mobile: one card per project — the picker is that card's header and
+              the rows below are ITS hours, so changing the picker visibly
+              re-labels this card and Add project appends a fresh empty card. */}
+          <div className="mt-2.5 space-y-3 lg:hidden">
+            {projectRows.map((row) => (
+              <div key={row.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                {canEditHours ? (
+                  <div className="flex items-center gap-1 border-b border-slate-200 bg-slate-50 px-1.5 py-1.5">
+                    <div className="relative min-w-0 flex-1">
+                      <select
+                        value={String(row.projectId || row.project_id || "")}
+                        onChange={(event) => handleProjectChange(row.id, event.target.value)}
+                        title={row.projectName || row.project_name || "Select project"}
+                        className="h-10 w-full appearance-none overflow-hidden text-ellipsis whitespace-nowrap rounded-lg border border-slate-300 bg-white pl-2.5 pr-8 text-sm font-semibold text-slate-900 outline-none transition focus:border-blue-700 focus:ring-2 focus:ring-blue-100"
+                      >
+                        <option value="">Select project…</option>
+                        {projectOptionsFor(row).map((option) => (
+                          <option key={option.id} value={option.id}>{option.name}{option.number ? ` (#${option.number})` : ""}</option>
+                        ))}
+                      </select>
+                      <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                     </div>
-                  )}
+                    {projectRows.length > 1 && (
+                      <button type="button" onClick={() => handleRemoveProject(row.id)} className="shrink-0 rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-rose-600" aria-label="Remove project">
+                        <X className="h-4 w-4" />
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <p className="truncate border-b border-slate-200 bg-slate-50 px-3 py-2 text-sm font-bold text-slate-900">
+                    {row.projectName || row.project_name || "No project"}
+                  </p>
+                )}
+                <div className="divide-y divide-slate-100">
+                  {TIMESHEET_DAY_COLUMNS.map((dayName, dayIndex) => {
+                    const dayDate = dayDates[dayIndex];
+                    const isFutureDay = isFutureTimesheetDay(dayDate);
+                    const isToday = Boolean(dayDate) && dayDate.toDateString() === todayKey;
+                    const dayLabel = dayDate
+                      ? `${TIMESHEET_DAY_LABELS[dayName]}, ${dayDate.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`
+                      : dayName;
+                    return (
+                      <div key={dayName} className={`flex min-h-11 items-center justify-between gap-3 px-3 py-1 ${isToday ? "bg-blue-50/60" : ""}`}>
+                        <span className={`text-sm font-semibold ${isFutureDay ? "text-slate-400" : isToday ? "text-blue-900" : "text-slate-900"}`}>
+                          {dayLabel}
+                          {isToday && <span className="ml-1.5 rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] font-bold uppercase text-blue-700">Today</span>}
+                        </span>
+                        <input type="text" inputMode="decimal" value={isFutureDay ? "" : hourCellValue(row, dayName)} placeholder={isFutureDay ? "–" : ""} disabled={!canEditHours || isFutureDay} onChange={(event) => handleHoursChange(row.id, dayName, event.target.value)} onBlur={() => handleHoursBlur(row.id, dayName)} className="h-9 w-16 rounded-lg border border-slate-300 px-2 text-center text-[15px] font-semibold text-slate-900 outline-none transition focus:border-blue-700 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:border-dashed disabled:bg-slate-50 disabled:text-slate-400" />
+                      </div>
+                    );
+                  })}
                 </div>
-              );
-            })}
+              </div>
+            ))}
           </div>
         </>
       )}
