@@ -585,14 +585,14 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, onJumpToDate
             </div>
           )}
         </div>
-        <dl className="mt-3 flex flex-wrap gap-x-8 gap-y-2 border-b border-slate-200 pb-4 sm:mt-4 sm:gap-x-10 sm:pb-5">
-          <div>
+        <dl className="mt-3 border-b border-slate-200 pb-4 sm:mt-4 sm:flex sm:flex-wrap sm:gap-x-10 sm:gap-y-2 sm:pb-5">
+          <div className="flex items-baseline justify-between gap-3 border-b border-slate-100 py-1.5 sm:block sm:border-b-0 sm:py-0">
             <dt className="text-[13px] font-medium text-slate-500">Employee</dt>
-            <dd className="mt-0.5 text-[15px] font-semibold text-slate-900">{card.technicianName || card.technician_name || "-"}</dd>
+            <dd className="text-[15px] font-semibold text-slate-900 sm:mt-0.5">{card.technicianName || card.technician_name || "-"}</dd>
           </div>
-          <div>
+          <div className="flex items-baseline justify-between gap-3 py-1.5 sm:block sm:py-0">
             <dt className="text-[13px] font-medium text-slate-500">Role</dt>
-            <dd className="mt-0.5 text-[15px] font-semibold text-slate-900">{card.technicianRole || card.technician_role || "Field Engineer"}</dd>
+            <dd className="text-[15px] font-semibold text-slate-900 sm:mt-0.5">{card.technicianRole || card.technician_role || "Field Engineer"}</dd>
           </div>
         </dl>
       </header>
@@ -778,25 +778,35 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, onJumpToDate
               ))}
             </div>
           )}
-          <div className="mt-4 space-y-2.5 lg:hidden">
+          <div className="mt-3 space-y-2 lg:hidden">
             {TIMESHEET_DAY_COLUMNS.map((dayName, dayIndex) => {
               const dayDate = dayDates[dayIndex];
               const isFutureDay = isFutureTimesheetDay(dayDate);
               const isToday = Boolean(dayDate) && dayDate.toDateString() === todayKey;
+              const singleProject = projectRows.length === 1;
+              const dayLabel = dayDate
+                ? `${TIMESHEET_DAY_LABELS[dayName]}, ${dayDate.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`
+                : dayName;
+              const hourInput = (row) => (
+                <input type="text" inputMode="decimal" value={isFutureDay ? "" : hourCellValue(row, dayName)} placeholder={isFutureDay ? "–" : ""} disabled={!canEditHours || isFutureDay} onChange={(event) => handleHoursChange(row.id, dayName, event.target.value)} onBlur={() => handleHoursBlur(row.id, dayName)} className="h-10 w-20 rounded-xl border border-slate-300 px-2 text-center text-[15px] font-semibold text-slate-900 outline-none transition focus:border-blue-700 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:border-dashed disabled:bg-slate-50 disabled:text-slate-400" />
+              );
               return (
                 <div key={dayName} className={`rounded-2xl border ${isToday ? "border-blue-200 bg-blue-50/60" : "border-slate-200 bg-white"}`}>
-                  <div className="flex items-center justify-between px-4 py-2.5">
+                  <div className="flex min-h-12 items-center justify-between gap-3 px-3 py-1.5">
                     <span className={`text-sm font-semibold ${isFutureDay ? "text-slate-400" : isToday ? "text-blue-900" : "text-slate-900"}`}>
-                      {dayName}{dayDate ? ` ${dayDate.getDate()}` : ""}
+                      {dayLabel}
+                      {isToday && <span className="ml-1.5 rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] font-bold uppercase text-blue-700">Today</span>}
                     </span>
-                    <span className={`text-sm font-bold ${isFutureDay ? "text-slate-400" : "text-slate-900"}`}>{isFutureDay ? "–" : `${formatHours(dailyTotals[dayName])} hrs`}</span>
+                    {singleProject
+                      ? hourInput(projectRows[0])
+                      : <span className={`text-sm font-bold ${isFutureDay ? "text-slate-400" : "text-slate-900"}`}>{isFutureDay ? "–" : `${formatHours(dailyTotals[dayName])} hrs`}</span>}
                   </div>
-                  {!isFutureDay && (
-                    <div className="space-y-2 px-4 pb-3">
+                  {!singleProject && !isFutureDay && (
+                    <div className="space-y-2 px-3 pb-2.5">
                       {projectRows.map((row) => (
                         <label key={row.id} className="flex items-center justify-between gap-3 text-sm">
                           <span className="min-w-0 flex-1 truncate font-medium text-slate-600">{row.projectName || row.project_name || "No project"}</span>
-                          <input type="text" inputMode="decimal" value={hourCellValue(row, dayName)} placeholder="" disabled={!canEditHours} onChange={(event) => handleHoursChange(row.id, dayName, event.target.value)} onBlur={() => handleHoursBlur(row.id, dayName)} className="h-10 w-20 rounded-xl border border-slate-300 px-2 text-center text-[15px] font-semibold text-slate-900 outline-none transition focus:border-blue-700 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-slate-50" />
+                          {hourInput(row)}
                         </label>
                       ))}
                     </div>
