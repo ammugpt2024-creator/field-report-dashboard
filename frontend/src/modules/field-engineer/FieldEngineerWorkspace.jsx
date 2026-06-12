@@ -35,8 +35,10 @@ import { openTimeCardPdf, regenerateTimeCardPdf } from "../../services/timeCardP
 import {
   createTimeCard,
   deleteTimeCard,
+  findFiledCardForWeek,
   getTimeCardCollections,
   getTimeCards,
+  LOCKED_TIME_CARD_STATUSES,
   normalizeWeeklyCard,
   saveTimeCard,
   submitTimeCard,
@@ -2571,16 +2573,30 @@ export default function FieldEngineerWorkspace({
     });
     // One timesheet per employee per week — reopen the editable card for this week if one exists.
     const weekStart = draftCard.weekStartDate || draftCard.week_start_date || draftCard.date;
-    const existingCard = getTimeCards()
-      .filter((card) => (card.weekStartDate || card.week_start_date || card.date) === weekStart
-        && [TIME_CARD_STATUS.DRAFT, TIME_CARD_STATUS.REJECTED, TIME_CARD_STATUS.RETURNED].includes(card.status))
-      .sort((left, right) => new Date(right.updatedAt || 0) - new Date(left.updatedAt || 0))[0];
-    const card = existingCard || saveTimeCard(draftCard);
-    refreshTimeCards(card);
+    const cardsForWeek = getTimeCards()
+      .filter((card) => (card.weekStartDate || card.week_start_date || card.date) === weekStart)
+      .sort((left, right) => new Date(right.updatedAt || 0) - new Date(left.updatedAt || 0));
+    const editableCard = cardsForWeek.find((card) =>
+      [TIME_CARD_STATUS.DRAFT, TIME_CARD_STATUS.REJECTED, TIME_CARD_STATUS.RETURNED].includes(card.status)
+    );
+    // Never start a second timesheet for a filed week — open the filed copy read-only instead.
+    const lockedCard = cardsForWeek.find((card) => LOCKED_TIME_CARD_STATUSES.includes(card.status));
+    const card = editableCard || (lockedCard ? null : saveTimeCard(draftCard));
+    refreshTimeCards(card || lockedCard);
     navigate("/technician/dashboard?view=time-card");
   }
 
   function openTimeCard(card) {
+    // A leftover duplicate draft for an already-filed week opens the filed copy instead.
+    if (!LOCKED_TIME_CARD_STATUSES.includes(card.status)) {
+      const filedCard = findFiledCardForWeek(card);
+      if (filedCard) {
+        window.alert(`This week already has a ${filedCard.status === TIME_CARD_STATUS.APPROVED || filedCard.status === TIME_CARD_STATUS.COMPLETED ? "approved" : "submitted"} timesheet. Opening it instead — you can delete the duplicate draft from the Drafts tab.`);
+        setActiveTimeCard(filedCard);
+        navigate("/technician/dashboard?view=time-card");
+        return;
+      }
+    }
     setActiveTimeCard(card);
     navigate("/technician/dashboard?view=time-card");
   }
@@ -2598,9 +2614,12 @@ export default function FieldEngineerWorkspace({
     const cardsForWeek = getTimeCards()
       .filter((item) => (item.weekStartDate || item.week_start_date || item.date) === targetWeekStart)
       .sort((left, right) => new Date(right.updatedAt || 0) - new Date(left.updatedAt || 0));
-    const existingCard = cardsForWeek.find((item) =>
-      [TIME_CARD_STATUS.DRAFT, TIME_CARD_STATUS.REJECTED, TIME_CARD_STATUS.RETURNED].includes(item.status)
-    ) || cardsForWeek[0];
+    // A filed week always opens its filed copy — an editable leftover must not shadow it.
+    const existingCard = cardsForWeek.find((item) => LOCKED_TIME_CARD_STATUSES.includes(item.status))
+      || cardsForWeek.find((item) =>
+        [TIME_CARD_STATUS.DRAFT, TIME_CARD_STATUS.REJECTED, TIME_CARD_STATUS.RETURNED].includes(item.status)
+      )
+      || cardsForWeek[0];
     if (existingCard) {
       setActiveTimeCard(existingCard);
       return;
@@ -2633,6 +2652,8 @@ export default function FieldEngineerWorkspace({
   }
 
   function recallTimeCard(card) {
+    // Only an undecided submission can be recalled — never an approved sheet.
+    if (![TIME_CARD_STATUS.SUBMITTED, TIME_CARD_STATUS.PENDING_REVIEW].includes(card.status)) return;
     const recalled = saveTimeCard({
       ...card,
       status: TIME_CARD_STATUS.DRAFT,

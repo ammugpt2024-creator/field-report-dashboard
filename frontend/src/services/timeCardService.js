@@ -387,6 +387,26 @@ export function deleteTimeCard(cardId) {
   writeTimeCards(readTimeCards().filter((card) => card.id !== cardId));
 }
 
+// A week with a timesheet in one of these statuses is filed: the employee can
+// view it but must never be able to fill the same dates again.
+export const LOCKED_TIME_CARD_STATUSES = [
+  TIME_CARD_STATUS.SUBMITTED,
+  TIME_CARD_STATUS.PENDING_REVIEW,
+  TIME_CARD_STATUS.APPROVED,
+  TIME_CARD_STATUS.COMPLETED
+];
+
+// The filed timesheet covering the same week as `card`, excluding `card` itself.
+export function findFiledCardForWeek(card) {
+  const weekStart = card?.weekStartDate || card?.week_start_date || card?.date;
+  if (!weekStart) return null;
+  return readTimeCards().find((item) =>
+    String(item.id) !== String(card.id || "") &&
+    (item.weekStartDate || item.week_start_date || item.date) === weekStart &&
+    LOCKED_TIME_CARD_STATUSES.includes(item.status)
+  ) || null;
+}
+
 export function submitTimeCard(card) {
   const submittedAt = new Date().toISOString();
   const signature = card.technicianSignature || card.technician_signature || "";

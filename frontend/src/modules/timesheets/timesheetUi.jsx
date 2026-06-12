@@ -19,6 +19,7 @@ import {
 import { generateTimeCardPdfBlob, regenerateTimeCardPdf } from "../../services/timeCardPdfService";
 import {
   WEEK_DAYS,
+  findFiledCardForWeek,
   formatTimeCardStatus,
   getTimeCards,
   saveTimeCard,
@@ -440,12 +441,7 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, assignedProj
   async function submitCard() {
     // Backstop against duplicate filings: if another timesheet for this same
     // week is already with the manager (or approved), refuse to submit this one.
-    const weekStart = card.weekStartDate || card.week_start_date || card.date;
-    const duplicateForWeek = getTimeCards().find((item) =>
-      String(item.id) !== String(card.id) &&
-      (item.weekStartDate || item.week_start_date || item.date) === weekStart &&
-      [TIME_CARD_STATUS.SUBMITTED, TIME_CARD_STATUS.PENDING_REVIEW, TIME_CARD_STATUS.APPROVED, TIME_CARD_STATUS.COMPLETED].includes(item.status)
-    );
+    const duplicateForWeek = findFiledCardForWeek(card);
     if (duplicateForWeek) {
       window.alert(`Timesheet ${getTimesheetNumber(duplicateForWeek)} for this week has already been ${duplicateForWeek.status === TIME_CARD_STATUS.APPROVED || duplicateForWeek.status === TIME_CARD_STATUS.COMPLETED ? "approved" : "submitted"}. You cannot submit a second timesheet for the same week.`);
       return;
