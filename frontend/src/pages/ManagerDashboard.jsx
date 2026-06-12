@@ -111,6 +111,10 @@ function logStatusPill(bucket) {
 }
 
 function TimesheetReviewTable({ timesheets, onApprove, onReject, highlightedTimesheet = "" }) {
+  // Details collapsed by default — with many technicians submitting, the
+  // per-project hour grids would otherwise stack into a wall. The deep-linked
+  // timesheet (from an approval email) starts expanded.
+  const [expandedId, setExpandedId] = useState(highlightedTimesheet || null);
   return (
     <div className="mt-5 overflow-x-auto rounded-2xl border border-slate-200">
       <table className="min-w-[980px] w-full border-collapse text-left text-sm">
@@ -125,13 +129,24 @@ function TimesheetReviewTable({ timesheets, onApprove, onReject, highlightedTime
           {timesheets.map((card) => {
             const timesheetNumber = card.timesheetNumber || card.timesheet_number || "";
             const isHighlighted = Boolean(highlightedTimesheet) && (timesheetNumber === highlightedTimesheet || String(card.id) === highlightedTimesheet);
+            const isExpanded = expandedId === String(card.id) || expandedId === timesheetNumber;
             return (
             <Fragment key={card.id}>
               <tr
                 className={`border-t border-slate-200 ${isHighlighted ? "bg-amber-50" : ""}`}
                 ref={isHighlighted ? (node) => node?.scrollIntoView({ behavior: "smooth", block: "center" }) : undefined}
               >
-                <td className="px-3 py-3 font-bold text-slate-950">{timesheetNumber}</td>
+                <td className="px-3 py-3 font-bold text-slate-950">
+                  <button
+                    type="button"
+                    onClick={() => setExpandedId(isExpanded ? null : String(card.id))}
+                    className="inline-flex items-center gap-1.5 text-left hover:text-blue-700"
+                    title={isExpanded ? "Hide hours breakdown" : "Show hours breakdown"}
+                  >
+                    <ChevronDown className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${isExpanded ? "" : "-rotate-90"}`} />
+                    {timesheetNumber}
+                  </button>
+                </td>
                 <td className="px-3 py-3 font-semibold">{card.technicianName || card.technician_name}</td>
                 <td className="px-3 py-3 font-semibold">{(card.projectRows || []).map((row) => row.projectName || row.project_name).filter(Boolean).join(", ") || card.projectName || "-"}</td>
                 <td className="px-3 py-3 font-semibold">{card.weekStartDate || card.week_start_date} - {card.weekEndDate || card.week_end_date}</td>
@@ -146,6 +161,7 @@ function TimesheetReviewTable({ timesheets, onApprove, onReject, highlightedTime
                   </div>
                 </td>
               </tr>
+              {isExpanded && (
               <tr className="border-t border-slate-100 bg-slate-50">
                 <td colSpan={9} className="px-3 py-3">
                   <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
@@ -181,6 +197,7 @@ function TimesheetReviewTable({ timesheets, onApprove, onReject, highlightedTime
                   </div>
                 </td>
               </tr>
+              )}
             </Fragment>
             );
           })}
