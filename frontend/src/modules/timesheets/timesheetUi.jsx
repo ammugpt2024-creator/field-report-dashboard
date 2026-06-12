@@ -847,7 +847,7 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, onJumpToDate
       {/* ── Weekly comments ── */}
       {canEditHours && !comments && !commentsOpen && (
         <button type="button" onClick={() => setCommentsOpen(true)} className="mt-3 text-[13px] font-bold text-blue-700 sm:hidden">
-          + Add weekly comment
+          + Add Weekly Comment
         </button>
       )}
       <label className={`mt-3 sm:mt-6 ${comments || commentsOpen ? "block" : "hidden sm:block"}`}>
@@ -885,7 +885,7 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, onJumpToDate
             onClick={() => persistCard(card)}
             className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-800 transition hover:border-slate-400 hover:bg-slate-50 sm:h-12 sm:px-6"
           >
-            <Save className="h-4 w-4" /> {isReturned ? "Save" : "Save draft"}
+            <Save className="h-4 w-4" /> {isReturned ? "Save" : "Save Draft"}
           </button>
           <button
             type="button"
@@ -894,7 +894,7 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, onJumpToDate
             className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-blue-700 px-3 text-sm font-semibold text-white transition hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-blue-700 sm:h-12 sm:px-6"
           >
             <Send className="h-4 w-4" /> {isReturned ? "Resubmit" : "Submit"}
-            <span className="hidden sm:inline"> for approval</span>
+            <span className="hidden sm:inline"> For Approval</span>
           </button>
         </div>
       </div>
@@ -1194,8 +1194,8 @@ function TimeCardsPage({
           className="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-xl bg-blue-700 px-3 text-sm font-semibold text-white transition hover:bg-blue-600 sm:h-11 sm:gap-2 sm:px-5"
         >
           <Plus className="h-4 w-4" />
-          <span className="sm:hidden">Open current</span>
-          <span className="hidden sm:inline">Open current timesheet</span>
+          <span className="sm:hidden">Current Week</span>
+          <span className="hidden sm:inline">Open Current Timesheet</span>
         </button>
       </div>
 
@@ -1249,7 +1249,7 @@ function TimeCardsPage({
         <div className="mt-4 rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-12 text-center">
           <p className="text-base font-semibold text-slate-700">No {label.toLowerCase()} timesheets</p>
           <p className="mx-auto mt-1 max-w-md text-sm font-medium text-slate-500">
-            Use Open current timesheet to create or reopen the weekly draft for the selected project and week.
+            Use Open Current Timesheet to create or reopen the weekly draft for the selected project and week.
           </p>
         </div>
       )}
