@@ -1065,8 +1065,8 @@ function ManagerDashboard() {
             </section>
           </div>
 
-          <div className="space-y-5">
-          <aside className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-col gap-5">
+          <aside className="order-2 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm xl:order-1">
             <div className="flex items-center gap-3">
               <span className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-blue-50 text-blue-700">
                 <BarChart3 className="h-5 w-5" />
@@ -1131,7 +1131,7 @@ function ManagerDashboard() {
             </div>
           </aside>
 
-          <aside className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+          <aside className="order-1 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm xl:order-2">
             <div className="flex items-center gap-3">
               <span className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-blue-50 text-blue-700">
                 <Users className="h-5 w-5" />
