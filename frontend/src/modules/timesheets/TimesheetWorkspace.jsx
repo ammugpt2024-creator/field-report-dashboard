@@ -143,7 +143,36 @@ export default function TimesheetWorkspace() {
     setView("card");
   }
 
+  const LOCKED_STATUSES = [
+    TIME_CARD_STATUS.SUBMITTED,
+    TIME_CARD_STATUS.PENDING_REVIEW,
+    TIME_CARD_STATUS.APPROVED,
+    TIME_CARD_STATUS.COMPLETED
+  ];
+
+  // The filed (submitted/approved) timesheet for a week, if any — excluding the
+  // card being opened itself.
+  function filedCardForWeek(card) {
+    const weekStart = card.weekStartDate || card.week_start_date || card.date;
+    return getTimeCards().find((item) =>
+      String(item.id) !== String(card.id) &&
+      (item.weekStartDate || item.week_start_date || item.date) === weekStart &&
+      LOCKED_STATUSES.includes(item.status)
+    ) || null;
+  }
+
   function openTimeCard(card) {
+    // A leftover duplicate draft for an already-filed week opens the filed
+    // copy instead of an editor the employee could fill in again.
+    if (!LOCKED_STATUSES.includes(card.status)) {
+      const filedCard = filedCardForWeek(card);
+      if (filedCard) {
+        window.alert(`This week already has a ${filedCard.status === TIME_CARD_STATUS.APPROVED || filedCard.status === TIME_CARD_STATUS.COMPLETED ? "approved" : "submitted"} timesheet. Opening it instead — you can delete the duplicate draft from the Drafts tab.`);
+        setActiveTimeCard(filedCard);
+        setView("card");
+        return;
+      }
+    }
     setActiveTimeCard(card);
     setView("card");
   }
@@ -161,9 +190,13 @@ export default function TimesheetWorkspace() {
     const cardsForWeek = getTimeCards()
       .filter((item) => (item.weekStartDate || item.week_start_date || item.date) === targetWeekStart)
       .sort((left, right) => new Date(right.updatedAt || 0) - new Date(left.updatedAt || 0));
-    const existingCard = cardsForWeek.find((item) =>
-      [TIME_CARD_STATUS.DRAFT, TIME_CARD_STATUS.REJECTED, TIME_CARD_STATUS.RETURNED].includes(item.status)
-    ) || cardsForWeek[0];
+    // A filed week always opens its filed copy — an editable leftover for the
+    // same week must not shadow it.
+    const existingCard = cardsForWeek.find((item) => LOCKED_STATUSES.includes(item.status))
+      || cardsForWeek.find((item) =>
+        [TIME_CARD_STATUS.DRAFT, TIME_CARD_STATUS.REJECTED, TIME_CARD_STATUS.RETURNED].includes(item.status)
+      )
+      || cardsForWeek[0];
     if (existingCard) {
       setActiveTimeCard(existingCard);
       return;
