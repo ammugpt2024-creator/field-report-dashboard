@@ -68,8 +68,8 @@ function sectionTitle(kicker, title, description) {
 function commandCenterTitle(title, description) {
   return (
     <div className="min-w-0">
-      <h2 className="text-xl font-bold text-slate-950 sm:text-2xl">{title}</h2>
-      {description && <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-slate-600">{description}</p>}
+      <h2 className="text-lg font-bold text-slate-950 sm:text-2xl">{title}</h2>
+      {description && <p className="mt-1 hidden max-w-3xl text-sm font-semibold leading-6 text-slate-600 sm:block">{description}</p>}
     </div>
   );
 }
@@ -104,6 +104,19 @@ function EmptyState({ title, description, actionLabel, onAction }) {
 }
 
 function StatusTabs({ tabs, activeTab, onChange, counts = {} }) {
+  const activeTabRef = useRef(null);
+  // Keep the selected tab visible when the strip scrolls horizontally on phones.
+  // Direct scrollLeft math after layout — scrollIntoView can race the first
+  // paint and also vertically scrolls ancestor containers.
+  useEffect(() => {
+    const button = activeTabRef.current;
+    const strip = button?.parentElement;
+    if (!button || !strip) return;
+    const frame = requestAnimationFrame(() => {
+      strip.scrollLeft = Math.max(0, button.offsetLeft - (strip.clientWidth - button.clientWidth) / 2);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [activeTab]);
   return (
     <div className="flex gap-2 overflow-x-auto rounded-2xl border border-slate-200 bg-white p-1">
       {tabs.map((tab) => {
@@ -111,9 +124,10 @@ function StatusTabs({ tabs, activeTab, onChange, counts = {} }) {
         return (
           <button
             key={tab.id}
+            ref={active ? activeTabRef : null}
             type="button"
             onClick={() => onChange(tab.id)}
-            className={`min-h-10 shrink-0 rounded-xl px-4 text-sm font-bold transition ${
+            className={`min-h-9 shrink-0 rounded-xl px-3 text-[13px] font-bold transition sm:min-h-10 sm:px-4 sm:text-sm ${
               active ? "bg-slate-950 text-white" : "text-slate-600 hover:bg-slate-100 hover:text-slate-950"
             }`}
           >
@@ -163,19 +177,19 @@ function DailyLogListRow({ log, activeTab, onOpen, onDelete, onRecall, onDownloa
       tabIndex={0}
       onClick={onOpen}
       onKeyDown={handleKeyDown}
-      className="cursor-pointer rounded-xl border border-slate-200 bg-white px-4 py-3 transition hover:border-slate-300 hover:bg-slate-50/60"
+      className="cursor-pointer rounded-xl border border-slate-200 bg-white px-3 py-2.5 transition hover:border-slate-300 hover:bg-slate-50/60 sm:px-4 sm:py-3"
     >
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+      <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between lg:gap-3">
         <div className="min-w-0 lg:max-w-[38%]">
           <p className="truncate text-sm font-bold leading-5 text-slate-950">{log.projectName}</p>
           {projectNumber && <p className="mt-0.5 truncate text-xs font-semibold leading-4 text-slate-500">Project #{projectNumber}</p>}
         </div>
 
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-4 gap-y-2 text-sm font-semibold text-slate-700">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1 text-[13px] font-semibold text-slate-700 sm:gap-x-4 sm:gap-y-2 sm:text-sm">
           <span className="whitespace-nowrap">{displayDate} • {log.shift || "Day Shift"}</span>
-          <div className="flex items-center gap-2 whitespace-nowrap" aria-label="Work summary">
-            <span className="inline-flex min-h-8 min-w-12 items-center justify-center rounded-full bg-slate-100 px-3 text-sm font-bold text-slate-800">📋 {log.activities.length}</span>
-            <span className="inline-flex min-h-8 min-w-12 items-center justify-center rounded-full bg-slate-100 px-3 text-sm font-bold text-slate-800">📄 {reportCount}</span>
+          <div className="flex items-center gap-1.5 whitespace-nowrap sm:gap-2" aria-label="Work summary">
+            <span className="inline-flex min-h-7 items-center justify-center rounded-full bg-slate-100 px-2.5 text-[13px] font-bold text-slate-800 sm:min-h-8 sm:min-w-12 sm:px-3 sm:text-sm">📋 {log.activities.length}</span>
+            <span className="inline-flex min-h-7 items-center justify-center rounded-full bg-slate-100 px-2.5 text-[13px] font-bold text-slate-800 sm:min-h-8 sm:min-w-12 sm:px-3 sm:text-sm">📄 {reportCount}</span>
           </div>
           <span className="whitespace-nowrap">
             <span className="font-bold text-slate-500">{statusDateLabel}</span>{" "}
@@ -1993,16 +2007,15 @@ function DailyLogsPage({ logCollections, initialTab = "draft", onOpenLog, onCrea
   return (
     <>
       <section className={cardClass()}>
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            {commandCenterTitle("Daily Logs", "Review Daily Field Logs by status.")}
-            <div className="mt-3">
-              <StatusTabs tabs={DAILY_LOG_TABS} activeTab={activeTab} onChange={setActiveTab} counts={tabCounts} />
-            </div>
-          </div>
-          <button type="button" onClick={onCreateLog} className="min-h-11 rounded-2xl bg-slate-950 px-4 text-sm font-bold text-white">
-            + Create Daily Log
+        <div className="flex items-center justify-between gap-3">
+          {commandCenterTitle("Daily Logs", "Review Daily Field Logs by status.")}
+          <button type="button" onClick={onCreateLog} className="min-h-10 shrink-0 rounded-xl bg-slate-950 px-3 text-sm font-bold text-white sm:min-h-11 sm:rounded-2xl sm:px-4">
+            <span className="sm:hidden">+ New</span>
+            <span className="hidden sm:inline">+ Create Daily Log</span>
           </button>
+        </div>
+        <div className="mt-3">
+          <StatusTabs tabs={DAILY_LOG_TABS} activeTab={activeTab} onChange={setActiveTab} counts={tabCounts} />
         </div>
       </section>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
