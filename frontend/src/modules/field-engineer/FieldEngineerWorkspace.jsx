@@ -2974,8 +2974,15 @@ export default function FieldEngineerWorkspace({
     .filter((card) => (card.weekStartDate || card.week_start_date || card.date) === currentTimeCardWeekStart
       && [TIME_CARD_STATUS.DRAFT, TIME_CARD_STATUS.REJECTED, TIME_CARD_STATUS.RETURNED].includes(card.status))
     .sort((left, right) => new Date(right.updatedAt || 0) - new Date(left.updatedAt || 0))[0];
+  // The current week's filed (submitted/approved) timesheet. Without this the
+  // fallback below would hand an already-filed week a fresh editable template.
+  const filedCurrentTimeCard = timeCards
+    .filter((card) => (card.weekStartDate || card.week_start_date || card.date) === currentTimeCardWeekStart
+      && LOCKED_TIME_CARD_STATUSES.includes(card.status))
+    .sort((left, right) => new Date(right.updatedAt || 0) - new Date(left.updatedAt || 0))[0];
   const selectedTimeCard = activeTimeCard
     || existingCurrentTimeCard
+    || filedCurrentTimeCard
     || timeCardCollections.openTimeCards[0]
     || currentTimeCardTemplate;
   const isTimeCardReadOnly = selectedTimeCard && [TIME_CARD_STATUS.SUBMITTED, TIME_CARD_STATUS.PENDING_REVIEW, TIME_CARD_STATUS.APPROVED, TIME_CARD_STATUS.COMPLETED].includes(selectedTimeCard.status);
