@@ -181,7 +181,7 @@ function DailyLogListRow({ log, activeTab, onOpen, onDelete, onRecall, onDownloa
               Recall
             </button>
           )}
-          <span className="rounded-lg bg-slate-950 px-3 py-2 text-xs font-bold text-white">{primaryLabel === "Edit & Resubmit" ? "Edit" : primaryLabel}</span>
+          <button type="button" onClick={onOpen} className="rounded-lg bg-slate-950 px-3 py-2 text-xs font-bold text-white">{primaryLabel === "Edit & Resubmit" ? "Edit" : primaryLabel}</button>
         </div>
       </div>
       <div className="hidden flex-col gap-2 md:flex lg:flex-row lg:items-center lg:justify-between lg:gap-3">

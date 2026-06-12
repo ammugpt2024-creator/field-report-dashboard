@@ -132,9 +132,9 @@ function TimeCardListRow({ card, activeTab, onOpen, onDelete, onRecall, onDownlo
               <Download className="h-4 w-4" />
             </button>
           )}
-          <span className="rounded-lg bg-slate-950 px-3 py-2 text-xs font-bold text-white">
+          <button type="button" onClick={onOpen} className="rounded-lg bg-slate-950 px-3 py-2 text-xs font-bold text-white">
             {primaryLabel === "Edit & Resubmit" ? "Edit" : primaryLabel}
-          </span>
+          </button>
         </div>
       </div>
       <div className="hidden gap-3 lg:grid lg:grid-cols-[140px_minmax(0,1fr)_190px_60px_60px_70px_130px_140px_200px] lg:items-center">
