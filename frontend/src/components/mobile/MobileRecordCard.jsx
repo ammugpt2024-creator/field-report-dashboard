@@ -25,8 +25,8 @@ export default function MobileRecordCard({ title, status, fields = [], details =
             </div>
           ) : (
             <div key={label} className="flex min-w-0 items-baseline justify-between gap-3 border-b border-slate-100 py-1.5 last:border-b-0">
-              <dt className="shrink-0 text-[12px] font-semibold text-slate-500">{label}</dt>
-              <dd className="min-w-0 break-words text-right text-[13px] font-bold text-slate-900">{text}</dd>
+              <dt className="min-w-0 text-[12px] font-semibold leading-snug text-slate-500">{label}</dt>
+              <dd className="shrink-0 whitespace-nowrap text-right text-[13px] font-bold text-slate-900">{text}</dd>
             </div>
           );
         })}
