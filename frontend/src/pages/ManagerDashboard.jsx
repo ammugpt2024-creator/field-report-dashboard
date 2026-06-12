@@ -156,6 +156,14 @@ function TimesheetReviewTable({ timesheets, onApprove, onReject, highlightedTime
                 <td className="px-3 py-3 font-bold">{formatTimeCardStatus(card.status)}</td>
                 <td className="px-3 py-3">
                   <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setExpandedId(isExpanded ? null : String(card.id))}
+                      className="inline-flex min-h-9 items-center gap-1 rounded-xl border border-slate-300 bg-white px-3 text-xs font-bold text-slate-700 hover:bg-slate-50"
+                    >
+                      <ChevronDown className={`h-3.5 w-3.5 transition-transform ${isExpanded ? "rotate-180" : ""}`} />
+                      {isExpanded ? "Hide Hours" : "View Hours"}
+                    </button>
                     <button type="button" onClick={() => onApprove(card)} className="min-h-9 rounded-xl bg-emerald-700 px-3 text-xs font-bold text-white">Approve</button>
                     <button type="button" onClick={() => onReject(card)} className="min-h-9 rounded-xl border border-rose-200 bg-white px-3 text-xs font-bold text-rose-700">Reject</button>
                   </div>
