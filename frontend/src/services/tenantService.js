@@ -169,6 +169,8 @@ export async function endSupportSession(sessionRow) {
 function sendInviteEmail(companyId, email, fullName = '') {
   supabase.functions
     .invoke('invite-company-user', {
+      // Origin only: it is already on the auth redirect allow-list, and the
+      // app routes invite-token landings to /welcome itself.
       body: { companyId, email, fullName, redirectTo: window.location.origin }
     })
     .then(({ data, error }) => {

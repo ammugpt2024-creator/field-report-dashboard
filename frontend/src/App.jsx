@@ -25,6 +25,7 @@ import Reports from "./pages/Reports";
 import DailyLogReview from "./pages/DailyLogReview";
 import PlatformAdminDashboard from "./pages/PlatformAdminDashboard";
 import CompanyAdminDashboard from "./pages/CompanyAdminDashboard";
+import AcceptInvite from "./pages/AcceptInvite";
 
 function App() {
 
@@ -55,6 +56,17 @@ function App() {
 
   if (!session) {
     return <Login />;
+  }
+
+  // Invitation / password-recovery links sign the user in with a one-time
+  // token; send them to the set-password screen before anything else.
+  const authFlow = sessionStorage.getItem("qcore-auth-flow");
+  if (authFlow || window.location.pathname === "/welcome") {
+    sessionStorage.removeItem("qcore-auth-flow");
+    if (window.location.pathname !== "/welcome") {
+      window.history.replaceState(null, "", "/welcome");
+    }
+    return <AcceptInvite />;
   }
 
   function RoleHome() {

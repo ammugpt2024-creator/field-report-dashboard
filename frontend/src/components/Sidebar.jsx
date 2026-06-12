@@ -80,6 +80,11 @@ function getNavKey(role, { isPlatformAdmin = false, companyRole = "" } = {}) {
   const normalizedRole = String(role || "").toLowerCase();
   if (normalizedRole === ROLES.PLATFORM_ADMIN || isPlatformAdmin) return "platform_admin";
   if (normalizedRole === ROLES.COMPANY_ADMIN) return "company_admin";
+  // Company admins without a legacy operational role (fresh SaaS invitees
+  // have no profiles row) get the company menu, not the viewer fallback.
+  if (companyRole === "company_admin" && ["viewer", "client", ""].includes(normalizedRole)) {
+    return "company_admin";
+  }
   if (normalizedRole === ROLES.ADMIN) return "admin";
   if (
     normalizedRole === ROLES.QC_MANAGER ||
