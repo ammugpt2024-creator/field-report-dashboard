@@ -761,21 +761,23 @@ export default function DailyLogSummaryView({ log, onEdit, onViewPdf, onDownload
               </span>
             )}
             {canUsePdf && (
-              <>
-                <button type="button" onClick={onViewPdf} className="inline-flex min-h-11 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-800">
+              <div className="flex w-full gap-2 sm:w-auto">
+                <button type="button" onClick={onViewPdf} className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-800 sm:flex-none">
                   <Eye className="h-4 w-4" /> View PDF
                 </button>
-                <button type="button" onClick={onDownloadPdf} className="inline-flex min-h-11 items-center gap-2 rounded-2xl bg-slate-950 px-4 text-sm font-bold text-white">
-                  <Download className="h-4 w-4" /> Download PDF
+                <button type="button" onClick={onDownloadPdf} className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 text-sm font-bold text-white sm:flex-none">
+                  <Download className="h-4 w-4" />
+                  <span className="sm:hidden">Download</span>
+                  <span className="hidden sm:inline">Download PDF</span>
                 </button>
-              </>
+              </div>
             )}
             {canRegeneratePdf && (
               <button
                 type="button"
                 onClick={handleRegeneratePdf}
                 disabled={isRegeneratingPdf}
-                className="inline-flex min-h-11 items-center gap-2 rounded-2xl border border-blue-200 bg-blue-50 px-4 text-sm font-bold text-blue-800 disabled:cursor-not-allowed disabled:opacity-60"
+                className="inline-flex min-h-9 items-center gap-1.5 text-[13px] font-bold text-blue-800 disabled:cursor-not-allowed disabled:opacity-60 sm:min-h-11 sm:rounded-2xl sm:border sm:border-blue-200 sm:bg-blue-50 sm:px-4 sm:text-sm"
               >
                 <RotateCcw className={`h-4 w-4 ${isRegeneratingPdf ? "animate-spin" : ""}`} />
                 {isRegeneratingPdf ? "Regenerating..." : "Regenerate PDF"}
