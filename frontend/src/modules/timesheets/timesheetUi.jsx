@@ -211,7 +211,7 @@ function WeekNavigator({ weekStartDate, weekEndDate, onNavigate, onJumpToDate, v
     ? "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-600 bg-slate-800/80 text-slate-200 shadow-sm transition hover:border-slate-500 hover:bg-slate-700 hover:text-white disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none disabled:hover:border-slate-600 disabled:hover:bg-slate-800/80 disabled:hover:text-slate-200"
     : "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-600 transition hover:border-slate-400 hover:bg-slate-50 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-slate-300 disabled:hover:bg-white disabled:hover:text-slate-600";
   return (
-    <div className={`flex items-center gap-2 ${isDark ? "rounded-xl border border-slate-700 bg-slate-800/60 px-2 py-1.5" : ""}`}>
+    <div className={`flex w-full items-center justify-between gap-2 sm:w-auto sm:justify-start ${isDark ? "rounded-xl border border-slate-700 bg-slate-800/60 px-2 py-1.5" : ""}`}>
       <button type="button" onClick={() => onNavigate(-1)} aria-label="Previous week" title="Previous week" className={arrowClass}>
         <ChevronLeft className="h-4 w-4" />
       </button>
@@ -580,7 +580,7 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, onJumpToDate
             {formatTimeCardStatus(card.status)}
           </span>
           {onNavigateWeek && (
-            <div className="ml-auto">
+            <div className="w-full sm:ml-auto sm:w-auto">
               <WeekNavigator weekStartDate={weekStartDate} weekEndDate={weekEndDate} onNavigate={onNavigateWeek} onJumpToDate={onJumpToDate} />
             </div>
           )}
@@ -920,7 +920,7 @@ function TimeCardReadOnlyView({ card, onRecall, onViewPdf, onDownloadPdf, onNavi
           <span className={`rounded-full px-3 py-1 text-[13px] font-semibold ${getTimesheetStatusPillClass(card.status)}`}>
             {formatTimeCardStatus(card.status)}
           </span>
-          <div className="ml-auto flex flex-wrap items-center gap-2">
+          <div className="w-full sm:ml-auto sm:w-auto">
             {onNavigateWeek ? (
               <WeekNavigator weekStartDate={weekStart} weekEndDate={weekEnd} onNavigate={onNavigateWeek} onJumpToDate={onJumpToDate} />
             ) : (
