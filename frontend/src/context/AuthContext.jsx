@@ -142,8 +142,10 @@ export function AuthProvider({ children }) {
     setProfile(resolvedProfile);
     setRole(resolvedRole);
     setCompanyName(resolvedProfile?.company_name || "");
+    // Tenant context must resolve before routing decisions fire — a platform
+    // admin routed on the placeholder state would land on the viewer fallback.
+    await loadTenantContext(currentSession.user.id);
     setProfileUserId(currentSession.user.id);
-    loadTenantContext(currentSession.user.id);
     preloadCompanyBranding();
   }, [loadTenantContext]);
 

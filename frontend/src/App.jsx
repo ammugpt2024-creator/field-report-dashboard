@@ -58,6 +58,15 @@ function App() {
   }
 
   function RoleHome() {
+    // Platform ownership and company-admin membership outrank the legacy
+    // profile role when deciding the landing page.
+    if (isPlatformAdmin) {
+      return <Navigate to="/platform-admin" replace />;
+    }
+    const normalized = String(role || "").toLowerCase();
+    if (companyRole === "company_admin" && ["viewer", "client", "company_admin"].includes(normalized)) {
+      return <Navigate to="/company-admin" replace />;
+    }
     return <Navigate to={getRoleHomeRoute(role)} replace />;
   }
 
