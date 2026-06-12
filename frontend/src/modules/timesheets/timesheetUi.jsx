@@ -93,7 +93,23 @@ function TimeCardListRow({ card, activeTab, onOpen, onDelete, onRecall, onDownlo
       onKeyDown={handleKeyDown}
       className="cursor-pointer rounded-xl border border-slate-200 bg-white px-4 py-3 transition hover:border-slate-300 hover:bg-slate-50/70"
     >
-      <div className="grid grid-cols-1 gap-3 lg:grid-cols-[140px_minmax(0,1fr)_190px_60px_60px_70px_130px_140px_200px] lg:items-center">
+      {/* Phone: labeled card. Desktop: original columns. */}
+      <div className="lg:hidden">
+        <div className="flex items-center justify-between gap-2">
+          <p className="min-w-0 truncate text-[15px] font-semibold text-slate-900">{getTimesheetNumber(card)}</p>
+          <span className={`inline-flex shrink-0 whitespace-nowrap rounded-full px-2.5 py-0.5 text-[13px] font-semibold ${getTimesheetStatusPillClass(card.status)}`}>
+            {formatTimeCardStatus(card.status)}
+          </span>
+        </div>
+        <p className="mt-1 truncate text-sm font-semibold text-slate-700" title={projectSummary}>{projectSummary || "Assignment"}</p>
+        <p className="mt-0.5 text-[13px] font-medium text-slate-500">{weekPeriod}</p>
+        <p className="mt-1 text-[13px] font-semibold text-slate-700">
+          {card.totalRegularHours || card.total_regular_hours || "0.00"} reg · {card.totalOvertimeHours || card.total_overtime_hours || "0.00"} OT ·{" "}
+          <span className="font-bold text-slate-900">{card.totalHours || card.total_hours || "0.00"} total</span>
+        </p>
+        {statusDate && <p className="mt-0.5 text-[12px] font-medium text-slate-400">{formatDateTime(statusDate)}</p>}
+      </div>
+      <div className="hidden gap-3 lg:grid lg:grid-cols-[140px_minmax(0,1fr)_190px_60px_60px_70px_130px_140px_200px] lg:items-center">
         <p className="text-[15px] font-semibold text-slate-900">{getTimesheetNumber(card)}</p>
         <div className="min-w-0">
           <p className="truncate text-sm font-semibold text-slate-900" title={projectSummary}>{projectSummary || "Assignment"}</p>
@@ -708,7 +724,32 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, onJumpToDate
             </table>
           </div>
 
-          {/* Mobile: stacked day cards */}
+          {/* Mobile: project pickers, then stacked day cards */}
+          {canEditHours && (
+            <div className="mt-4 space-y-2 lg:hidden">
+              {projectRows.map((row) => (
+                <div key={row.id} className="flex items-center gap-1.5">
+                  <div className="relative min-w-0 flex-1">
+                    <select
+                      value={String(row.projectId || row.project_id || "")}
+                      onChange={(event) => handleProjectChange(row.id, event.target.value)}
+                      title={row.projectName || row.project_name || "Select project"}
+                      className="h-11 w-full appearance-none overflow-hidden text-ellipsis whitespace-nowrap rounded-xl border border-slate-300 bg-white pl-3 pr-8 text-[15px] font-semibold text-slate-900 outline-none transition focus:border-blue-700 focus:ring-2 focus:ring-blue-100"
+                    >
+                      <option value="">Select project…</option>
+                      {projectOptionsFor(row).map((option) => (
+                        <option key={option.id} value={option.id}>{option.name}{option.number ? ` (#${option.number})` : ""}</option>
+                      ))}
+                    </select>
+                    <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                  </div>
+                  <button type="button" onClick={() => handleRemoveProject(row.id)} className="shrink-0 rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-rose-600" aria-label="Remove project">
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
           <div className="mt-4 space-y-2.5 lg:hidden">
             {TIMESHEET_DAY_COLUMNS.map((dayName, dayIndex) => {
               const dayDate = dayDates[dayIndex];
@@ -943,7 +984,26 @@ function TimeCardReadOnlyView({ card, onRecall, onViewPdf, onDownloadPdf, onNavi
       {/* ── Hours by project (read-only) ── */}
       <h2 className="mt-6 text-xl font-bold tracking-tight text-slate-900">Hours by project</h2>
 
-      <div className="mt-4 overflow-x-auto">
+      <div className="mt-4 space-y-2 md:hidden">
+        {projectRows.map((row) => (
+          <div key={row.id} className="rounded-2xl border border-slate-200 bg-white p-3">
+            <p className="truncate text-sm font-bold text-slate-900" title={row.projectName || row.project_name || ""}>{row.projectName || row.project_name || "-"}</p>
+            <div className="mt-2 grid grid-cols-4 gap-1">
+              {TIMESHEET_DAY_COLUMNS.map((dayName) => (
+                <div key={dayName} className="rounded-lg bg-slate-50 px-1 py-1 text-center">
+                  <p className="text-[10px] font-bold text-slate-400">{TIMESHEET_DAY_LABELS[dayName]}</p>
+                  <p className="text-[12px] font-bold text-slate-900">{formatHours(row.hours?.[dayName])}</p>
+                </div>
+              ))}
+              <div className="rounded-lg bg-slate-950 px-1 py-1 text-center">
+                <p className="text-[10px] font-bold text-slate-400">Total</p>
+                <p className="text-[12px] font-bold text-white">{formatHours(getRowTotal(row))}</p>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="mt-4 hidden overflow-x-auto md:block">
         <table className="w-full min-w-[760px] table-fixed border-collapse text-sm">
           <colgroup>
             <col className="w-[26%]" />
