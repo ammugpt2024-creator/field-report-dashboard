@@ -74,6 +74,21 @@ embed {
   max-width: 100%;
 }
 
+/* Tables are allowed to exceed their wrapper only inside an explicit
+   horizontal-scroll container (overflow-x-auto); everywhere else they fit. */
+table {
+  max-width: 100%;
+}
+
+/* Inputs render at >=16px on phones so iOS Safari doesn't zoom the page on focus. */
+@media (max-width: 639px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+
 button,
 a,
 input,

@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../../services/supabase";
+import KeyValueList from "../mobile/KeyValueList";
+import MobileRecordCard from "../mobile/MobileRecordCard";
 
 function valueOrDash(value) {
   return value === null || value === undefined || value === "" ? "-" : String(value);
@@ -19,15 +21,6 @@ function statusClass(value) {
   if (status.includes("fail")) return "border-rose-200 bg-rose-50 text-rose-800";
   if (status.includes("retest")) return "border-amber-200 bg-amber-50 text-amber-800";
   return "border-slate-200 bg-slate-50 text-slate-700";
-}
-
-function FieldValue({ label, value, className = "" }) {
-  return (
-    <div className={`rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 ${className}`}>
-      <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">{label}</p>
-      <p className="mt-1 break-words text-sm font-bold text-slate-950">{valueOrDash(value)}</p>
-    </div>
-  );
 }
 
 function getSpecifications(report) {
@@ -199,12 +192,7 @@ export default function ConcreteReportInlineContent({ report, reportLabel = "Rep
 
       <section className="report-section keep-together specification-summary">
         <h5 className="text-sm font-bold text-slate-950">Inspection Requirements</h5>
-        <div className="mt-3 grid grid-cols-2 gap-2 xl:grid-cols-3">
-          {specifications.map(([label, value]) => (
-            // Free-text fields get the full row so they don't crush the grid on phones.
-            <FieldValue key={label} label={label} value={value} className={label === "Comments" || label === "DFR Number" ? "col-span-2 xl:col-span-1" : ""} />
-          ))}
-        </div>
+        <KeyValueList className="mt-2" columns={3} items={specifications.map(([label, value]) => [label, valueOrDash(value)])} />
       </section>
 
       <section className="report-section keep-together">
@@ -212,7 +200,44 @@ export default function ConcreteReportInlineContent({ report, reportLabel = "Rep
           <h5 className="text-sm font-bold text-slate-950">Material Delivery & Verification Records</h5>
           <span className="text-xs font-bold text-slate-500">{loadingDetails ? "Loading records..." : `${records.length} records`}</span>
         </div>
-        <div className="mt-3 overflow-x-auto rounded-2xl border border-slate-200">
+        <div className="mt-3 space-y-2 md:hidden">
+          {records.map((record, index) => {
+            const result = record.row_status ?? record.recordResult;
+            return (
+              <MobileRecordCard
+                key={record.id || index}
+                title={`Test #${valueOrDash(record.test_number ?? record.testNumber ?? index + 1)}`}
+                status={<span className={`shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-bold ${statusClass(result)}`}>{normalizeStatus(result)}</span>}
+                fields={[
+                  ["Ticket #", record.ticket_number ?? record.ticketNumber],
+                  ["Truck #", record.truck_number ?? record.truckNumber],
+                  ["CY", record.cubic_yards ?? record.cubicYards],
+                  ["Batch Time", record.time_batched ?? record.timeBatched],
+                  ["Slump (in)", record.slump_in ?? record.slump],
+                  ["Air (%)", record.air_content_percent ?? record.airContent]
+                ]}
+                details={[
+                  ["Arrival", record.arrival_time ?? record.arrivalTime],
+                  ["Tested", record.time_tested ?? record.timeTested],
+                  ["Finish", record.finish_unload ?? record.finishUnload],
+                  ["Minutes", record.actual_minutes ?? record.actualMinutes],
+                  ["Water Added", record.water_added_gal ?? record.waterAdded],
+                  ["Air Temp (°F)", record.air_temp_f ?? record.airTempF],
+                  ["Concrete Temp (°F)", record.concrete_temp_f ?? record.concreteTempF],
+                  ["Unit Weight", record.unit_weight_lbs_ft3 ?? record.unitWeight],
+                  ["Spread (in)", record.spread_in ?? record.spread],
+                  ["J-Ring (in)", record.j_ring_in ?? record.jRing],
+                  ["Strength Verification", isStrengthRequired(record) ? "Required" : "No"],
+                  ["Set #", record.set_number ?? record.setNumber],
+                  ["Lab Cylinders", record.lab_cylinders ?? record.lab_samples ?? record.labSamples],
+                  ["Field Cylinders", record.field_cylinders ?? record.field_samples ?? record.fieldSamples],
+                  ["Comments", record.comments ?? record.inspectorNotes]
+                ]}
+              />
+            );
+          })}
+        </div>
+        <div className="mt-3 hidden overflow-x-auto rounded-2xl border border-slate-200 md:block">
           <table className="min-w-[1680px] w-full border-collapse text-left text-xs">
             <thead className="bg-slate-950 text-white">
               <tr>
@@ -261,13 +286,17 @@ export default function ConcreteReportInlineContent({ report, reportLabel = "Rep
 
       <section className="report-section keep-together">
         <h5 className="text-sm font-bold text-slate-950">Compliance Summary</h5>
-        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
-          <FieldValue label="Total Records" value={summary.totalRecords} />
-          <FieldValue label="Total Quantity" value={summary.totalQuantity} />
-          <FieldValue label="Passed" value={summary.passed} />
-          <FieldValue label="Failed" value={summary.failed} />
-          <FieldValue label="Retests" value={summary.retests} />
-        </div>
+        <KeyValueList
+          className="mt-2"
+          columns={3}
+          items={[
+            ["Total Records", summary.totalRecords],
+            ["Total Quantity", summary.totalQuantity],
+            ["Passed", summary.passed],
+            ["Failed", summary.failed],
+            ["Retests", summary.retests]
+          ]}
+        />
       </section>
     </div>
   );

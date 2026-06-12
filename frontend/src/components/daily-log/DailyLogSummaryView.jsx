@@ -19,9 +19,9 @@ function getDisplayLogNumber(log = {}) {
 
 function Value({ label, value }) {
   return (
-    <div className="rounded-2xl bg-slate-50 px-3 py-2.5 sm:px-4 sm:py-3">
-      <p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-400">{label}</p>
-      <p className="mt-1 break-words text-sm font-bold text-slate-900">{value || "-"}</p>
+    <div className="flex min-w-0 items-baseline justify-between gap-3 border-b border-slate-100 py-2">
+      <p className="shrink-0 text-[13px] font-semibold text-slate-500">{label}</p>
+      <p className="min-w-0 break-words text-right text-sm font-bold text-slate-900">{value || "-"}</p>
     </div>
   );
 }
@@ -593,7 +593,7 @@ function ConcreteReportSummary({ report, reportIndex = 0, activity, log }) {
       </div>
       {compaction && (
         <>
-          <div className="mt-4 grid grid-cols-2 gap-2 lg:grid-cols-4">
+          <div className="mt-2 grid grid-cols-1 gap-x-8 sm:grid-cols-2 lg:grid-cols-3">
             <Value label="Report Type" value="Compaction Report" />
             <Value label="Report Number" value={report.reportNumber || report.report_number} />
             <Value label="Material Type" value={report.materialType || report.material_type} />
@@ -795,7 +795,7 @@ export default function DailyLogSummaryView({ log, onEdit, onViewPdf, onDownload
 
       <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
         <h2 className="text-xl font-bold text-slate-950">Daily Log Summary</h2>
-        <dl className="mt-4 grid grid-cols-2 gap-2 sm:gap-3 xl:grid-cols-4">
+        <dl className="mt-2 grid grid-cols-1 gap-x-8 sm:grid-cols-2 xl:grid-cols-3">
           <Value label="Daily Log Number" value={getDisplayLogNumber(log)} />
           <Value label="Date" value={log.date} />
           <Value label="Shift" value={log.shift} />
@@ -820,7 +820,7 @@ export default function DailyLogSummaryView({ log, onEdit, onViewPdf, onDownload
 
       <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
         <h2 className="text-xl font-bold text-slate-950">Project Details</h2>
-        <dl className="mt-4 grid grid-cols-2 gap-2 sm:gap-3 xl:grid-cols-3">
+        <dl className="mt-2 grid grid-cols-1 gap-x-8 sm:grid-cols-2 xl:grid-cols-3">
           <Value label="Project Name" value={log.projectName} />
           <Value label="Project Number" value={log.projectNumber} />
           <Value label="Project Location" value={log.projectLocation} />
