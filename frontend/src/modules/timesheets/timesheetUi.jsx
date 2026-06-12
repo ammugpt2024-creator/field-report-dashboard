@@ -928,25 +928,25 @@ function TimeCardReadOnlyView({ card, onRecall, onViewPdf, onDownloadPdf, onNavi
             )}
           </div>
         </div>
-        <div className="mt-3 flex flex-wrap items-end justify-between gap-4 border-b border-slate-200 pb-4 sm:mt-4 sm:pb-5">
-          <dl className="flex flex-wrap gap-x-10 gap-y-2">
-            <div>
+        <div className="mt-3 border-b border-slate-200 pb-4 sm:mt-4 sm:flex sm:flex-wrap sm:items-end sm:justify-between sm:gap-4 sm:pb-5">
+          <dl className="sm:flex sm:flex-wrap sm:gap-x-10 sm:gap-y-2">
+            <div className="flex items-baseline justify-between gap-3 border-b border-slate-100 py-1.5 sm:block sm:border-b-0 sm:py-0">
               <dt className="text-[13px] font-medium text-slate-500">Employee</dt>
-              <dd className="mt-0.5 text-[15px] font-semibold text-slate-900">{card.technicianName || card.technician_name || "-"}</dd>
+              <dd className="text-[15px] font-semibold text-slate-900 sm:mt-0.5">{card.technicianName || card.technician_name || "-"}</dd>
             </div>
-            <div>
+            <div className="flex items-baseline justify-between gap-3 py-1.5 sm:block sm:py-0">
               <dt className="text-[13px] font-medium text-slate-500">Submitted</dt>
-              <dd className="mt-0.5 text-[15px] font-semibold text-slate-900">{submittedAt ? formatDateTime(submittedAt) : "-"}</dd>
+              <dd className="text-[15px] font-semibold text-slate-900 sm:mt-0.5">{submittedAt ? formatDateTime(submittedAt) : "-"}</dd>
             </div>
           </dl>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="mt-2 flex items-center gap-2 sm:mt-0">
             {canUsePdf && (
-              <button type="button" onClick={onViewPdf} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 text-sm font-semibold text-white transition hover:bg-slate-800">
+              <button type="button" onClick={onViewPdf} className="inline-flex h-10 flex-1 items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 text-sm font-semibold text-white transition hover:bg-slate-800 sm:flex-none">
                 <FileText className="h-4 w-4" /> View PDF
               </button>
             )}
-            <details className="relative">
-              <summary className="inline-flex h-10 cursor-pointer list-none items-center justify-center rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:border-slate-400 hover:bg-slate-50">Actions</summary>
+            <details className="relative flex-1 sm:flex-none">
+              <summary className="inline-flex h-10 w-full cursor-pointer list-none items-center justify-center rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:border-slate-400 hover:bg-slate-50 sm:w-auto">Actions</summary>
               <div className="absolute right-0 z-20 mt-2 w-52 rounded-xl border border-slate-200 bg-white p-2 shadow-lg">
                 <button type="button" onClick={onDownloadPdf || onViewPdf} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-medium text-slate-700 transition hover:bg-slate-100">
                   <Download className="h-4 w-4" /> Download PDF
