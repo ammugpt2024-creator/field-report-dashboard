@@ -50,8 +50,10 @@ export async function uploadRowAttachments(projectId, reportId, rowId, files) {
     if (error) {
       throw error;
     }
-    const { data } = supabase.storage.from(ATTACHMENT_BUCKET).getPublicUrl(path);
-    uploaded.push({ rowId, name: file.name, url: data.publicUrl, mimeType: file.type || 'application/octet-stream' });
+    const { data: signedData } = await supabase.storage
+      .from(ATTACHMENT_BUCKET)
+      .createSignedUrl(path, 60 * 60 * 24 * 30);
+    uploaded.push({ rowId, name: file.name, path, url: signedData?.signedUrl || '', mimeType: file.type || 'application/octet-stream' });
   }
   return uploaded;
 }
