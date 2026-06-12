@@ -574,9 +574,9 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, assignedProj
                     const isMuted = TIMESHEET_WEEKEND_DAYS.has(dayName) || isFutureTimesheetDay(dayDate);
                     return (
                       <th key={dayName} className="border-l border-slate-200/70 px-0.5 py-2 text-center align-middle">
-                        <div className={`mx-auto w-12 rounded-lg py-1 text-xs font-bold leading-tight ${isToday ? "border border-blue-200 bg-blue-50 text-blue-800" : isMuted ? "text-slate-400" : "text-slate-600"}`}>
+                        <div className={`mx-auto w-12 rounded-lg py-1 text-xs font-bold leading-tight ${isToday ? "border border-blue-200 bg-blue-50 text-blue-800" : isMuted ? "text-slate-400" : "text-slate-800"}`}>
                           {TIMESHEET_DAY_LABELS[dayName]}
-                          <span className={`block text-[11px] font-semibold ${isToday ? "text-blue-600" : "text-slate-400"}`}>{dayDate ? dayDate.getDate() : " "}</span>
+                          <span className={`block text-[11px] font-semibold ${isToday ? "text-blue-600" : isMuted ? "text-slate-400" : "text-slate-500"}`}>{dayDate ? dayDate.getDate() : " "}</span>
                         </div>
                       </th>
                     );
@@ -643,7 +643,7 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, assignedProj
                               title={isFutureDay ? "Hours cannot be logged for future dates" : undefined}
                               onChange={(event) => handleHoursChange(row.id, dayName, event.target.value)}
                               onBlur={() => handleHoursBlur(row.id, dayName)}
-                              className={`mx-auto h-10 w-14 rounded-lg border text-center text-sm font-semibold outline-none transition ${isFutureDay ? "cursor-not-allowed border-dashed border-slate-300 bg-slate-50/60 text-slate-400 placeholder:text-slate-400" : isToday ? "border-blue-300 bg-white text-slate-900 shadow-sm focus:border-blue-700 focus:ring-2 focus:ring-blue-100" : "border-slate-300 bg-white text-slate-900 shadow-sm hover:border-blue-300 focus:border-blue-700 focus:ring-2 focus:ring-blue-100"}`}
+                              className={`mx-auto h-10 w-14 rounded-lg border text-center text-sm font-semibold outline-none transition ${isFutureDay ? "cursor-not-allowed border-dashed border-slate-300 bg-slate-50/60 text-slate-400 placeholder:text-slate-400" : isToday ? "border-blue-300 bg-white text-slate-900 shadow-sm focus:border-blue-700 focus:ring-2 focus:ring-blue-100" : "border-slate-400 bg-white text-slate-900 shadow-sm hover:border-blue-400 focus:border-blue-700 focus:ring-2 focus:ring-blue-100"}`}
                             />
                           ) : (
                             <span className="text-sm font-semibold text-slate-900">{formatHours(row.hours?.[dayName])}</span>
