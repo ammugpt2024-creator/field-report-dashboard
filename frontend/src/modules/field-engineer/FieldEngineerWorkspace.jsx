@@ -105,6 +105,14 @@ function EmptyState({ title, description, actionLabel, onAction }) {
   );
 }
 
+// Count badge tones per workflow status — muted when the bucket is empty.
+const STATUS_TAB_TONES = {
+  draft: "bg-slate-100 text-slate-600",
+  submitted: "bg-blue-50 text-blue-700",
+  returned: "bg-rose-50 text-rose-700",
+  approved: "bg-emerald-50 text-emerald-700"
+};
+
 function StatusTabs({ tabs, activeTab, onChange, counts = {} }) {
   // Segmented control: every tab shares the width on phones — no horizontal
   // scrolling and the active tab is always visible.
@@ -113,17 +121,26 @@ function StatusTabs({ tabs, activeTab, onChange, counts = {} }) {
       {tabs.map((tab) => {
         const active = activeTab === tab.id;
         const count = Number.isFinite(counts[tab.id]) ? counts[tab.id] : null;
+        const badgeTone = active
+          ? "bg-white/20 text-white"
+          : count
+            ? STATUS_TAB_TONES[tab.id] || "bg-slate-100 text-slate-600"
+            : "bg-slate-100 text-slate-400";
         return (
           <button
             key={tab.id}
             type="button"
             onClick={() => onChange(tab.id)}
-            className={`min-h-9 min-w-0 flex-1 whitespace-nowrap rounded-xl px-1 text-[12px] font-bold transition sm:min-h-10 sm:flex-none sm:px-4 sm:text-sm ${
+            className={`inline-flex min-h-9 min-w-0 flex-auto items-center justify-center gap-1 whitespace-nowrap rounded-xl px-1 text-[11px] font-bold transition sm:min-h-10 sm:flex-none sm:gap-1.5 sm:px-4 sm:text-sm ${
               active ? "bg-slate-950 text-white" : "text-slate-600 hover:bg-slate-100 hover:text-slate-950"
             }`}
           >
-            <span className="sm:hidden">{tab.label}{count !== null ? ` ${count}` : ""}</span>
-            <span className="hidden sm:inline">{tab.label}{count !== null ? ` (${count})` : ""}</span>
+            {tab.label}
+            {count !== null && (
+              <span className={`inline-flex min-w-[18px] items-center justify-center rounded-full px-1 py-0.5 text-[10px] font-bold leading-none ${badgeTone}`}>
+                {count}
+              </span>
+            )}
           </button>
         );
       })}
