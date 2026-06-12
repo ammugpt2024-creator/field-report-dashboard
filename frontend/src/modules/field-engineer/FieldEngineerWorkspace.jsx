@@ -1,10 +1,18 @@
 ﻿import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  AlertTriangle,
   Bell,
+  CalendarDays,
   Camera,
   Calculator,
+  ClipboardCheck,
+  ClipboardList,
+  FileText,
+  History,
   KeyRound,
+  Plus,
   Save,
+  Send,
   ShieldCheck
 } from "lucide-react";
 import DailyLogEditor from "../../components/daily-log/DailyLogEditor";
@@ -79,19 +87,7 @@ function inputClass() {
   return "min-h-11 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-900 outline-none focus:border-blue-700 focus:ring-4 focus:ring-blue-100";
 }
 
-function dailyStatusClass(status) {
-  if (status === DAILY_LOG_STATUS.APPROVED) return "border-emerald-200 bg-emerald-50 text-emerald-800";
-  if (status === DAILY_LOG_STATUS.RETURNED) return "border-amber-200 bg-amber-50 text-amber-800";
-  if (status === DAILY_LOG_STATUS.SUBMITTED) return "border-blue-200 bg-blue-50 text-blue-800";
-  return "border-slate-200 bg-slate-100 text-slate-700";
-}
 
-function logStatusAccent(status) {
-  if (status === DAILY_LOG_STATUS.APPROVED) return "border-emerald-200 bg-emerald-50 text-emerald-800";
-  if (status === DAILY_LOG_STATUS.RETURNED) return "border-amber-200 bg-amber-50 text-amber-800";
-  if (status === DAILY_LOG_STATUS.SUBMITTED) return "border-purple-200 bg-purple-50 text-purple-800";
-  return "border-blue-200 bg-blue-50 text-blue-800";
-}
 
 function EmptyState({ title, description, actionLabel, onAction }) {
   return (
@@ -254,17 +250,6 @@ function ActivityEventRow({ event }) {
   );
 }
 
-function StartWorkCard({ title, description, actionLabel, onClick }) {
-  return (
-    <article className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm sm:p-4">
-      <p className="text-sm font-bold text-slate-950">{title}</p>
-      <p className="mt-2 text-sm font-semibold leading-5 text-slate-600">{description}</p>
-      <button type="button" onClick={onClick} className="mt-3 min-h-11 w-full rounded-2xl bg-slate-950 px-4 text-sm font-bold text-white">
-        {actionLabel}
-      </button>
-    </article>
-  );
-}
 
 function ActionTimeCardRow({ card, onOpen }) {
   const isReturned = card.status === TIME_CARD_STATUS.RETURNED;
@@ -295,11 +280,17 @@ function ActionTimeCardRow({ card, onOpen }) {
   );
 }
 
-function KpiStatusCard({ label, count, status, onClick }) {
+
+function TechKpiCard({ label, value, icon: Icon, chipClass, onClick }) {
   return (
-    <button type="button" onClick={onClick} className={`min-h-16 rounded-xl border px-4 py-3 text-left transition hover:brightness-95 ${logStatusAccent(status)}`}>
-      <p className="text-sm font-bold">{label}</p>
-      <p className="mt-1 text-2xl font-bold leading-7">{count}</p>
+    <button type="button" onClick={onClick} className="rounded-3xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-blue-200">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">{label}</p>
+        <span className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl ${chipClass}`}>
+          <Icon className="h-4 w-4" />
+        </span>
+      </div>
+      <p className="mt-3 text-3xl font-bold text-slate-950">{value}</p>
     </button>
   );
 }
@@ -350,66 +341,163 @@ function DashboardOverview({ profile, logCollections, timeCardCollections, onOpe
 
   return (
     <>
-      <section className="rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
-        <h2 className="text-xl font-bold text-slate-950">Welcome, {technicianName}</h2>
-        <p className="mt-1 text-sm font-semibold text-slate-500">Today • {todayText}</p>
-      </section>
-
-      <section className={cardClass()}>
-        {commandCenterTitle("Status Overview")}
-        <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
-          <KpiStatusCard label="Draft" count={logCollections.draftLogs.length} status={DAILY_LOG_STATUS.DRAFT} onClick={() => navigate("/technician/dashboard?view=daily-logs")} />
-          <KpiStatusCard label="Submitted" count={logCollections.submittedLogs.length} status={DAILY_LOG_STATUS.SUBMITTED} onClick={() => navigate("/technician/dashboard?view=submitted-logs")} />
-          <KpiStatusCard label="Returned" count={logCollections.returnedLogs.length} status={DAILY_LOG_STATUS.RETURNED} onClick={() => navigate("/technician/dashboard?view=returned-logs")} />
-          <KpiStatusCard label="Approved" count={logCollections.approvedLogs.length} status={DAILY_LOG_STATUS.APPROVED} onClick={() => navigate("/technician/dashboard?view=approved-logs")} />
+      <section className="overflow-hidden rounded-3xl border border-slate-200 shadow-sm">
+        <div className="bg-gradient-to-r from-slate-950 via-slate-900 to-blue-950 px-5 py-6 sm:px-7">
+          <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+            <div className="min-w-0">
+              <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">Field Operations</p>
+              <h1 className="mt-1 break-words text-2xl font-bold text-white sm:text-3xl">Welcome, {technicianName}</h1>
+              <p className="mt-2 flex items-center gap-2 text-xs font-semibold text-slate-400">
+                <CalendarDays className="h-4 w-4" /> {todayText}
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {actionRequiredItems.length > 0 && (
+                <span className="inline-flex items-center gap-2 rounded-full border border-amber-400/40 bg-amber-400/10 px-3 py-1.5 text-xs font-bold text-amber-300">
+                  <AlertTriangle className="h-3.5 w-3.5" />
+                  {actionRequiredItems.length} {actionRequiredItems.length === 1 ? "item needs" : "items need"} your action
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={onCreateLog}
+                className="inline-flex min-h-11 items-center gap-2 rounded-2xl bg-blue-600 px-4 text-sm font-bold text-white hover:bg-blue-500"
+              >
+                <Plus className="h-4 w-4" /> Start Daily Log
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate("/timesheets")}
+                className="inline-flex min-h-11 items-center gap-2 rounded-2xl border border-slate-700 px-4 text-sm font-bold text-white hover:bg-slate-900"
+              >
+                <CalendarDays className="h-4 w-4" /> My Timesheet
+              </button>
+            </div>
+          </div>
         </div>
       </section>
 
-      <section className={cardClass()}>
-        {commandCenterTitle("Action Required", "Show draft and returned Daily Logs and Timesheets requiring technician action.")}
-        {actionRequiredItems.length > 0 && (
-          <div className="mt-3 hidden rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-xs font-bold uppercase tracking-[0.14em] text-slate-500 md:grid md:grid-cols-[2fr_4fr_2fr_2fr_1fr] md:gap-4">
-            <span>Type</span>
-            <span>Project</span>
-            <span>Summary</span>
-            <span>Last Updated</span>
-            <span className="text-right">Action</span>
-          </div>
-        )}
-        <div className="mt-2 space-y-2">
-          {actionRequiredItems.map(({ type, id, item }) => (
-            type === "log"
-              ? <ActionLogRow key={id} log={item} onOpen={() => onOpenLog(item)} />
-              : <ActionTimeCardRow key={id} card={item} onOpen={() => onOpenTimeCard(item)} />
-          ))}
-          {!actionRequiredItems.length && (
-            <div className="rounded-2xl bg-slate-50 p-4">
-              <p className="text-sm font-bold text-slate-700">You're all caught up.</p>
-              <p className="mt-1 text-sm font-semibold text-slate-500">No Daily Logs or Timesheets require action.</p>
-              <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <StartWorkCard
-                  title="Daily Field Log"
-                  description="Document today's activities, inspections, reports and site observations."
-                  actionLabel="Start Daily Log"
-                  onClick={onCreateLog}
-                />
+      <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
+        <TechKpiCard label="Draft Logs" value={logCollections.draftLogs.length} icon={FileText} chipClass="bg-slate-100 text-slate-600" onClick={() => navigate("/technician/dashboard?view=daily-logs")} />
+        <TechKpiCard label="Submitted Logs" value={logCollections.submittedLogs.length} icon={Send} chipClass="bg-blue-50 text-blue-700" onClick={() => navigate("/technician/dashboard?view=submitted-logs")} />
+        <TechKpiCard label="Returned Logs" value={logCollections.returnedLogs.length} icon={AlertTriangle} chipClass="bg-rose-50 text-rose-700" onClick={() => navigate("/technician/dashboard?view=returned-logs")} />
+        <TechKpiCard label="Approved Logs" value={logCollections.approvedLogs.length} icon={ClipboardCheck} chipClass="bg-emerald-50 text-emerald-700" onClick={() => navigate("/technician/dashboard?view=approved-logs")} />
+        <TechKpiCard label="Timesheets Pending" value={timeCardCollections.submittedTimeCards.length} icon={CalendarDays} chipClass="bg-blue-50 text-blue-700" onClick={() => navigate("/technician/dashboard?view=submitted-time-cards")} />
+        <TechKpiCard label="Timesheets Approved" value={timeCardCollections.approvedTimeCards.length} icon={ClipboardCheck} chipClass="bg-emerald-50 text-emerald-700" onClick={() => navigate("/technician/dashboard?view=approved-time-cards")} />
+      </section>
+
+      <section className="grid grid-cols-1 gap-5 xl:grid-cols-[1fr_340px]">
+        <div className="space-y-5">
+          <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
+            <div className="flex items-center gap-3">
+              <span className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-blue-50 text-blue-700">
+                <ClipboardList className="h-5 w-5" />
+              </span>
+              <div>
+                <h2 className="text-xl font-bold text-slate-950">Action Required</h2>
+                <p className="mt-0.5 text-xs font-semibold text-slate-500">
+                  {actionRequiredItems.length
+                    ? `${actionRequiredItems.length} draft or returned ${actionRequiredItems.length === 1 ? "item" : "items"} waiting on you`
+                    : "Draft and returned Daily Logs and Timesheets appear here"}
+                </p>
               </div>
             </div>
-          )}
-        </div>
-      </section>
+            {actionRequiredItems.length > 0 && (
+              <div className="mt-4 hidden rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-xs font-bold uppercase tracking-[0.14em] text-slate-500 md:grid md:grid-cols-[2fr_4fr_2fr_2fr_1fr] md:gap-4">
+                <span>Type</span>
+                <span>Project</span>
+                <span>Summary</span>
+                <span>Last Updated</span>
+                <span className="text-right">Action</span>
+              </div>
+            )}
+            <div className="mt-2 space-y-2">
+              {actionRequiredItems.map(({ type, id, item }) => (
+                type === "log"
+                  ? <ActionLogRow key={id} log={item} onOpen={() => onOpenLog(item)} />
+                  : <ActionTimeCardRow key={id} card={item} onOpen={() => onOpenTimeCard(item)} />
+              ))}
+              {!actionRequiredItems.length && (
+                <div className="mt-2 flex flex-col gap-3 rounded-2xl border border-dashed border-slate-300 bg-slate-50/60 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-blue-100 bg-blue-50 text-blue-600">
+                      <ClipboardCheck className="h-5 w-5" />
+                    </span>
+                    <div>
+                      <p className="text-sm font-bold text-slate-700">You're all caught up.</p>
+                      <p className="text-xs font-semibold text-slate-500">No Daily Logs or Timesheets require action.</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={onCreateLog}
+                    className="inline-flex min-h-10 shrink-0 items-center gap-2 rounded-xl bg-blue-700 px-4 text-xs font-bold text-white hover:bg-blue-600"
+                  >
+                    <Plus className="h-4 w-4" /> Start Daily Log
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
 
-      <section className={cardClass()}>
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          {commandCenterTitle("Recent Activity")}
-          <button type="button" onClick={() => navigate("/technician/activity-history")} className="min-h-10 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-800">
-            View Full Activity History
-          </button>
+          <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <span className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-blue-50 text-blue-700">
+                  <History className="h-5 w-5" />
+                </span>
+                <div>
+                  <h2 className="text-xl font-bold text-slate-950">Recent Activity</h2>
+                  <p className="mt-0.5 text-xs font-semibold text-slate-500">Latest updates across your logs and timesheets</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => navigate("/technician/activity-history")}
+                className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 hover:bg-slate-50"
+              >
+                View Full History
+              </button>
+            </div>
+            <div className="mt-4 space-y-2">
+              {latestActivity.map((event) => <ActivityEventRow key={event.id} event={event} />)}
+              {!latestActivity.length && (
+                <p className="rounded-2xl border border-dashed border-slate-300 bg-slate-50/60 p-4 text-sm font-semibold text-slate-500">No recent activity yet.</p>
+              )}
+            </div>
+          </div>
         </div>
-        <div className="mt-3 space-y-2">
-          {latestActivity.map((event) => <ActivityEventRow key={event.id} event={event} />)}
-          {!latestActivity.length && <p className="rounded-xl bg-slate-50 p-4 text-sm font-semibold text-slate-500">No recent activity yet.</p>}
-        </div>
+
+        <aside className="h-fit rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex items-center gap-3">
+            <span className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-blue-50 text-blue-700">
+              <Plus className="h-5 w-5" />
+            </span>
+            <div>
+              <h2 className="text-lg font-bold text-slate-950">Quick Actions</h2>
+              <p className="mt-0.5 text-xs font-semibold text-slate-500">Everything you file in one place</p>
+            </div>
+          </div>
+          <div className="mt-4 space-y-2">
+            {[
+              { label: "Start Daily Log", icon: Plus, onClick: onCreateLog },
+              { label: "My Timesheet", icon: CalendarDays, onClick: () => navigate("/timesheets") },
+              { label: "Submitted Logs", icon: Send, onClick: () => navigate("/technician/dashboard?view=submitted-logs") },
+              { label: "Approved Logs", icon: ClipboardCheck, onClick: () => navigate("/technician/dashboard?view=approved-logs") },
+              { label: "Activity History", icon: History, onClick: () => navigate("/technician/activity-history") }
+            ].map(({ label, icon: Icon, onClick }) => (
+              <button
+                key={label}
+                type="button"
+                onClick={onClick}
+                className="flex min-h-12 w-full items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left text-sm font-bold text-slate-800 hover:border-blue-200 hover:bg-blue-50/50"
+              >
+                <Icon className="h-4 w-4 text-blue-700" />
+                {label}
+              </button>
+            ))}
+          </div>
+        </aside>
       </section>
     </>
   );
