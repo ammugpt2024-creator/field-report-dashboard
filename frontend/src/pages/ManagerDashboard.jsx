@@ -18,11 +18,13 @@ import {
   Users
 } from "lucide-react";
 import { supabase } from "../services/supabase";
+import { useAuth } from "../context/AuthContext";
 import { MODULE_NAMES } from "../config/branding";
+import { sendTimesheetDecisionEmail } from "../services/notificationService";
 import { DAILY_LOG_STATUS } from "../services/dailyLogService";
 import { createDailyLogPdfSignedUrl } from "../services/dailyLogPdfService";
 import { WEEK_DAYS, approveTimeCard, formatTimeCardStatus, getRowTotal, rejectTimeCard, TIME_CARD_STATUS } from "../services/timeCardService";
-import { regenerateTimeCardPdf } from "../services/timeCardPdfService";
+import { generateTimeCardPdfBlob, regenerateTimeCardPdf } from "../services/timeCardPdfService";
 import { fetchTimesheetQueue, syncTimesheet } from "../services/timesheetSyncService";
 
 const DAY_LABELS = { Monday: "Mon", Tuesday: "Tue", Wednesday: "Wed", Thursday: "Thu", Friday: "Fri", Saturday: "Sat", Sunday: "Sun" };
@@ -431,6 +433,7 @@ function ManagerDashboard() {
   const navigate = useNavigate();
   // Approval emails deep-link to a specific timesheet via ?timesheet=TS-….
   const highlightedTimesheet = new URLSearchParams(window.location.search).get("timesheet") || "";
+  const { profile } = useAuth();
   const [projects, setProjects] = useState([]);
   const [dailyLogs, setDailyLogs] = useState([]);
   const [timeCards, setTimeCards] = useState([]);
@@ -592,21 +595,41 @@ function ManagerDashboard() {
     setTimeCards(await fetchTimesheetQueue());
   }
 
-  function approveTimesheet(card) {
-    const approved = approveTimeCard(card, "Manager");
-    refreshTimeCards();
+  async function approveTimesheet(card) {
+    const reviewerName = profile?.full_name || "Manager";
+    const approved = approveTimeCard(card, reviewerName);
+    // Wait for the shared record before refetching so the row lands on the
+    // Approved tab instead of briefly reappearing as pending.
+    await syncTimesheet(approved);
+    await refreshTimeCards();
     // Regenerate the stored PDF so it carries the approval date and reviewer,
-    // then sync the PDF storage path back to the shared record.
-    regenerateTimeCardPdf(approved)
-      .then((withPdf) => syncTimesheet(withPdf))
-      .catch((err) => console.warn("Approved timesheet PDF could not be regenerated:", err));
+    // sync the storage path back, then notify the employee with the PDF attached.
+    try {
+      const withPdf = await regenerateTimeCardPdf(approved);
+      await syncTimesheet(withPdf);
+      let pdfBlob = null;
+      try {
+        pdfBlob = generateTimeCardPdfBlob(withPdf);
+      } catch (err) {
+        console.warn("Approved timesheet PDF could not be attached to the email:", err);
+      }
+      await sendTimesheetDecisionEmail(withPdf, { decision: "approved", reviewerName, pdfBlob });
+    } catch (err) {
+      console.warn("Approved timesheet PDF could not be regenerated:", err);
+      sendTimesheetDecisionEmail(approved, { decision: "approved", reviewerName })
+        .catch((emailErr) => console.warn("Timesheet approval email could not be sent:", emailErr));
+    }
   }
 
-  function rejectTimesheet(card) {
+  async function rejectTimesheet(card) {
     const comments = window.prompt("Reject comments are required.");
     if (!comments || !comments.trim()) return;
-    rejectTimeCard(card, comments.trim());
-    refreshTimeCards();
+    const reviewerName = profile?.full_name || "Manager";
+    const rejected = rejectTimeCard(card, comments.trim());
+    await syncTimesheet(rejected);
+    await refreshTimeCards();
+    sendTimesheetDecisionEmail(rejected, { decision: "rejected", reviewerName, comments: comments.trim() })
+      .catch((err) => console.warn("Timesheet rejection email could not be sent:", err));
   }
 
   async function archiveDailyLog(log) {

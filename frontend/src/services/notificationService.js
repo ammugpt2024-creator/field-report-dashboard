@@ -243,6 +243,81 @@ export async function sendTimesheetApprovalEmail(card, { pdfBlob, pdfFileName } 
   return results;
 }
 
+export function buildTimesheetDecisionEmail({ card, decision, reviewerName, comments, viewUrl }) {
+  const timesheetNumber = card.timesheetNumber || card.timesheet_number || `TS-${String(card.id || '').slice(0, 8).toUpperCase()}`;
+  const approved = decision === 'approved';
+  const weekPeriod = `${card.weekStartDate || card.week_start_date || '-'} to ${card.weekEndDate || card.week_end_date || '-'}`;
+  const rows = [
+    ['Timesheet #', timesheetNumber],
+    ['Employee', card.technicianName || card.technician_name || '-'],
+    ['Week Period', weekPeriod],
+    ['Total Hours', card.totalHours || card.total_hours || '0.00'],
+    ['Reviewed By', reviewerName],
+    ['Reviewed On', formatDateTime(card.reviewedAt || card.reviewed_at || new Date())],
+    ['Status', approved ? 'Approved' : 'Rejected']
+  ];
+  if (approved) {
+    rows.push(['Approved PDF', 'Attached to this email']);
+  } else if (comments) {
+    rows.push(['Manager Comments', comments]);
+  }
+  return {
+    subject: approved
+      ? `[APPROVED] Timesheet ${timesheetNumber}`
+      : `[REQUIRES ACTION] Timesheet ${timesheetNumber}`,
+    html: baseEmailShell({
+      title: approved ? 'Weekly Timesheet Approved' : 'Weekly Timesheet Rejected',
+      intro: approved
+        ? `${reviewerName} has approved your weekly timesheet. The approved PDF — including the review date — is attached for your records.`
+        : `${reviewerName} has rejected your weekly timesheet. Please review the comments below, make the corrections, and resubmit it in ${BRAND.name}.`,
+      rows,
+      ctaLabel: 'Open My Timesheets',
+      ctaUrl: viewUrl
+    })
+  };
+}
+
+// The employee who filed the timesheet. Cards created before user ids were
+// stamped fall back to a profile lookup by full name.
+async function resolveTimesheetOwner(card) {
+  const userId = card.userId || card.user_id || card.technicianUserId || card.technician_user_id || '';
+  if (userId) return { recipientUserId: userId, recipientEmail: '' };
+  const name = (card.technicianName || card.technician_name || '').trim();
+  if (!name) return null;
+  const { data } = await supabase
+    .from('profiles')
+    .select('id,email')
+    .eq('full_name', name)
+    .limit(1);
+  const profile = (data || [])[0];
+  if (profile?.email) return { recipientUserId: '', recipientEmail: profile.email };
+  if (profile?.id) return { recipientUserId: profile.id, recipientEmail: '' };
+  return null;
+}
+
+// Notifies the employee that their timesheet was approved or rejected,
+// attaching the approved PDF when available.
+export async function sendTimesheetDecisionEmail(card, { decision = 'approved', reviewerName = 'Manager', comments = '', pdfBlob = null } = {}) {
+  const owner = await resolveTimesheetOwner(card);
+  if (!owner) {
+    console.warn('Timesheet decision email skipped: employee could not be resolved.', card.technicianName || card.technician_name);
+    return null;
+  }
+  const viewUrl = `${window.location.origin}/timesheets`;
+  const { subject, html } = buildTimesheetDecisionEmail({ card, decision, reviewerName, comments, viewUrl });
+  const numberPart = String(card.timesheetNumber || card.timesheet_number || card.id || 'timesheet').replace(/[^a-zA-Z0-9_.-]/g, '_');
+  return queueAndSendNotification({
+    reportId: null,
+    recipientEmail: owner.recipientEmail,
+    recipientUserId: owner.recipientUserId,
+    subject,
+    html,
+    notificationType: decision === 'approved' ? 'timesheet_approved' : 'timesheet_rejected',
+    pdfBlob,
+    pdfFileName: pdfBlob ? `Timesheet-${numberPart}-${decision === 'approved' ? 'Approved' : 'Rejected'}.pdf` : undefined
+  });
+}
+
 export function blobToBase64(blob) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();

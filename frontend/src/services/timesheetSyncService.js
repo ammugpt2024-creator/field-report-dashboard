@@ -34,6 +34,7 @@ function toNullableDate(value) {
 
 function toRow(card) {
   // PDF data URLs are several MB; the durable PDF lives in Supabase storage.
+  // eslint-disable-next-line no-unused-vars
   const { pdfDataUrl, pdf_data_url, ...payload } = card;
   return {
     id: String(card.id),
@@ -79,8 +80,10 @@ export function syncTimesheet(card) {
     });
 }
 
-// Manager review queue — submitted timesheets from every technician/browser.
-export async function fetchTimesheetQueue(statuses = ["submitted", "pending_review"]) {
+// Manager review queue — every reviewed or reviewable timesheet from every
+// technician/browser. Approved and rejected rows stay visible so the manager
+// dashboard's Approved/Rejected tabs have history; only drafts are excluded.
+export async function fetchTimesheetQueue(statuses = ["submitted", "pending_review", "approved", "completed", "rejected", "returned"]) {
   const { data, error } = await supabase
     .from("timesheets")
     .select("*")
