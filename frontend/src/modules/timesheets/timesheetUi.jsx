@@ -4,18 +4,22 @@
 // workspace and the /timesheets route.
 import { useEffect, useRef, useState } from "react";
 import {
+  AlertTriangle,
   CalendarDays,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ClipboardCheck,
   Download,
   FileText,
   Plus,
   RotateCcw,
   Save,
   Send,
+  Trash2,
   X
 } from "lucide-react";
+import StatusTabs from "../../components/mobile/StatusTabs";
 import { generateTimeCardPdfBlob, regenerateTimeCardPdf } from "../../services/timeCardPdfService";
 import {
   WEEK_DAYS,
@@ -93,40 +97,44 @@ function TimeCardListRow({ card, activeTab, onOpen, onDelete, onRecall, onDownlo
       onKeyDown={handleKeyDown}
       className="cursor-pointer rounded-xl border border-slate-200 bg-white px-4 py-3 transition hover:border-slate-300 hover:bg-slate-50/70"
     >
-      {/* Phone: labeled card. Desktop: original columns. */}
-      <div className="lg:hidden">
-        <div className="flex items-center justify-between gap-2">
-          <p className="min-w-0 truncate text-[15px] font-semibold text-slate-900">{getTimesheetNumber(card)}</p>
-          <span className={`inline-flex shrink-0 whitespace-nowrap rounded-full px-2.5 py-0.5 text-[13px] font-semibold ${getTimesheetStatusPillClass(card.status)}`}>
-            {formatTimeCardStatus(card.status)}
-          </span>
+      {/* Phone: one compact row, matching the Daily Logs list. */}
+      <div className="flex items-center gap-3 lg:hidden">
+        <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${
+          activeTab === "returned" ? "bg-rose-50 text-rose-600"
+            : activeTab === "approved" ? "bg-emerald-50 text-emerald-600"
+            : activeTab === "submitted" ? "bg-blue-50 text-blue-600"
+            : "bg-slate-100 text-slate-500"
+        }`}>
+          {activeTab === "returned" ? <AlertTriangle className="h-4 w-4" />
+            : activeTab === "approved" ? <ClipboardCheck className="h-4 w-4" />
+            : activeTab === "submitted" ? <Send className="h-4 w-4" />
+            : <CalendarDays className="h-4 w-4" />}
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-bold text-slate-950">{getTimesheetNumber(card)}</p>
+          <p className="truncate text-xs font-semibold text-slate-500">
+            {[projectSummary || "Assignment", weekPeriod, `${card.totalHours || card.total_hours || "0.00"} hrs`].join(" · ")}
+          </p>
         </div>
-        <p className="mt-1 truncate text-sm font-semibold text-slate-700" title={projectSummary}>{projectSummary || "Assignment"}</p>
-        <p className="mt-0.5 text-[13px] font-medium text-slate-500">{weekPeriod}</p>
-        <p className="mt-1 text-[13px] font-semibold text-slate-700">
-          {card.totalRegularHours || card.total_regular_hours || "0.00"} reg · {card.totalOvertimeHours || card.total_overtime_hours || "0.00"} OT ·{" "}
-          <span className="font-bold text-slate-900">{card.totalHours || card.total_hours || "0.00"} total</span>
-        </p>
-        {statusDate && <p className="mt-0.5 text-[12px] font-medium text-slate-400">{formatDateTime(statusDate)}</p>}
-        <div className="mt-3 flex flex-wrap items-center gap-2" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
-          <button type="button" onClick={onOpen} className="inline-flex h-9 items-center justify-center rounded-lg bg-slate-900 px-4 text-[13px] font-semibold text-white transition hover:bg-slate-800">
-            {primaryLabel}
-          </button>
+        <div className="flex shrink-0 items-center gap-1.5" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
           {activeTab === "draft" && (
-            <button type="button" onClick={onDelete} className="inline-flex h-9 items-center justify-center rounded-lg border border-slate-300 bg-white px-4 text-[13px] font-semibold text-rose-700 transition hover:border-rose-300 hover:bg-rose-50">
-              Delete
+            <button type="button" onClick={onDelete} aria-label="Delete draft" className="flex h-9 w-9 items-center justify-center rounded-lg border border-rose-200 bg-white text-rose-600">
+              <Trash2 className="h-4 w-4" />
             </button>
           )}
           {activeTab === "submitted" && (
-            <button type="button" onClick={onRecall} className="inline-flex h-9 items-center justify-center rounded-lg border border-slate-300 bg-white px-4 text-[13px] font-semibold text-slate-700 transition hover:border-slate-400 hover:bg-slate-50">
+            <button type="button" onClick={onRecall} className="rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs font-bold text-slate-600">
               Recall
             </button>
           )}
           {activeTab === "approved" && (
-            <button type="button" onClick={onDownloadPdf} disabled={!canDownloadPdf} className="inline-flex h-9 items-center justify-center rounded-lg border border-slate-300 bg-white px-4 text-[13px] font-semibold text-slate-700 transition hover:border-slate-400 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50">
-              Download PDF
+            <button type="button" onClick={onDownloadPdf} disabled={!canDownloadPdf} aria-label="Download PDF" className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 disabled:opacity-50">
+              <Download className="h-4 w-4" />
             </button>
           )}
+          <span className="rounded-lg bg-slate-950 px-3 py-2 text-xs font-bold text-white">
+            {primaryLabel === "Edit & Resubmit" ? "Edit" : primaryLabel}
+          </span>
         </div>
       </div>
       <div className="hidden gap-3 lg:grid lg:grid-cols-[140px_minmax(0,1fr)_190px_60px_60px_70px_130px_140px_200px] lg:items-center">
@@ -1145,41 +1153,28 @@ function TimeCardsPage({
   const label = TIME_CARD_TABS.find((tab) => tab.id === activeTab)?.label || "Draft";
 
   return (
-    <section className="w-full rounded-2xl border border-slate-200 bg-white px-6 py-6 sm:px-8">
+    <section className="w-full rounded-2xl border border-slate-200 bg-white p-4 sm:px-8 sm:py-6">
 
       {/* Header */}
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div>
-          <h1 className="text-[28px] font-bold leading-tight tracking-tight text-slate-900">Timesheets</h1>
-          <p className="mt-1 text-[13px] font-medium text-slate-500">Track labor records by status.</p>
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-lg font-bold leading-tight tracking-tight text-slate-900 sm:text-[28px]">Timesheets</h1>
+          <p className="mt-1 hidden text-[13px] font-medium text-slate-500 sm:block">Track labor records by status.</p>
         </div>
         <button
           type="button"
           onClick={onCreateTimeCard}
-          className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl bg-blue-700 px-5 text-sm font-semibold text-white transition hover:bg-blue-600"
+          className="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-xl bg-blue-700 px-3 text-sm font-semibold text-white transition hover:bg-blue-600 sm:h-11 sm:gap-2 sm:px-5"
         >
-          <Plus className="h-4 w-4" /> Open current timesheet
+          <Plus className="h-4 w-4" />
+          <span className="sm:hidden">Open current</span>
+          <span className="hidden sm:inline">Open current timesheet</span>
         </button>
       </div>
 
       {/* Status tabs */}
-      <div className="mt-5 flex flex-wrap gap-1.5 border-b border-slate-200 pb-px">
-        {TIME_CARD_TABS.map((tab) => {
-          const isActive = tab.id === activeTab;
-          return (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => setActiveTab(tab.id)}
-              className={`relative -mb-px inline-flex h-10 items-center gap-2 rounded-t-lg border-b-2 px-4 text-sm font-semibold transition ${isActive ? "border-blue-700 text-slate-900" : "border-transparent text-slate-500 hover:bg-slate-100/70 hover:text-slate-800"}`}
-            >
-              {tab.label}
-              <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${isActive ? "bg-blue-700/10 text-[#a84f30]" : "bg-slate-100 text-slate-500"}`}>
-                {tabCounts[tab.id] || 0}
-              </span>
-            </button>
-          );
-        })}
+      <div className="mt-4 sm:mt-5">
+        <StatusTabs tabs={TIME_CARD_TABS} activeTab={activeTab} onChange={setActiveTab} counts={tabCounts} />
       </div>
 
       {/* Search */}
