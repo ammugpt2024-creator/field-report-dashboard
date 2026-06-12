@@ -88,10 +88,10 @@ table {
   display: none;
 }
 
-/* Inputs render at >=16px on phones so iOS Safari doesn't zoom the page on focus. */
+/* Typed inputs render at >=16px on phones so iOS Safari doesn't zoom on focus.
+   Selects open a native picker instead of the keyboard, so they keep their size. */
 @media (max-width: 639px) {
   input,
-  select,
   textarea {
     font-size: 16px;
   }

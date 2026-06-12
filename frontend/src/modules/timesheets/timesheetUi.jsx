@@ -869,33 +869,33 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, onJumpToDate
       {weeklyLimitWarning && <p className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">{weeklyLimitWarning}</p>}
       {!card.validationError && card.validationWarning && <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-700">{card.validationWarning}</p>}
 
-      {/* ── Action footer ── */}
-      <div className="sticky bottom-0 z-10 -mx-6 mt-6 flex flex-col gap-2 border-t border-slate-200 bg-white/95 px-6 py-3 backdrop-blur sm:static sm:mx-0 sm:flex-row sm:items-center sm:justify-end sm:border-t sm:bg-transparent sm:px-0 sm:pb-0 sm:pt-4 sm:backdrop-blur-0">
-        {lastSaved && (
-          <p className="text-center text-sm font-medium text-slate-400 sm:mr-auto sm:text-left">
-            Last saved {lastSaved.label}
+      {/* ── Action footer: fixed bar on phones (sticky can't escape the layout's
+            overflow containers), inline row from sm up. ── */}
+      <div className="h-20 sm:hidden" aria-hidden="true" />
+      <div className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white/95 px-4 py-2 backdrop-blur sm:static sm:mt-6 sm:flex sm:items-center sm:justify-end sm:gap-2 sm:border-t-0 sm:bg-transparent sm:px-0 sm:py-0 sm:pt-4 sm:backdrop-blur-0">
+        {(submitHint || lastSaved) && (
+          <p className={`truncate text-center text-[11px] font-semibold sm:mr-auto sm:text-left sm:text-sm ${submitHint ? "text-amber-700" : "font-medium text-slate-400"}`}>
+            {submitHint || `Last saved ${lastSaved.label}`}
           </p>
         )}
-        {submitHint && (
-          <p className="self-center text-center text-xs font-semibold text-amber-700 sm:text-right">
-            {submitHint}
-          </p>
-        )}
-        <button
-          type="button"
-          onClick={() => persistCard(card)}
-          className="inline-flex h-12 items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-6 text-sm font-semibold text-slate-800 transition hover:border-slate-400 hover:bg-slate-50"
-        >
-          <Save className="h-4 w-4" /> {isReturned ? "Save" : "Save draft"}
-        </button>
-        <button
-          type="button"
-          onClick={submitCard}
-          disabled={!canSubmit}
-          className="inline-flex h-12 items-center justify-center gap-2 rounded-xl bg-blue-700 px-6 text-sm font-semibold text-white transition hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-blue-700"
-        >
-          <Send className="h-4 w-4" /> {isReturned ? "Resubmit" : "Submit for approval"}
-        </button>
+        <div className="mt-1.5 grid grid-cols-2 gap-2 sm:mt-0 sm:flex">
+          <button
+            type="button"
+            onClick={() => persistCard(card)}
+            className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-800 transition hover:border-slate-400 hover:bg-slate-50 sm:h-12 sm:px-6"
+          >
+            <Save className="h-4 w-4" /> {isReturned ? "Save" : "Save draft"}
+          </button>
+          <button
+            type="button"
+            onClick={submitCard}
+            disabled={!canSubmit}
+            className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-blue-700 px-3 text-sm font-semibold text-white transition hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-blue-700 sm:h-12 sm:px-6"
+          >
+            <Send className="h-4 w-4" /> {isReturned ? "Resubmit" : "Submit"}
+            <span className="hidden sm:inline"> for approval</span>
+          </button>
+        </div>
       </div>
 
     </section>
