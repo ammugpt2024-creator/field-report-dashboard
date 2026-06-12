@@ -71,11 +71,6 @@ function addInfoBox(doc, label, value, x, y, width, height = 42) {
   doc.text(lines.slice(0, 2), x + 10, y + 29);
 }
 
-function getImageFormat(dataUrl) {
-  if (String(dataUrl).includes("image/jpeg") || String(dataUrl).includes("image/jpg")) return "JPEG";
-  return "PNG";
-}
-
 function getStoragePath(card) {
   return [
     safePathSegment(card.companyId || card.organizationId || "company"),
@@ -133,7 +128,6 @@ export function generateTimeCardPdfBlob(card) {
   let y = 34;
   const timesheetNumber = getTimesheetNumber(card);
   const generatedAt = card.pdfGeneratedAt || card.pdf_generated_at || new Date().toISOString();
-  const managerSignature = card.managerSignature || card.manager_signature || "";
   const projectRows = Array.isArray(card.projectRows) ? card.projectRows : [];
   const dailyTotals = card.dailyTotals || {};
   const comments = card.timesheetComments || card.timesheet_comments || card.comments || "";
@@ -266,46 +260,23 @@ export function generateTimeCardPdfBlob(card) {
     y += commentsHeight + 16;
   }
 
-  // The certification/approval block (header + signature boxes + info row) is ~190pt
-  // tall and is drawn at absolute coordinates, so start a new page if it would run off.
-  // The approval section only appears on the post-approval version of the document.
+  // Timesheet approval is an electronic decision, not a wet signature — show
+  // who approved and when. The section only appears on the post-approval
+  // version of the document.
   if (isApproved) {
-    if (y + 190 > doc.internal.pageSize.getHeight() - 24) {
+    const approvalComments = card.reviewComments || card.review_comments || card.managerComment || "";
+    const approvalBlockHeight = String(approvalComments).trim() ? 140 : 86;
+    if (y + approvalBlockHeight > doc.internal.pageSize.getHeight() - 24) {
       doc.addPage();
       y = 34;
     }
     addSectionHeader(doc, "Approval", margin, y, contentWidth);
     y += 32;
-    doc.setDrawColor(226, 232, 240);
-    doc.setFillColor(255, 255, 255);
-    doc.roundedRect(margin, y, contentWidth, 72, 5, 5, "FD");
-    if (managerSignature) {
-      try {
-        doc.addImage(managerSignature, getImageFormat(managerSignature), margin + 12, y + 12, Math.min(contentWidth - 24, 220), 42);
-      } catch {
-        doc.setFont("helvetica", "normal");
-        doc.setFontSize(9);
-        doc.setTextColor(100, 116, 139);
-        doc.text("Manager signature image could not be embedded.", margin + 12, y + 34);
-      }
-    } else {
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(9);
-      doc.setTextColor(100, 116, 139);
-      doc.text(`Approved electronically by ${pdfValue(card.reviewedBy || card.reviewed_by || "Manager")}`, margin + 12, y + 34);
-    }
-    doc.setDrawColor(148, 163, 184);
-    doc.line(margin + 12, y + 58, margin + contentWidth - 12, y + 58);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(8);
-    doc.setTextColor(100, 116, 139);
-    doc.text("MANAGER SIGNATURE", margin + 12, y + 68);
-    y += 86;
-
-    addInfoBox(doc, "Approval Date", formatDateTime(card.reviewedAt || card.reviewed_at || card.approvedAt || card.approved_at), margin, y, columnWidth);
-    const approvalComments = card.reviewComments || card.review_comments || card.managerComment || "";
+    addInfoBox(doc, "Approved By", card.reviewedBy || card.reviewed_by || "Manager", margin, y, columnWidth);
+    addInfoBox(doc, "Approval Date", formatDateTime(card.reviewedAt || card.reviewed_at || card.approvedAt || card.approved_at), margin + columnWidth + columnGap, y, columnWidth);
     if (String(approvalComments).trim()) {
-      addInfoBox(doc, "Review Comments", approvalComments, margin + columnWidth + columnGap, y, columnWidth);
+      y += 54;
+      addInfoBox(doc, "Review Comments", approvalComments, margin, y, contentWidth);
     }
   }
 
