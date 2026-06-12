@@ -7,6 +7,18 @@ const DEFAULT_QC_REVIEWER_EMAIL = 'notifications@qcoreapp.com';
 // the explicit recipient is honored with the QC reviewer address as fallback.
 const FORCE_RESEND_TEST_RECIPIENT = false;
 
+// "Jun 01 – Jun 07, 2026" — compact enough for a phone-width email column.
+function formatWeekRangeForEmail(start, end) {
+  const parse = (v) => (v ? new Date(`${v}T00:00:00`) : null);
+  const s = parse(start);
+  const e = parse(end);
+  if (!s || !e || Number.isNaN(s.getTime()) || Number.isNaN(e.getTime())) {
+    return [start, end].filter(Boolean).join(' to ') || '-';
+  }
+  const fmt = (d) => d.toLocaleDateString('en-US', { month: 'short', day: '2-digit' });
+  return `${fmt(s)} – ${fmt(e)}, ${e.getFullYear()}`;
+}
+
 function formatDateTime(value = new Date()) {
   return new Intl.DateTimeFormat(undefined, {
     year: 'numeric',
@@ -21,8 +33,8 @@ function baseEmailShell({ title, intro, rows, ctaLabel, ctaUrl, footer = BRAND.n
   const rowHtml = rows
     .map(([label, value]) => `
       <tr>
-        <td style="padding:8px 12px;color:#64748b;font-weight:700;width:170px;">${label}</td>
-        <td style="padding:8px 12px;color:#0f172a;font-weight:600;">${value || '-'}</td>
+        <td style="padding:8px 10px;color:#64748b;font-weight:700;font-size:13px;width:38%;vertical-align:top;">${label}</td>
+        <td style="padding:8px 10px;color:#0f172a;font-weight:600;font-size:14px;">${value || '-'}</td>
       </tr>
     `)
     .join('');
@@ -97,7 +109,7 @@ export function buildTimesheetApprovalEmail({ card, reviewUrl, managerRows = nul
     .map((row) => {
       const name = row.projectName || row.project_name;
       if (!name) return null;
-      return `${name} — ${sumRowHours(row).toFixed(2)} hrs`;
+      return `${name}<br/><span style="color:#475569;">${sumRowHours(row).toFixed(2)} hrs</span>`;
     })
     .filter(Boolean)
     .join('<br/>');
@@ -112,15 +124,15 @@ export function buildTimesheetApprovalEmail({ card, reviewUrl, managerRows = nul
         ? `A weekly timesheet with hours on your project has been submitted and is awaiting your approval in ${BRAND.name}. Hours for your project are listed below; other projects on this timesheet are routed to their own managers.`
         : `A weekly timesheet has been submitted and is awaiting your approval in ${BRAND.name}.`,
       rows: [
-        ['Timesheet #', timesheetNumber],
+        ['Timesheet', timesheetNumber],
         ['Employee', card.technicianName || card.technician_name],
-        ['Week', `${card.weekStartDate || card.week_start_date || card.date || '-'} to ${card.weekEndDate || card.week_end_date || '-'}`],
-        ['Your Project Hours', projects || '-'],
-        ...(isScoped ? [['Hours For Your Approval', `${scopedTotal}`]] : []),
-        ['Regular Hours (week)', card.totalRegularHours || card.total_regular_hours || '0.00'],
-        ['Overtime Hours (week)', card.totalOvertimeHours || card.total_overtime_hours || '0.00'],
-        ['Total Hours (week)', weekTotal],
-        ['Submitted On', formatDateTime(card.submittedAt || card.submitted_at || new Date())]
+        ['Week', formatWeekRangeForEmail(card.weekStartDate || card.week_start_date || card.date, card.weekEndDate || card.week_end_date)],
+        ['Project Hours', projects || '-'],
+        ...(isScoped ? [['To Approve', `${scopedTotal} hrs`]] : []),
+        ['Regular', `${card.totalRegularHours || card.total_regular_hours || '0.00'} hrs`],
+        ['Overtime', `${card.totalOvertimeHours || card.total_overtime_hours || '0.00'} hrs`],
+        ['Week Total', `${weekTotal} hrs`],
+        ['Submitted', formatDateTime(card.submittedAt || card.submitted_at || new Date())]
       ],
       ctaLabel: 'Review Timesheet',
       ctaUrl: reviewUrl
@@ -254,12 +266,12 @@ export async function sendTimesheetApprovalEmail(card, { pdfBlob, pdfFileName } 
 export function buildTimesheetDecisionEmail({ card, decision, reviewerName, comments, viewUrl }) {
   const timesheetNumber = card.timesheetNumber || card.timesheet_number || `TS-${String(card.id || '').slice(0, 8).toUpperCase()}`;
   const approved = decision === 'approved';
-  const weekPeriod = `${card.weekStartDate || card.week_start_date || '-'} to ${card.weekEndDate || card.week_end_date || '-'}`;
+  const weekPeriod = formatWeekRangeForEmail(card.weekStartDate || card.week_start_date, card.weekEndDate || card.week_end_date);
   const rows = [
-    ['Timesheet #', timesheetNumber],
+    ['Timesheet', timesheetNumber],
     ['Employee', card.technicianName || card.technician_name || '-'],
-    ['Week Period', weekPeriod],
-    ['Total Hours', card.totalHours || card.total_hours || '0.00'],
+    ['Week', weekPeriod],
+    ['Total Hours', `${card.totalHours || card.total_hours || '0.00'} hrs`],
     ['Reviewed By', reviewerName],
     ['Reviewed On', formatDateTime(card.reviewedAt || card.reviewed_at || new Date())],
     ['Status', approved ? 'Approved' : 'Rejected']
