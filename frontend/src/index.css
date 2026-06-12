@@ -80,6 +80,14 @@ table {
   max-width: 100%;
 }
 
+/* Horizontal scroll strips (tab bars) scroll without showing a scrollbar. */
+.scrollbar-hidden {
+  scrollbar-width: none;
+}
+.scrollbar-hidden::-webkit-scrollbar {
+  display: none;
+}
+
 /* Inputs render at >=16px on phones so iOS Safari doesn't zoom the page on focus. */
 @media (max-width: 639px) {
   input,

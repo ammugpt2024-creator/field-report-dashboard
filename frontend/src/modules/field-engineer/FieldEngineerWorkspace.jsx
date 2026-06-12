@@ -6,12 +6,14 @@ import {
   Camera,
   Calculator,
   ClipboardCheck,
+  Download,
   FileText,
   KeyRound,
   Minus,
   Plus,
   Save,
   Send,
+  Trash2,
   ShieldCheck
 } from "lucide-react";
 import DailyLogEditor from "../../components/daily-log/DailyLogEditor";
@@ -118,7 +120,7 @@ function StatusTabs({ tabs, activeTab, onChange, counts = {} }) {
     return () => cancelAnimationFrame(frame);
   }, [activeTab]);
   return (
-    <div className="flex gap-2 overflow-x-auto rounded-2xl border border-slate-200 bg-white p-1">
+    <div className="scrollbar-hidden flex gap-2 overflow-x-auto rounded-2xl border border-slate-200 bg-white p-1">
       {tabs.map((tab) => {
         const active = activeTab === tab.id;
         return (
@@ -179,7 +181,45 @@ function DailyLogListRow({ log, activeTab, onOpen, onDelete, onRecall, onDownloa
       onKeyDown={handleKeyDown}
       className="cursor-pointer rounded-xl border border-slate-200 bg-white px-3 py-2.5 transition hover:border-slate-300 hover:bg-slate-50/60 sm:px-4 sm:py-3"
     >
-      <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between lg:gap-3">
+      {/* Phone: one compact row, like the Command Center action list. */}
+      <div className="flex items-center gap-3 md:hidden">
+        <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${
+          activeTab === "returned" ? "bg-rose-50 text-rose-600"
+            : activeTab === "approved" ? "bg-emerald-50 text-emerald-600"
+            : activeTab === "submitted" ? "bg-blue-50 text-blue-600"
+            : "bg-slate-100 text-slate-500"
+        }`}>
+          {activeTab === "returned" ? <AlertTriangle className="h-4 w-4" />
+            : activeTab === "approved" ? <ClipboardCheck className="h-4 w-4" />
+            : activeTab === "submitted" ? <Send className="h-4 w-4" />
+            : <FileText className="h-4 w-4" />}
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-bold text-slate-950">{log.projectName}</p>
+          <p className="truncate text-xs font-semibold text-slate-500">
+            {displayDate} · {log.activities.length} act · {reportCount} rpt · {statusDateLabel} {statusDate ? formatDateTime(statusDate) : "-"}
+          </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-1.5" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
+          {activeTab === "approved" && (
+            <button type="button" onClick={onDownloadPdf} aria-label="Download PDF" className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600">
+              <Download className="h-4 w-4" />
+            </button>
+          )}
+          {activeTab === "draft" && (
+            <button type="button" onClick={onDelete} aria-label="Delete draft" className="flex h-9 w-9 items-center justify-center rounded-lg border border-rose-200 bg-white text-rose-600">
+              <Trash2 className="h-4 w-4" />
+            </button>
+          )}
+          {activeTab === "submitted" && (
+            <button type="button" onClick={onRecall} className="rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs font-bold text-slate-600">
+              Recall
+            </button>
+          )}
+          <span className="rounded-lg bg-slate-950 px-3 py-2 text-xs font-bold text-white">{primaryLabel === "Edit & Resubmit" ? "Edit" : primaryLabel}</span>
+        </div>
+      </div>
+      <div className="hidden flex-col gap-2 md:flex lg:flex-row lg:items-center lg:justify-between lg:gap-3">
         <div className="min-w-0 lg:max-w-[38%]">
           <p className="truncate text-sm font-bold leading-5 text-slate-950">{log.projectName}</p>
           {projectNumber && <p className="mt-0.5 truncate text-xs font-semibold leading-4 text-slate-500">Project #{projectNumber}</p>}
