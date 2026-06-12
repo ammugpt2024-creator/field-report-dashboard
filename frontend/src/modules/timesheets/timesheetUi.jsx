@@ -462,27 +462,18 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, onJumpToDate
 
   function handleProjectChange(rowId, projectId) {
     const project = assignedProjects.find((item) => String(item.id) === String(projectId)) || {};
-    const row = (card.projectRows || []).find((item) => item.id === rowId);
-    const previousProjectId = String(row?.projectId || row?.project_id || "");
-    let next = setRowProject(card, rowId, {
+    persistCard(setRowProject(card, rowId, {
       projectId: project.id ?? projectId,
       projectName: project.name ?? "",
       projectNumber: project.number ?? String(project.id ?? projectId ?? ""),
       overtimeExempt: Boolean(project.overtimeExempt)
-    });
-    // Switching an already-filled row to a different project: ask whether the
-    // entered hours move with it or the new project starts blank.
-    if (previousProjectId && String(projectId) && previousProjectId !== String(projectId) && getRowTotal(row) > 0) {
-      const keepHours = window.confirm(
-        `Keep the entered hours (${formatHours(getRowTotal(row))}) for ${project.name || "the selected project"}?\n\nPress Cancel to start it with empty hours.`
-      );
-      if (!keepHours) {
-        WEEK_DAYS.forEach((day) => {
-          next = setRowHours(next, rowId, day, "");
-        });
-      }
-    }
-    persistCard(next);
+    }));
+  }
+
+  // A row with logged hours keeps its project — clear the hours to change it,
+  // or use Add another project for a second assignment.
+  function isRowProjectLocked(row) {
+    return getRowTotal(row) > 0;
   }
 
   // Dropdown options per row; include the row's existing project so legacy rows still render.
@@ -700,8 +691,9 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, onJumpToDate
                               <select
                                 value={String(row.projectId || row.project_id || "")}
                                 onChange={(event) => handleProjectChange(row.id, event.target.value)}
-                                title={row.projectName || row.project_name || "Select project"}
-                                className="h-11 w-full appearance-none overflow-hidden text-ellipsis whitespace-nowrap rounded-xl border border-slate-300 bg-white pl-3 pr-8 text-[15px] font-semibold text-slate-900 outline-none transition hover:border-slate-400 focus:border-blue-700 focus:ring-2 focus:ring-blue-100"
+                                disabled={isRowProjectLocked(row)}
+                                title={isRowProjectLocked(row) ? "Hours are logged against this project. Clear the hours to change it, or use Add project." : (row.projectName || row.project_name || "Select project")}
+                                className="h-11 w-full appearance-none overflow-hidden text-ellipsis whitespace-nowrap rounded-xl border border-slate-300 bg-white pl-3 pr-8 text-[15px] font-semibold text-slate-900 outline-none transition hover:border-slate-400 focus:border-blue-700 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-50 disabled:text-slate-600"
                               >
                                 <option value="">Select project…</option>
                                 {projectOptionsFor(row).map((option) => (
@@ -787,8 +779,9 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, onJumpToDate
                       <select
                         value={String(row.projectId || row.project_id || "")}
                         onChange={(event) => handleProjectChange(row.id, event.target.value)}
-                        title={row.projectName || row.project_name || "Select project"}
-                        className="h-10 w-full appearance-none overflow-hidden text-ellipsis whitespace-nowrap rounded-lg border border-slate-300 bg-white pl-2.5 pr-8 text-sm font-semibold text-slate-900 outline-none transition focus:border-blue-700 focus:ring-2 focus:ring-blue-100"
+                        disabled={isRowProjectLocked(row)}
+                        title={isRowProjectLocked(row) ? "Hours are logged against this project. Clear the hours to change it, or use Add another project." : (row.projectName || row.project_name || "Select project")}
+                        className="h-10 w-full appearance-none overflow-hidden text-ellipsis whitespace-nowrap rounded-lg border border-slate-300 bg-white pl-2.5 pr-8 text-sm font-semibold text-slate-900 outline-none transition focus:border-blue-700 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-50 disabled:text-slate-600"
                       >
                         <option value="">Select project…</option>
                         {projectOptionsFor(row).map((option) => (
