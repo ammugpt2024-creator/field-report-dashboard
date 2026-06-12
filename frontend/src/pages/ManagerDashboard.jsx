@@ -26,6 +26,7 @@ import { createDailyLogPdfSignedUrl } from "../services/dailyLogPdfService";
 import { WEEK_DAYS, approveTimeCard, formatTimeCardStatus, getRowTotal, rejectTimeCard, TIME_CARD_STATUS } from "../services/timeCardService";
 import { generateTimeCardPdfBlob, regenerateTimeCardPdf } from "../services/timeCardPdfService";
 import { fetchTimesheetQueue, syncTimesheet } from "../services/timesheetSyncService";
+import MobileRecordCard from "../components/mobile/MobileRecordCard";
 
 const DAY_LABELS = { Monday: "Mon", Tuesday: "Tue", Wednesday: "Wed", Thursday: "Thu", Friday: "Fri", Saturday: "Sat", Sunday: "Sun" };
 const fmtHours = (value) => (Number(value) || 0).toFixed(2);
@@ -250,7 +251,76 @@ function TimesheetReviewTable({ timesheets, onApprove, onReject, highlightedTime
   // timesheet (from an approval email) starts expanded.
   const [expandedId, setExpandedId] = useState(highlightedTimesheet || null);
   return (
-    <div className="mt-5 overflow-x-auto rounded-2xl border border-slate-200">
+    <>
+    <div className="mt-4 space-y-2 md:hidden">
+      {timesheets.map((card) => {
+        const timesheetNumber = card.timesheetNumber || card.timesheet_number || "";
+        const isHighlighted = Boolean(highlightedTimesheet) && (timesheetNumber === highlightedTimesheet || String(card.id) === highlightedTimesheet);
+        const isExpanded = expandedId === String(card.id) || expandedId === timesheetNumber;
+        const bucket = timesheetStatusBucket(card.status);
+        const pill = timesheetStatusPill(bucket);
+        return (
+          <article key={card.id} className={`rounded-2xl border p-3 ${isHighlighted ? "border-amber-300 bg-amber-50" : "border-slate-200 bg-white"}`}>
+            <div className="flex items-center justify-between gap-2">
+              <p className="min-w-0 truncate text-sm font-bold text-slate-950">{timesheetNumber}</p>
+              <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-bold ${pill.className}`}>{pill.label}</span>
+            </div>
+            <dl className="mt-2">
+              {[
+                ["Employee", card.technicianName || card.technician_name],
+                ["Project", (card.projectRows || []).map((row) => row.projectName || row.project_name).filter(Boolean).join(", ") || card.projectName || "-"],
+                ["Week", `${card.weekStartDate || card.week_start_date} - ${card.weekEndDate || card.week_end_date}`],
+                ["Regular / OT", `${card.totalRegularHours || card.total_regular_hours || "0.00"} / ${card.totalOvertimeHours || card.total_overtime_hours || "0.00"}`],
+                ["Total Hours", card.totalHours || card.total_hours || "0.00"]
+              ].map(([label, value]) => (
+                <div key={label} className="flex min-w-0 items-baseline justify-between gap-3 border-b border-slate-100 py-1.5 last:border-b-0">
+                  <dt className="shrink-0 text-[12px] font-semibold text-slate-500">{label}</dt>
+                  <dd className="min-w-0 break-words text-right text-[13px] font-bold text-slate-900">{value || "-"}</dd>
+                </div>
+              ))}
+            </dl>
+            {isExpanded && (
+              <div className="mt-2 space-y-2">
+                {(card.projectRows || []).map((row) => (
+                  <div key={row.id} className="rounded-xl border border-slate-200 bg-slate-50 p-2">
+                    <p className="truncate text-[13px] font-bold text-slate-900">{row.projectName || row.project_name || "-"}</p>
+                    <div className="mt-1.5 grid grid-cols-4 gap-1">
+                      {WEEK_DAYS.map((day) => (
+                        <div key={day} className="rounded-lg bg-white px-1 py-1 text-center">
+                          <p className="text-[10px] font-bold text-slate-400">{DAY_LABELS[day]}</p>
+                          <p className="text-[12px] font-bold text-slate-900">{fmtHours(row.hours?.[day])}</p>
+                        </div>
+                      ))}
+                      <div className="rounded-lg bg-slate-950 px-1 py-1 text-center">
+                        <p className="text-[10px] font-bold text-slate-400">Total</p>
+                        <p className="text-[12px] font-bold text-white">{fmtHours(getRowTotal(row))}</p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setExpandedId(isExpanded ? null : String(card.id))}
+                className="inline-flex min-h-11 flex-1 items-center justify-center gap-1 rounded-xl border border-slate-300 bg-white px-3 text-xs font-bold text-slate-700"
+              >
+                <ChevronDown className={`h-3.5 w-3.5 transition-transform ${isExpanded ? "rotate-180" : ""}`} />
+                {isExpanded ? "Hide Hours" : "View Hours"}
+              </button>
+              {bucket === "pending" && (
+                <>
+                  <button type="button" onClick={() => onApprove(card)} className="min-h-11 flex-1 rounded-xl bg-emerald-700 px-3 text-xs font-bold text-white">Approve</button>
+                  <button type="button" onClick={() => onReject(card)} className="min-h-11 flex-1 rounded-xl border border-rose-200 bg-white px-3 text-xs font-bold text-rose-700">Reject</button>
+                </>
+              )}
+            </div>
+          </article>
+        );
+      })}
+    </div>
+    <div className="mt-5 hidden overflow-x-auto rounded-2xl border border-slate-200 md:block">
       <table className="min-w-[980px] w-full border-collapse text-left text-sm">
         <thead className="bg-slate-950 text-xs font-bold uppercase tracking-[0.08em] text-white">
           <tr>
@@ -356,6 +426,7 @@ function TimesheetReviewTable({ timesheets, onApprove, onReject, highlightedTime
         </tbody>
       </table>
     </div>
+    </>
   );
 }
 
@@ -788,7 +859,49 @@ function ManagerDashboard() {
               )}
 
               {filteredLogs.length > 0 && (
-                <div className="mt-4 overflow-x-auto rounded-2xl border border-slate-200">
+                <div className="mt-4 space-y-2 md:hidden">
+                  {pagedLogs.map((log) => (
+                    <MobileRecordCard
+                      key={log.rowId}
+                      title={log.number}
+                      status={(
+                        <span className={`inline-flex shrink-0 items-center whitespace-nowrap rounded-full border px-2 py-0.5 text-[11px] font-bold ${logStatusPill(log.bucket).className}`}>
+                          {logStatusPill(log.bucket).label}
+                        </span>
+                      )}
+                      fields={[
+                        ["Project", log.projectName],
+                        ["Technician", log.technician],
+                        ["Date", `${log.logDate}${log.shift ? ` • ${log.shift}` : ""}`],
+                        ["Contents", `${log.activityCount} ${log.activityCount === 1 ? "activity" : "activities"} • ${log.reportCount} ${log.reportCount === 1 ? "report" : "reports"}`],
+                        ["Submitted", agingLabel(log.agingHours)]
+                      ]}
+                      actions={(
+                        <>
+                          {log.bucket === "pending" && (
+                            <button type="button" onClick={() => archiveDailyLog(log)} className="inline-flex min-h-11 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-500">
+                              <Archive className="h-3.5 w-3.5" /> Archive
+                            </button>
+                          )}
+                          {log.bucket === "archived" && (
+                            <button type="button" onClick={() => restoreDailyLog(log)} className="inline-flex min-h-11 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-500">
+                              <Archive className="h-3.5 w-3.5" /> Restore
+                            </button>
+                          )}
+                          <button type="button" onClick={() => openDailyLogPdf(log)} className="inline-flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-800">
+                            <Eye className="h-3.5 w-3.5" /> View PDF
+                          </button>
+                          <button type="button" onClick={() => navigate(`/manager/daily-log-review/${log.clientLogId || log.rowId}`)} className="inline-flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-xl bg-blue-700 px-3 text-xs font-bold text-white">
+                            <ClipboardCheck className="h-3.5 w-3.5" /> {log.bucket === "pending" ? "Review" : "Open"}
+                          </button>
+                        </>
+                      )}
+                    />
+                  ))}
+                </div>
+              )}
+              {filteredLogs.length > 0 && (
+                <div className="mt-4 hidden overflow-x-auto rounded-2xl border border-slate-200 md:block">
                   <table className="min-w-[1080px] w-full border-collapse text-left text-sm">
                     <thead className="bg-slate-950 text-xs font-bold uppercase tracking-[0.08em] text-white">
                       <tr>
