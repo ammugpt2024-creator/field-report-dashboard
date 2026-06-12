@@ -106,34 +106,24 @@ function EmptyState({ title, description, actionLabel, onAction }) {
 }
 
 function StatusTabs({ tabs, activeTab, onChange, counts = {} }) {
-  const activeTabRef = useRef(null);
-  // Keep the selected tab visible when the strip scrolls horizontally on phones.
-  // Direct scrollLeft math after layout — scrollIntoView can race the first
-  // paint and also vertically scrolls ancestor containers.
-  useEffect(() => {
-    const button = activeTabRef.current;
-    const strip = button?.parentElement;
-    if (!button || !strip) return;
-    const frame = requestAnimationFrame(() => {
-      strip.scrollLeft = Math.max(0, button.offsetLeft - (strip.clientWidth - button.clientWidth) / 2);
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [activeTab]);
+  // Segmented control: every tab shares the width on phones — no horizontal
+  // scrolling and the active tab is always visible.
   return (
-    <div className="scrollbar-hidden flex gap-2 overflow-x-auto rounded-2xl border border-slate-200 bg-white p-1">
+    <div className="flex gap-1 rounded-2xl border border-slate-200 bg-white p-1 sm:gap-2">
       {tabs.map((tab) => {
         const active = activeTab === tab.id;
+        const count = Number.isFinite(counts[tab.id]) ? counts[tab.id] : null;
         return (
           <button
             key={tab.id}
-            ref={active ? activeTabRef : null}
             type="button"
             onClick={() => onChange(tab.id)}
-            className={`min-h-9 shrink-0 rounded-xl px-3 text-[13px] font-bold transition sm:min-h-10 sm:px-4 sm:text-sm ${
+            className={`min-h-9 min-w-0 flex-1 whitespace-nowrap rounded-xl px-1 text-[12px] font-bold transition sm:min-h-10 sm:flex-none sm:px-4 sm:text-sm ${
               active ? "bg-slate-950 text-white" : "text-slate-600 hover:bg-slate-100 hover:text-slate-950"
             }`}
           >
-            {tab.label}{Number.isFinite(counts[tab.id]) ? ` (${counts[tab.id]})` : ""}
+            <span className="sm:hidden">{tab.label}{count !== null ? ` ${count}` : ""}</span>
+            <span className="hidden sm:inline">{tab.label}{count !== null ? ` (${count})` : ""}</span>
           </button>
         );
       })}
