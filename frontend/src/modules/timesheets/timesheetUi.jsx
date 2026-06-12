@@ -503,6 +503,8 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, onJumpToDate
     return stored === 0 ? "" : String(stored);
   }
 
+  const [commentsOpen, setCommentsOpen] = useState(false);
+
   function updateComments(value) {
     persistCard({
       ...card,
@@ -585,12 +587,15 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, onJumpToDate
             </div>
           )}
         </div>
-        <dl className="mt-3 border-b border-slate-200 pb-4 sm:mt-4 sm:flex sm:flex-wrap sm:gap-x-10 sm:gap-y-2 sm:pb-5">
-          <div className="flex items-baseline justify-between gap-3 border-b border-slate-100 py-1.5 sm:block sm:border-b-0 sm:py-0">
+        <dl className="mt-2 border-b border-slate-200 pb-3 sm:mt-4 sm:flex sm:flex-wrap sm:gap-x-10 sm:gap-y-2 sm:pb-5">
+          <div className="flex items-baseline justify-between gap-3 py-1 sm:block sm:py-0">
             <dt className="text-[13px] font-medium text-slate-500">Employee</dt>
-            <dd className="text-[15px] font-semibold text-slate-900 sm:mt-0.5">{card.technicianName || card.technician_name || "-"}</dd>
+            <dd className="min-w-0 truncate text-[15px] font-semibold text-slate-900 sm:mt-0.5">
+              {card.technicianName || card.technician_name || "-"}
+              <span className="font-medium text-slate-500 sm:hidden"> · {card.technicianRole || card.technician_role || "Field Engineer"}</span>
+            </dd>
           </div>
-          <div className="flex items-baseline justify-between gap-3 py-1.5 sm:block sm:py-0">
+          <div className="hidden sm:block">
             <dt className="text-[13px] font-medium text-slate-500">Role</dt>
             <dd className="text-[15px] font-semibold text-slate-900 sm:mt-0.5">{card.technicianRole || card.technician_role || "Field Engineer"}</dd>
           </div>
@@ -613,13 +618,13 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, onJumpToDate
       )}
 
       {/* ── Hours by project ── */}
-      <div className="mt-6 flex items-center justify-between">
-        <h2 className="text-xl font-bold tracking-tight text-slate-900">Hours by project</h2>
+      <div className="mt-3 flex items-center justify-between sm:mt-6">
+        <h2 className="text-base font-bold tracking-tight text-slate-900 sm:text-xl">Hours by project</h2>
         {canEditHours && (
           <button
             type="button"
             onClick={handleAddProject}
-            className="inline-flex min-h-10 items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-800 transition hover:border-slate-400 hover:bg-slate-50"
+            className="inline-flex min-h-9 items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 text-[13px] font-semibold text-slate-800 transition hover:border-slate-400 hover:bg-slate-50 sm:min-h-10 sm:gap-1.5 sm:rounded-xl sm:px-4 sm:text-sm"
           >
             <Plus className="h-4 w-4" /> Add project
           </button>
@@ -754,7 +759,7 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, onJumpToDate
 
           {/* Mobile: project pickers, then stacked day cards */}
           {canEditHours && (
-            <div className="mt-4 space-y-2 lg:hidden">
+            <div className="mt-2.5 space-y-2 lg:hidden">
               {projectRows.map((row) => (
                 <div key={row.id} className="flex items-center gap-1.5">
                   <div className="relative min-w-0 flex-1">
@@ -762,7 +767,7 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, onJumpToDate
                       value={String(row.projectId || row.project_id || "")}
                       onChange={(event) => handleProjectChange(row.id, event.target.value)}
                       title={row.projectName || row.project_name || "Select project"}
-                      className="h-11 w-full appearance-none overflow-hidden text-ellipsis whitespace-nowrap rounded-xl border border-slate-300 bg-white pl-3 pr-8 text-[15px] font-semibold text-slate-900 outline-none transition focus:border-blue-700 focus:ring-2 focus:ring-blue-100"
+                      className="h-10 w-full appearance-none overflow-hidden text-ellipsis whitespace-nowrap rounded-xl border border-slate-300 bg-white pl-3 pr-8 text-sm font-semibold text-slate-900 outline-none transition focus:border-blue-700 focus:ring-2 focus:ring-blue-100"
                     >
                       <option value="">Select project…</option>
                       {projectOptionsFor(row).map((option) => (
@@ -778,7 +783,7 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, onJumpToDate
               ))}
             </div>
           )}
-          <div className="mt-3 space-y-2 lg:hidden">
+          <div className="mt-2.5 divide-y divide-slate-100 overflow-hidden rounded-2xl border border-slate-200 bg-white lg:hidden">
             {TIMESHEET_DAY_COLUMNS.map((dayName, dayIndex) => {
               const dayDate = dayDates[dayIndex];
               const isFutureDay = isFutureTimesheetDay(dayDate);
@@ -788,11 +793,11 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, onJumpToDate
                 ? `${TIMESHEET_DAY_LABELS[dayName]}, ${dayDate.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`
                 : dayName;
               const hourInput = (row) => (
-                <input type="text" inputMode="decimal" value={isFutureDay ? "" : hourCellValue(row, dayName)} placeholder={isFutureDay ? "–" : ""} disabled={!canEditHours || isFutureDay} onChange={(event) => handleHoursChange(row.id, dayName, event.target.value)} onBlur={() => handleHoursBlur(row.id, dayName)} className="h-10 w-20 rounded-xl border border-slate-300 px-2 text-center text-[15px] font-semibold text-slate-900 outline-none transition focus:border-blue-700 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:border-dashed disabled:bg-slate-50 disabled:text-slate-400" />
+                <input type="text" inputMode="decimal" value={isFutureDay ? "" : hourCellValue(row, dayName)} placeholder={isFutureDay ? "–" : ""} disabled={!canEditHours || isFutureDay} onChange={(event) => handleHoursChange(row.id, dayName, event.target.value)} onBlur={() => handleHoursBlur(row.id, dayName)} className="h-9 w-16 rounded-lg border border-slate-300 px-2 text-center text-[15px] font-semibold text-slate-900 outline-none transition focus:border-blue-700 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:border-dashed disabled:bg-slate-50 disabled:text-slate-400" />
               );
               return (
-                <div key={dayName} className={`rounded-2xl border ${isToday ? "border-blue-200 bg-blue-50/60" : "border-slate-200 bg-white"}`}>
-                  <div className="flex min-h-12 items-center justify-between gap-3 px-3 py-1.5">
+                <div key={dayName} className={isToday ? "bg-blue-50/60" : ""}>
+                  <div className="flex min-h-11 items-center justify-between gap-3 px-3 py-1">
                     <span className={`text-sm font-semibold ${isFutureDay ? "text-slate-400" : isToday ? "text-blue-900" : "text-slate-900"}`}>
                       {dayLabel}
                       {isToday && <span className="ml-1.5 rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] font-bold uppercase text-blue-700">Today</span>}
@@ -819,7 +824,7 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, onJumpToDate
       )}
 
       {/* ── Summary bar ── */}
-      <div className="mt-4 flex flex-wrap items-center gap-x-8 gap-y-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5">
+      <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 sm:mt-4 sm:gap-x-8 sm:px-4 sm:py-2.5">
         <p className="flex items-baseline gap-2">
           <span className="text-[11px] font-bold uppercase tracking-[0.1em] text-slate-500">Regular</span>
           <span className="text-base font-bold text-slate-950">{totalRegular}</span>
@@ -839,7 +844,12 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, onJumpToDate
       </div>
 
       {/* ── Weekly comments ── */}
-      <label className="mt-6 block">
+      {canEditHours && !comments && !commentsOpen && (
+        <button type="button" onClick={() => setCommentsOpen(true)} className="mt-3 text-[13px] font-bold text-blue-700 sm:hidden">
+          + Add weekly comment
+        </button>
+      )}
+      <label className={`mt-3 sm:mt-6 ${comments || commentsOpen ? "block" : "hidden sm:block"}`}>
         <span className="text-base font-semibold text-slate-800">
           Weekly comments <span className="font-medium text-slate-400">(optional)</span>
         </span>
@@ -1089,7 +1099,7 @@ function TimeCardReadOnlyView({ card, onRecall, onViewPdf, onDownloadPdf, onNavi
       </div>
 
       {/* ── Summary bar ── */}
-      <div className="mt-4 flex flex-wrap items-center gap-x-8 gap-y-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5">
+      <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 sm:mt-4 sm:gap-x-8 sm:px-4 sm:py-2.5">
         <p className="flex items-baseline gap-2">
           <span className="text-[11px] font-bold uppercase tracking-[0.1em] text-slate-500">Regular</span>
           <span className="text-base font-bold text-slate-950">{totalRegular}</span>
