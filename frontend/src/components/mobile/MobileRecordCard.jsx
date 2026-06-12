@@ -15,14 +15,21 @@ export default function MobileRecordCard({ title, status, fields = [], details =
         {status}
       </div>
       <dl className="mt-2">
-        {fields.map(([label, value]) => (
-          <div key={label} className="flex min-w-0 items-baseline justify-between gap-3 border-b border-slate-100 py-1.5 last:border-b-0">
-            <dt className="shrink-0 text-[12px] font-semibold text-slate-500">{label}</dt>
-            <dd className="min-w-0 break-words text-right text-[13px] font-bold text-slate-900">
-              {value === null || value === undefined || value === "" ? "-" : value}
-            </dd>
-          </div>
-        ))}
+        {fields.map(([label, value]) => {
+          const text = value === null || value === undefined || value === "" ? "-" : value;
+          const isLong = typeof text === "string" && text.length > 24;
+          return isLong ? (
+            <div key={label} className="min-w-0 border-b border-slate-100 py-1.5 last:border-b-0">
+              <dt className="text-[12px] font-semibold text-slate-500">{label}</dt>
+              <dd className="mt-0.5 break-words text-[13px] font-bold leading-snug text-slate-900">{text}</dd>
+            </div>
+          ) : (
+            <div key={label} className="flex min-w-0 items-baseline justify-between gap-3 border-b border-slate-100 py-1.5 last:border-b-0">
+              <dt className="shrink-0 text-[12px] font-semibold text-slate-500">{label}</dt>
+              <dd className="min-w-0 break-words text-right text-[13px] font-bold text-slate-900">{text}</dd>
+            </div>
+          );
+        })}
       </dl>
       {visibleDetails.length > 0 && (
         <>
