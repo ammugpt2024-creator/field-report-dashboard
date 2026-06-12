@@ -108,6 +108,26 @@ function TimeCardListRow({ card, activeTab, onOpen, onDelete, onRecall, onDownlo
           <span className="font-bold text-slate-900">{card.totalHours || card.total_hours || "0.00"} total</span>
         </p>
         {statusDate && <p className="mt-0.5 text-[12px] font-medium text-slate-400">{formatDateTime(statusDate)}</p>}
+        <div className="mt-3 flex flex-wrap items-center gap-2" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
+          <button type="button" onClick={onOpen} className="inline-flex h-9 items-center justify-center rounded-lg bg-slate-900 px-4 text-[13px] font-semibold text-white transition hover:bg-slate-800">
+            {primaryLabel}
+          </button>
+          {activeTab === "draft" && (
+            <button type="button" onClick={onDelete} className="inline-flex h-9 items-center justify-center rounded-lg border border-slate-300 bg-white px-4 text-[13px] font-semibold text-rose-700 transition hover:border-rose-300 hover:bg-rose-50">
+              Delete
+            </button>
+          )}
+          {activeTab === "submitted" && (
+            <button type="button" onClick={onRecall} className="inline-flex h-9 items-center justify-center rounded-lg border border-slate-300 bg-white px-4 text-[13px] font-semibold text-slate-700 transition hover:border-slate-400 hover:bg-slate-50">
+              Recall
+            </button>
+          )}
+          {activeTab === "approved" && (
+            <button type="button" onClick={onDownloadPdf} disabled={!canDownloadPdf} className="inline-flex h-9 items-center justify-center rounded-lg border border-slate-300 bg-white px-4 text-[13px] font-semibold text-slate-700 transition hover:border-slate-400 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50">
+              Download PDF
+            </button>
+          )}
+        </div>
       </div>
       <div className="hidden gap-3 lg:grid lg:grid-cols-[140px_minmax(0,1fr)_190px_60px_60px_70px_130px_140px_200px] lg:items-center">
         <p className="text-[15px] font-semibold text-slate-900">{getTimesheetNumber(card)}</p>
