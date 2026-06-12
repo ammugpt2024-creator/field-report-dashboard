@@ -67,6 +67,7 @@ export async function createCompany({
       status: 'invited'
     });
     if (inviteError) console.warn('Company admin invite could not be recorded.', inviteError.message);
+    sendInviteEmail(company.id, primaryContactEmail, primaryContactName);
   }
 
   logAuditEvent({
@@ -143,6 +144,21 @@ export async function endSupportSession(sessionRow) {
   });
 }
 
+// Fire the Supabase Auth invitation email via the edge function (the service
+// role lives server-side). Fire-and-forget: the roster row is the source of
+// truth and links itself when the invitee first signs in.
+function sendInviteEmail(companyId, email, fullName = '') {
+  supabase.functions
+    .invoke('invite-company-user', {
+      body: { companyId, email, fullName, redirectTo: window.location.origin }
+    })
+    .then(({ data, error }) => {
+      if (error) console.warn('Invite email could not be sent:', error.message);
+      else if (data?.alreadyExists) console.info('Invitee already has an account; they can sign in directly.');
+    })
+    .catch((error) => console.warn('Invite email could not be sent:', error?.message));
+}
+
 // ── Company admin operations ────────────────────────────────────────────────
 
 export async function getMyCompanyContext() {
@@ -206,6 +222,7 @@ export async function inviteMember(companyId, { email, fullName, role }) {
     entityId: data.id,
     newValue: { email, role }
   });
+  sendInviteEmail(companyId, email, fullName);
   return data;
 }
 
