@@ -422,10 +422,10 @@ function DashboardOverview({ profile, logCollections, timeCardCollections, onOpe
   return (
     <>
       {/* Slim toolbar header — Procore-style, no hero banner */}
-      <section className="rounded-xl border border-slate-200 bg-white px-5 py-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+      <section className="rounded-xl border border-slate-200 bg-white px-4 py-3 sm:px-5 sm:py-4">
+        <div className="flex flex-wrap items-center justify-between gap-2 sm:gap-3">
           <div className="min-w-0">
-            <h1 className="text-xl font-semibold text-slate-900">Welcome, {technicianName}</h1>
+            <h1 className="text-lg font-semibold text-slate-900 sm:text-xl">Welcome, {technicianName}</h1>
             <p className="mt-0.5 text-[13px] font-medium text-slate-500">
               {todayText}
               {actionRequiredItems.length
@@ -467,10 +467,10 @@ function DashboardOverview({ profile, logCollections, timeCardCollections, onOpe
               key={label}
               type="button"
               onClick={() => navigate(`/technician/dashboard?view=${view}`)}
-              className="border-b border-slate-100 px-4 py-3 text-left transition hover:bg-slate-50 xl:border-b-0"
+              className="flex items-baseline justify-between gap-2 border-b border-slate-100 px-4 py-2.5 text-left transition hover:bg-slate-50 sm:block sm:py-3 xl:border-b-0"
             >
               <p className="text-xs font-medium text-slate-500">{label}</p>
-              <p className={`mt-1 text-2xl font-semibold ${value > 0 ? (tone || "text-slate-900") : "text-slate-300"}`}>{value}</p>
+              <p className={`text-xl font-semibold sm:mt-1 sm:text-2xl ${value > 0 ? (tone || "text-slate-900") : "text-slate-300"}`}>{value}</p>
             </button>
           ))}
         </div>
