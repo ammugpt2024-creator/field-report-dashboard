@@ -588,8 +588,8 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, onJumpToDate
           )}
         </div>
         <dl className="mt-2 border-b border-slate-200 pb-3 sm:mt-4 sm:flex sm:flex-wrap sm:gap-x-10 sm:gap-y-2 sm:pb-5">
-          <div className="flex items-baseline justify-between gap-3 py-1 sm:block sm:py-0">
-            <dt className="text-[13px] font-medium text-slate-500">Employee</dt>
+          <div className="flex items-baseline gap-2 py-1 sm:block sm:py-0">
+            <dt className="shrink-0 text-[13px] font-medium text-slate-500">Employee</dt>
             <dd className="min-w-0 truncate text-[15px] font-semibold text-slate-900 sm:mt-0.5">
               {card.technicianName || card.technician_name || "-"}
               <span className="font-medium text-slate-500 sm:hidden"> · {card.technicianRole || card.technician_role || "Field Engineer"}</span>
@@ -950,13 +950,13 @@ function TimeCardReadOnlyView({ card, onRecall, onViewPdf, onDownloadPdf, onNavi
         </div>
         <div className="mt-3 border-b border-slate-200 pb-4 sm:mt-4 sm:flex sm:flex-wrap sm:items-end sm:justify-between sm:gap-4 sm:pb-5">
           <dl className="sm:flex sm:flex-wrap sm:gap-x-10 sm:gap-y-2">
-            <div className="flex items-baseline justify-between gap-3 border-b border-slate-100 py-1.5 sm:block sm:border-b-0 sm:py-0">
-              <dt className="text-[13px] font-medium text-slate-500">Employee</dt>
-              <dd className="text-[15px] font-semibold text-slate-900 sm:mt-0.5">{card.technicianName || card.technician_name || "-"}</dd>
+            <div className="flex items-baseline gap-2 py-1 sm:block sm:py-0">
+              <dt className="shrink-0 text-[13px] font-medium text-slate-500">Employee</dt>
+              <dd className="min-w-0 truncate text-[15px] font-semibold text-slate-900 sm:mt-0.5">{card.technicianName || card.technician_name || "-"}</dd>
             </div>
-            <div className="flex items-baseline justify-between gap-3 py-1.5 sm:block sm:py-0">
-              <dt className="text-[13px] font-medium text-slate-500">Submitted</dt>
-              <dd className="text-[15px] font-semibold text-slate-900 sm:mt-0.5">{submittedAt ? formatDateTime(submittedAt) : "-"}</dd>
+            <div className="flex items-baseline gap-2 py-1 sm:block sm:py-0">
+              <dt className="shrink-0 text-[13px] font-medium text-slate-500">Submitted</dt>
+              <dd className="min-w-0 truncate text-[15px] font-semibold text-slate-900 sm:mt-0.5">{submittedAt ? formatDateTime(submittedAt) : "-"}</dd>
             </div>
           </dl>
           <div className="mt-2 flex items-center gap-2 sm:mt-0">
