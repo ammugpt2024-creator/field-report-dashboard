@@ -608,7 +608,14 @@ function ManagerDashboard() {
   ), [dailyLogs]);
 
   const delayedReviews = pendingDailyLogs.filter((log) => log.agingHours >= 12);
-  const submissionsToday = dailyLogs.filter((row) => isToday(row.submitted_at)).length;
+  // The "today" KPIs span both domains: daily logs and timesheets.
+  const submissionsToday =
+    dailyLogs.filter((row) => isToday(row.submitted_at)).length +
+    timeCards.filter((card) => isToday(card.submittedAt || card.submitted_at)).length;
+  const timesheetsApprovedToday = timeCards.filter((card) =>
+    timesheetStatusBucket(card.status) === "approved" &&
+    isToday(card.reviewedAt || card.reviewed_at || card.approvedAt || card.approved_at)
+  ).length;
   const submittedTimesheets = timeCards.filter((card) => [TIME_CARD_STATUS.SUBMITTED, TIME_CARD_STATUS.PENDING_REVIEW].includes(card.status));
 
   const timesheetCounts = useMemo(() => {
@@ -756,7 +763,7 @@ function ManagerDashboard() {
     { label: "Timesheets To Review", value: submittedTimesheets.length, icon: CalendarDays, chipClass: "bg-blue-50 text-blue-700" },
     { label: "Delayed Reviews", value: delayedReviews.length, icon: AlertTriangle, chipClass: "bg-rose-50 text-rose-700" },
     { label: "Submitted Today", value: submissionsToday, icon: Send, chipClass: "bg-emerald-50 text-emerald-700" },
-    { label: "Approved Today", value: approvedDailyLogsToday.length, icon: ClipboardCheck, chipClass: "bg-emerald-50 text-emerald-700" },
+    { label: "Approved Today", value: approvedDailyLogsToday.length + timesheetsApprovedToday, icon: ClipboardCheck, chipClass: "bg-emerald-50 text-emerald-700" },
     { label: "Active Projects", value: projects.length, icon: FolderKanban, chipClass: "bg-indigo-50 text-indigo-700" }
   ];
 
