@@ -5,7 +5,7 @@ export default function ActivityReportSelector({ onAddConcreteReport, onAddCompa
     { label: "Concrete Report", description: "Create concrete testing documentation.", available: true, onClick: onAddConcreteReport },
     { label: "Inspection Report", description: "Coming soon", available: false },
     { label: "Density Report", description: "Create nuclear density compaction documentation.", available: true, onClick: onAddCompactionReport },
-    { label: "Nuclear Gauge Report", description: "Create nuclear gauge compaction documentation.", available: true, onClick: onAddCompactionReport },
+    { label: "Nuclear Gauge Report", description: "Coming soon", available: false },
     { label: "Asphalt Report", description: "Coming soon", available: false },
     { label: "Other", description: "Coming soon", available: false }
   ];
