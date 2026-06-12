@@ -567,7 +567,7 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, onJumpToDate
     : "";
 
   return (
-    <section className="w-full rounded-2xl border border-slate-200 bg-white px-6 py-6 sm:px-8">
+    <section className="w-full rounded-2xl border border-slate-200 bg-white p-4 sm:px-8 sm:py-6">
 
       {/* ── Header ── */}
       <header>
@@ -575,7 +575,7 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, onJumpToDate
           Timesheets <span aria-hidden="true">›</span> <span className="font-semibold text-slate-700">{getTimesheetNumber(card)}</span>
         </p>
         <div className="mt-2 flex flex-wrap items-center gap-3">
-          <h1 className="text-[28px] font-bold leading-tight tracking-tight text-slate-900">Weekly timesheet</h1>
+          <h1 className="text-xl font-bold leading-tight tracking-tight text-slate-900 sm:text-[28px]">Weekly timesheet</h1>
           <span className={`rounded-full px-3 py-1 text-[13px] font-semibold ${getTimesheetStatusPillClass(card.status)}`}>
             {formatTimeCardStatus(card.status)}
           </span>
@@ -585,7 +585,7 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, onJumpToDate
             </div>
           )}
         </div>
-        <dl className="mt-4 flex flex-wrap gap-x-10 gap-y-2 border-b border-slate-200 pb-5">
+        <dl className="mt-3 flex flex-wrap gap-x-8 gap-y-2 border-b border-slate-200 pb-4 sm:mt-4 sm:gap-x-10 sm:pb-5">
           <div>
             <dt className="text-[13px] font-medium text-slate-500">Employee</dt>
             <dd className="mt-0.5 text-[15px] font-semibold text-slate-900">{card.technicianName || card.technician_name || "-"}</dd>
@@ -908,7 +908,7 @@ function TimeCardReadOnlyView({ card, onRecall, onViewPdf, onDownloadPdf, onNavi
     Number(totalHours) > 60 ? "Total weekly hours exceed the default company threshold of 60 hours." : null
   ].filter(Boolean);
   return (
-    <section className="w-full rounded-2xl border border-slate-200 bg-white px-6 py-6 sm:px-8">
+    <section className="w-full rounded-2xl border border-slate-200 bg-white p-4 sm:px-8 sm:py-6">
 
       {/* ── Header ── */}
       <header>
@@ -916,7 +916,7 @@ function TimeCardReadOnlyView({ card, onRecall, onViewPdf, onDownloadPdf, onNavi
           Timesheets <span aria-hidden="true">›</span> <span className="font-semibold text-slate-700">{timesheetNumber}</span>
         </p>
         <div className="mt-2 flex flex-wrap items-center gap-3">
-          <h1 className="text-[28px] font-bold leading-tight tracking-tight text-slate-900">Weekly timesheet</h1>
+          <h1 className="text-xl font-bold leading-tight tracking-tight text-slate-900 sm:text-[28px]">Weekly timesheet</h1>
           <span className={`rounded-full px-3 py-1 text-[13px] font-semibold ${getTimesheetStatusPillClass(card.status)}`}>
             {formatTimeCardStatus(card.status)}
           </span>
@@ -928,7 +928,7 @@ function TimeCardReadOnlyView({ card, onRecall, onViewPdf, onDownloadPdf, onNavi
             )}
           </div>
         </div>
-        <div className="mt-4 flex flex-wrap items-end justify-between gap-4 border-b border-slate-200 pb-5">
+        <div className="mt-3 flex flex-wrap items-end justify-between gap-4 border-b border-slate-200 pb-4 sm:mt-4 sm:pb-5">
           <dl className="flex flex-wrap gap-x-10 gap-y-2">
             <div>
               <dt className="text-[13px] font-medium text-slate-500">Employee</dt>
@@ -993,10 +993,12 @@ function TimeCardReadOnlyView({ card, onRecall, onViewPdf, onDownloadPdf, onNavi
               <dt className="text-[13px] font-medium text-emerald-700">Approver</dt>
               <dd className="mt-0.5 text-[15px] font-semibold text-emerald-950">{managerName}</dd>
             </div>
-            <div>
-              <dt className="text-[13px] font-medium text-emerald-700">Comments</dt>
-              <dd className="mt-0.5 text-[15px] font-semibold text-emerald-950">{reviewComments || "-"}</dd>
-            </div>
+            {reviewComments && (
+              <div>
+                <dt className="text-[13px] font-medium text-emerald-700">Comments</dt>
+                <dd className="mt-0.5 text-[15px] font-semibold text-emerald-950">{reviewComments}</dd>
+              </div>
+            )}
           </dl>
         </div>
       )}
