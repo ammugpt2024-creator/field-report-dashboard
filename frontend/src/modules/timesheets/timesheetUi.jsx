@@ -624,18 +624,16 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, onJumpToDate
         </div>
       )}
 
-      {/* ── Hours by project ── */}
+      {/* ── Hours By Project ── */}
       <div className="mt-3 flex items-center justify-between sm:mt-6">
-        <h2 className="text-base font-bold tracking-tight text-slate-900 sm:text-xl">Hours by project</h2>
+        <h2 className="text-base font-bold tracking-tight text-slate-900 sm:text-xl">Hours By Project</h2>
         {canEditHours && (
           <button
             type="button"
             onClick={handleAddProject}
             className="inline-flex min-h-9 items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 text-[13px] font-semibold text-slate-800 transition hover:border-slate-400 hover:bg-slate-50 sm:min-h-10 sm:gap-1.5 sm:rounded-xl sm:px-4 sm:text-sm"
           >
-            <Plus className="h-4 w-4" />
-            <span className="sm:hidden">Add another project</span>
-            <span className="hidden sm:inline">Add project</span>
+            <Plus className="h-4 w-4" /> Add Project
           </button>
         )}
       </div>
@@ -692,7 +690,7 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, onJumpToDate
                                 value={String(row.projectId || row.project_id || "")}
                                 onChange={(event) => handleProjectChange(row.id, event.target.value)}
                                 disabled={isRowProjectLocked(row)}
-                                title={isRowProjectLocked(row) ? "Hours are logged against this project. Clear the hours to change it, or use Add project." : (row.projectName || row.project_name || "Select project")}
+                                title={isRowProjectLocked(row) ? "Hours are logged against this project. Clear the hours to change it, or use Add Project." : (row.projectName || row.project_name || "Select project")}
                                 className="h-11 w-full appearance-none overflow-hidden text-ellipsis whitespace-nowrap rounded-xl border border-slate-300 bg-white pl-3 pr-8 text-[15px] font-semibold text-slate-900 outline-none transition hover:border-slate-400 focus:border-blue-700 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-50 disabled:text-slate-600"
                               >
                                 <option value="">Select project…</option>
@@ -780,7 +778,7 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, onJumpToDate
                         value={String(row.projectId || row.project_id || "")}
                         onChange={(event) => handleProjectChange(row.id, event.target.value)}
                         disabled={isRowProjectLocked(row)}
-                        title={isRowProjectLocked(row) ? "Hours are logged against this project. Clear the hours to change it, or use Add another project." : (row.projectName || row.project_name || "Select project")}
+                        title={isRowProjectLocked(row) ? "Hours are logged against this project. Clear the hours to change it, or use Add Project." : (row.projectName || row.project_name || "Select project")}
                         className="h-10 w-full appearance-none overflow-hidden text-ellipsis whitespace-nowrap rounded-lg border border-slate-300 bg-white pl-2.5 pr-8 text-sm font-semibold text-slate-900 outline-none transition focus:border-blue-700 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-50 disabled:text-slate-600"
                       >
                         <option value="">Select project…</option>
@@ -1038,8 +1036,8 @@ function TimeCardReadOnlyView({ card, onRecall, onViewPdf, onDownloadPdf, onNavi
         </div>
       )}
 
-      {/* ── Hours by project (read-only) ── */}
-      <h2 className="mt-6 text-xl font-bold tracking-tight text-slate-900">Hours by project</h2>
+      {/* ── Hours By Project (read-only) ── */}
+      <h2 className="mt-6 text-xl font-bold tracking-tight text-slate-900">Hours By Project</h2>
 
       <div className="mt-4 space-y-2 md:hidden">
         {projectRows.map((row) => (
