@@ -4,11 +4,11 @@ import {
   Bell,
   CalendarDays,
   Camera,
-  ChevronDown,
   Calculator,
   ClipboardCheck,
   FileText,
   KeyRound,
+  Minus,
   Plus,
   Save,
   Send,
@@ -335,7 +335,8 @@ function ActionTimeCardRow({ card, onOpen }) {
 
 
 function DashboardOverview({ profile, logCollections, timeCardCollections, onOpenLog, onOpenTimeCard, onCreateLog, onCreateTimeCard, navigate }) {
-  const [activityCollapsed, setActivityCollapsed] = useState(false);
+  // Collapsed by default — expand on demand via the +/- control.
+  const [activityCollapsed, setActivityCollapsed] = useState(true);
   const actionRequiredLogs = [...logCollections.returnedLogs, ...logCollections.draftLogs];
   const actionRequiredTimeCards = [...timeCardCollections.returnedTimeCards, ...timeCardCollections.draftTimeCards];
   const actionRequiredItems = [
@@ -488,13 +489,17 @@ function DashboardOverview({ profile, logCollections, timeCardCollections, onOpe
           <button
             type="button"
             onClick={() => setActivityCollapsed((value) => !value)}
+            aria-expanded={!activityCollapsed}
+            title={activityCollapsed ? "Expand recent activity" : "Collapse recent activity"}
             className="flex min-w-0 items-center gap-2 text-left"
           >
+            <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border border-slate-300 bg-white text-slate-600 transition hover:border-slate-400 hover:bg-slate-50">
+              {activityCollapsed ? <Plus className="h-3.5 w-3.5" /> : <Minus className="h-3.5 w-3.5" />}
+            </span>
             <h2 className="text-sm font-semibold text-slate-900">Recent activity</h2>
             <span className="text-xs font-medium text-slate-400">
               {latestActivity.length ? `· last update ${relativeTimeLabel(latestActivity[0].at)}` : ""}
             </span>
-            <ChevronDown className={`h-4 w-4 text-slate-400 transition-transform ${activityCollapsed ? "-rotate-90" : ""}`} />
           </button>
           <button
             type="button"
