@@ -29,10 +29,14 @@ function App() {
   const {
     session,
     role,
-    loading
+    loading,
+    profileReady
   } = useAuth();
 
-  if (loading) {
+  // profileReady guards the fresh-login race: the session exists before the
+  // profile row loads, and routing on the placeholder role would send
+  // managers to the viewer fallback.
+  if (loading || !profileReady) {
 
     return (
       <div className="flex items-center justify-center min-h-screen bg-slate-100">

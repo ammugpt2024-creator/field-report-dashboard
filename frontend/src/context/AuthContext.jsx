@@ -54,11 +54,17 @@ export function AuthProvider({ children }) {
 
   const [loading, setLoading] = useState(true);
 
+  // Which user the loaded profile belongs to. On a fresh sign-in the session
+  // arrives before the profile row, and routing on the placeholder "viewer"
+  // role would strand managers on the wrong home page.
+  const [profileUserId, setProfileUserId] = useState(null);
+
   const loadProfile = useCallback(async (currentSession) => {
     if (!currentSession?.user?.id) {
       setProfile(null);
       setRole("viewer");
       setCompanyName("");
+      setProfileUserId(null);
       return;
     }
 
@@ -79,6 +85,7 @@ export function AuthProvider({ children }) {
       setProfile(null);
       setRole("viewer");
       setCompanyName("");
+      setProfileUserId(currentSession.user.id);
       return;
     }
 
@@ -88,6 +95,7 @@ export function AuthProvider({ children }) {
     setProfile(resolvedProfile);
     setRole(resolvedRole);
     setCompanyName(resolvedProfile?.company_name || "");
+    setProfileUserId(currentSession.user.id);
   }, []);
 
   useEffect(() => {
@@ -144,6 +152,7 @@ export function AuthProvider({ children }) {
         profile,
         role,
         roleLabel: ROLE_LABELS[role] || "Viewer",
+        profileReady: !session?.user?.id || profileUserId === session.user.id,
         companyName,
         loading
       }}
