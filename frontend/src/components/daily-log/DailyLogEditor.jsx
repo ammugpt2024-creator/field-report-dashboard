@@ -473,7 +473,11 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
   }, [log.projectId, log.project_id]);
 
   function updateLog(patch, { persist = true } = {}) {
-    const nextLog = { ...log, ...patch, updatedAt: new Date().toISOString() };
+    // Merge onto the freshest persisted copy, not this closure's render-time
+    // log — concurrent async effects (project derive, weather capture) would
+    // otherwise clobber each other's fields with stale snapshots.
+    const baseline = getDailyLogById(log.id) || log;
+    const nextLog = { ...baseline, ...patch, updatedAt: new Date().toISOString() };
     if (persist) {
       const saved = saveDailyLog(nextLog);
       onChange(saved);
