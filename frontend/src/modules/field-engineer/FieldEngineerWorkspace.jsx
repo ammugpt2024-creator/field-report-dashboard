@@ -237,23 +237,65 @@ function ActionLogRow({ log, onOpen }) {
   );
 }
 
-function activityEventDotClass(label = "") {
+function activityEventMeta(label = "") {
   const normalized = label.toLowerCase();
-  if (normalized.includes("approved")) return "bg-emerald-500";
-  if (normalized.includes("returned")) return "bg-rose-500";
-  if (normalized.includes("submitted")) return "bg-blue-600";
-  return "bg-slate-400";
+  if (normalized.includes("approved")) return { icon: ClipboardCheck, chip: "bg-emerald-50 text-emerald-600" };
+  if (normalized.includes("returned")) return { icon: AlertTriangle, chip: "bg-rose-50 text-rose-600" };
+  if (normalized.includes("submitted")) return { icon: Send, chip: "bg-blue-50 text-blue-600" };
+  if (normalized.includes("photo")) return { icon: Camera, chip: "bg-slate-100 text-slate-500" };
+  return { icon: FileText, chip: "bg-slate-100 text-slate-500" };
+}
+
+function relativeTimeLabel(value) {
+  if (!value) return "";
+  const diffMinutes = Math.floor((Date.now() - new Date(value).getTime()) / 60000);
+  if (diffMinutes < 1) return "just now";
+  if (diffMinutes < 60) return `${diffMinutes}m ago`;
+  const hours = Math.floor(diffMinutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Date(value).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function activityDayLabel(value) {
+  if (!value) return "Earlier";
+  const date = new Date(value);
+  const today = new Date();
+  const yesterday = new Date();
+  yesterday.setDate(today.getDate() - 1);
+  if (date.toDateString() === today.toDateString()) return "Today";
+  if (date.toDateString() === yesterday.toDateString()) return "Yesterday";
+  return date.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
+}
+
+function groupActivityByDay(events) {
+  const groups = [];
+  events.forEach((event) => {
+    const label = activityDayLabel(event.at);
+    const group = groups[groups.length - 1];
+    if (group && group.label === label) {
+      group.events.push(event);
+    } else {
+      groups.push({ label, events: [event] });
+    }
+  });
+  return groups;
 }
 
 function ActivityEventRow({ event }) {
+  const meta = activityEventMeta(event.label);
+  const Icon = meta.icon;
   return (
-    <article className="flex items-center gap-3 border-b border-slate-100 px-1 py-2.5 last:border-b-0">
-      <span className={`h-2 w-2 shrink-0 rounded-full ${activityEventDotClass(event.label)}`} />
-      <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2">
+    <article className="flex items-start gap-3 py-2.5">
+      <span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${meta.chip}`}>
+        <Icon className="h-3.5 w-3.5" />
+      </span>
+      <div className="min-w-0 flex-1">
         <p className="text-sm font-bold text-slate-900">{event.label}</p>
-        {event.detail && <p className="truncate text-xs font-semibold text-slate-500">{event.detail}</p>}
+        {event.detail && <p className="mt-0.5 truncate text-xs font-semibold text-slate-500">{event.detail}</p>}
       </div>
-      <p className="shrink-0 text-xs font-semibold text-slate-400">{formatDateTime(event.at)}</p>
+      <p className="shrink-0 pt-1.5 text-xs font-semibold text-slate-400" title={formatDateTime(event.at)}>{relativeTimeLabel(event.at)}</p>
     </article>
   );
 }
@@ -394,7 +436,7 @@ function DashboardOverview({ profile, logCollections, timeCardCollections, onOpe
         <TechKpiCard label="Timesheets Approved" value={timeCardCollections.approvedTimeCards.length} icon={ClipboardCheck} chipClass="bg-emerald-50 text-emerald-700" onClick={() => navigate("/technician/dashboard?view=approved-time-cards")} />
       </section>
 
-      <section className="grid grid-cols-1 gap-5 xl:grid-cols-[1fr_340px]">
+      <section className="space-y-5">
         <div className="space-y-5">
           <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
             <div className="flex items-center gap-3">
@@ -467,45 +509,22 @@ function DashboardOverview({ profile, logCollections, timeCardCollections, onOpe
                 View Full History
               </button>
             </div>
-            <div className="mt-3">
-              {latestActivity.map((event) => <ActivityEventRow key={event.id} event={event} />)}
+            <div className="mt-2">
+              {groupActivityByDay(latestActivity).map((group) => (
+                <div key={group.label}>
+                  <p className="mt-3 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-400">{group.label}</p>
+                  <div className="mt-1 divide-y divide-slate-100">
+                    {group.events.map((event) => <ActivityEventRow key={event.id} event={event} />)}
+                  </div>
+                </div>
+              ))}
               {!latestActivity.length && (
-                <p className="rounded-2xl border border-dashed border-slate-300 bg-slate-50/60 p-4 text-sm font-semibold text-slate-500">No recent activity yet.</p>
+                <p className="mt-3 rounded-2xl border border-dashed border-slate-300 bg-slate-50/60 p-4 text-sm font-semibold text-slate-500">No recent activity yet.</p>
               )}
             </div>
           </div>
         </div>
 
-        <aside className="h-fit rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="flex items-center gap-3">
-            <span className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-blue-50 text-blue-700">
-              <Plus className="h-5 w-5" />
-            </span>
-            <div>
-              <h2 className="text-lg font-bold text-slate-950">Quick Actions</h2>
-              <p className="mt-0.5 text-xs font-semibold text-slate-500">Everything you file in one place</p>
-            </div>
-          </div>
-          <div className="mt-4 space-y-2">
-            {[
-              { label: "Start Daily Log", icon: Plus, onClick: onCreateLog },
-              { label: "My Timesheet", icon: CalendarDays, onClick: () => navigate("/timesheets") },
-              { label: "Submitted Logs", icon: Send, onClick: () => navigate("/technician/dashboard?view=submitted-logs") },
-              { label: "Approved Logs", icon: ClipboardCheck, onClick: () => navigate("/technician/dashboard?view=approved-logs") },
-              { label: "Activity History", icon: History, onClick: () => navigate("/technician/activity-history") }
-            ].map(({ label, icon: Icon, onClick }) => (
-              <button
-                key={label}
-                type="button"
-                onClick={onClick}
-                className="flex min-h-12 w-full items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left text-sm font-bold text-slate-800 hover:border-blue-200 hover:bg-blue-50/50"
-              >
-                <Icon className="h-4 w-4 text-blue-700" />
-                {label}
-              </button>
-            ))}
-          </div>
-        </aside>
       </section>
     </>
   );
