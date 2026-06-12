@@ -438,6 +438,18 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, assignedProj
   }
 
   async function submitCard() {
+    // Backstop against duplicate filings: if another timesheet for this same
+    // week is already with the manager (or approved), refuse to submit this one.
+    const weekStart = card.weekStartDate || card.week_start_date || card.date;
+    const duplicateForWeek = getTimeCards().find((item) =>
+      String(item.id) !== String(card.id) &&
+      (item.weekStartDate || item.week_start_date || item.date) === weekStart &&
+      [TIME_CARD_STATUS.SUBMITTED, TIME_CARD_STATUS.PENDING_REVIEW, TIME_CARD_STATUS.APPROVED, TIME_CARD_STATUS.COMPLETED].includes(item.status)
+    );
+    if (duplicateForWeek) {
+      window.alert(`Timesheet ${getTimesheetNumber(duplicateForWeek)} for this week has already been ${duplicateForWeek.status === TIME_CARD_STATUS.APPROVED || duplicateForWeek.status === TIME_CARD_STATUS.COMPLETED ? "approved" : "submitted"}. You cannot submit a second timesheet for the same week.`);
+      return;
+    }
     // Drop rows with no project and no hours so a leftover blank row never reaches the manager.
     const submittableRows = (card.projectRows || []).filter((row) => !isEmptyProjectRow(row));
     const recalculated = saveTimeCard({

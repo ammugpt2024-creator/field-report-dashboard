@@ -127,12 +127,19 @@ export default function TimesheetWorkspace() {
     const draftCard = buildCardTemplate();
     // One timesheet per employee per week — reopen this week's editable card if one exists.
     const weekStart = draftCard.weekStartDate || draftCard.week_start_date || draftCard.date;
-    const existingCard = getTimeCards()
-      .filter((card) => (card.weekStartDate || card.week_start_date || card.date) === weekStart
-        && [TIME_CARD_STATUS.DRAFT, TIME_CARD_STATUS.REJECTED, TIME_CARD_STATUS.RETURNED].includes(card.status))
-      .sort((left, right) => new Date(right.updatedAt || 0) - new Date(left.updatedAt || 0))[0];
-    const card = existingCard || saveTimeCard(draftCard);
-    refreshTimeCards(card);
+    const cardsForWeek = getTimeCards()
+      .filter((card) => (card.weekStartDate || card.week_start_date || card.date) === weekStart)
+      .sort((left, right) => new Date(right.updatedAt || 0) - new Date(left.updatedAt || 0));
+    const editableCard = cardsForWeek.find((card) =>
+      [TIME_CARD_STATUS.DRAFT, TIME_CARD_STATUS.REJECTED, TIME_CARD_STATUS.RETURNED].includes(card.status)
+    );
+    // Never start a second timesheet for a week that is already filed — open
+    // the submitted/approved copy read-only instead.
+    const lockedCard = cardsForWeek.find((card) =>
+      [TIME_CARD_STATUS.SUBMITTED, TIME_CARD_STATUS.PENDING_REVIEW, TIME_CARD_STATUS.APPROVED, TIME_CARD_STATUS.COMPLETED].includes(card.status)
+    );
+    const card = editableCard || (lockedCard ? null : saveTimeCard(draftCard));
+    refreshTimeCards(card || lockedCard);
     setView("card");
   }
 
@@ -181,6 +188,8 @@ export default function TimesheetWorkspace() {
   }
 
   function recallTimeCard(card) {
+    // Only an undecided submission can be recalled — never an approved sheet.
+    if (![TIME_CARD_STATUS.SUBMITTED, TIME_CARD_STATUS.PENDING_REVIEW].includes(card.status)) return;
     const recalled = saveTimeCard({
       ...card,
       status: TIME_CARD_STATUS.DRAFT,
