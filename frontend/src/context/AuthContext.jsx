@@ -16,6 +16,10 @@ const ROLE_LABELS = {
   qc: "Quality Reviewer",
   qc_approver: "Quality Reviewer",
   qc_manager: "Operations Manager",
+  // Manager roles must be recognized here — unknown roles normalize to
+  // "viewer", which would strand managers on the project explorer.
+  project_manager: "Project Manager",
+  manager: "Project Manager",
   admin: "Organization Admin",
   client: "Client Viewer",
   viewer: "Viewer"
