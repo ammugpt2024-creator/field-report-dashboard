@@ -110,6 +110,138 @@ function logStatusPill(bucket) {
   return { label: "Pending Review", className: "border-amber-200 bg-amber-50 text-amber-700" };
 }
 
+const TIMESHEET_FILTERS = [
+  { key: "pending", label: "Pending" },
+  { key: "approved", label: "Approved" },
+  { key: "rejected", label: "Rejected" },
+  { key: "all", label: "All" }
+];
+
+function timesheetStatusBucket(status) {
+  if ([TIME_CARD_STATUS.SUBMITTED, TIME_CARD_STATUS.PENDING_REVIEW].includes(status)) return "pending";
+  if ([TIME_CARD_STATUS.APPROVED, TIME_CARD_STATUS.COMPLETED].includes(status)) return "approved";
+  if ([TIME_CARD_STATUS.REJECTED, TIME_CARD_STATUS.RETURNED].includes(status)) return "rejected";
+  return "";
+}
+
+function timesheetStatusPill(bucket) {
+  if (bucket === "approved") return { label: "Approved", className: "border-emerald-200 bg-emerald-50 text-emerald-700" };
+  if (bucket === "rejected") return { label: "Rejected", className: "border-rose-200 bg-rose-50 text-rose-700" };
+  return { label: "Pending Review", className: "border-amber-200 bg-amber-50 text-amber-700" };
+}
+
+// Status tabs + name/project/date filters shared by both review queues.
+function QueueFilters({ filters, active, counts, onFilter, search, onSearch, searchPlaceholder, projectOptions, project, onProject, date, onDate, dateLabel }) {
+  const hasRefinement = Boolean(search.trim()) || project !== "all" || Boolean(date);
+  return (
+    <div className="mt-4 space-y-3">
+      <div className="flex flex-wrap gap-1.5 rounded-2xl bg-slate-100 p-1.5">
+        {filters.map(({ key, label }) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => onFilter(key)}
+            className={`inline-flex min-h-9 items-center gap-1.5 rounded-xl px-3 text-xs font-bold transition ${
+              active === key ? "bg-white text-slate-950 shadow-sm" : "text-slate-600 hover:text-slate-950"
+            }`}
+          >
+            {label}
+            <span className={`inline-flex min-w-5 items-center justify-center rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
+              active === key ? "bg-blue-50 text-blue-700" : "bg-slate-200 text-slate-600"
+            }`}>
+              {counts[key] ?? 0}
+            </span>
+          </button>
+        ))}
+      </div>
+      <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-[1fr_240px_200px_auto]">
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <input
+            value={search}
+            onChange={(event) => onSearch(event.target.value)}
+            placeholder={searchPlaceholder}
+            className="min-h-10 w-full rounded-xl border border-slate-200 bg-white pl-9 pr-3 text-sm font-semibold text-slate-900 outline-none focus:border-blue-700 focus:ring-4 focus:ring-blue-100"
+          />
+        </div>
+        <select
+          value={project}
+          onChange={(event) => onProject(event.target.value)}
+          className="min-h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-900 outline-none focus:border-blue-700 focus:ring-4 focus:ring-blue-100"
+        >
+          <option value="all">All projects</option>
+          {projectOptions.map((name) => (
+            <option key={name} value={name}>{name}</option>
+          ))}
+        </select>
+        <input
+          type="date"
+          value={date}
+          onChange={(event) => onDate(event.target.value)}
+          title={dateLabel}
+          aria-label={dateLabel}
+          className="min-h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-900 outline-none focus:border-blue-700 focus:ring-4 focus:ring-blue-100"
+        />
+        {hasRefinement && (
+          <button
+            type="button"
+            onClick={() => { onSearch(""); onProject("all"); onDate(""); }}
+            className="inline-flex min-h-10 items-center justify-center rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-500 hover:bg-slate-50 hover:text-slate-800"
+          >
+            Reset
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const PAGE_SIZE = 10;
+
+function Paginator({ page, total, onPage, noun }) {
+  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  if (total <= PAGE_SIZE) return null;
+  const start = (page - 1) * PAGE_SIZE + 1;
+  const end = Math.min(total, page * PAGE_SIZE);
+  const windowStart = Math.max(1, Math.min(page - 2, pageCount - 4));
+  const pages = Array.from({ length: Math.min(5, pageCount) }, (_, index) => windowStart + index);
+  return (
+    <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+      <p className="text-xs font-semibold text-slate-500">Showing {start}-{end} of {total} {noun}</p>
+      <div className="flex items-center gap-1.5">
+        <button
+          type="button"
+          disabled={page <= 1}
+          onClick={() => onPage(page - 1)}
+          className="inline-flex min-h-9 items-center rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          Prev
+        </button>
+        {pages.map((number) => (
+          <button
+            key={number}
+            type="button"
+            onClick={() => onPage(number)}
+            className={`inline-flex min-h-9 min-w-9 items-center justify-center rounded-xl px-2 text-xs font-bold transition ${
+              number === page ? "bg-blue-700 text-white" : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+            }`}
+          >
+            {number}
+          </button>
+        ))}
+        <button
+          type="button"
+          disabled={page >= pageCount}
+          onClick={() => onPage(page + 1)}
+          className="inline-flex min-h-9 items-center rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          Next
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function TimesheetReviewTable({ timesheets, onApprove, onReject, highlightedTimesheet = "" }) {
   // Details collapsed by default — with many technicians submitting, the
   // per-project hour grids would otherwise stack into a wall. The deep-linked
@@ -130,6 +262,8 @@ function TimesheetReviewTable({ timesheets, onApprove, onReject, highlightedTime
             const timesheetNumber = card.timesheetNumber || card.timesheet_number || "";
             const isHighlighted = Boolean(highlightedTimesheet) && (timesheetNumber === highlightedTimesheet || String(card.id) === highlightedTimesheet);
             const isExpanded = expandedId === String(card.id) || expandedId === timesheetNumber;
+            const bucket = timesheetStatusBucket(card.status);
+            const pill = timesheetStatusPill(bucket);
             return (
             <Fragment key={card.id}>
               <tr
@@ -153,7 +287,11 @@ function TimesheetReviewTable({ timesheets, onApprove, onReject, highlightedTime
                 <td className="px-3 py-3 font-bold">{card.totalRegularHours || card.total_regular_hours || "0.00"}</td>
                 <td className="px-3 py-3 font-bold">{card.totalOvertimeHours || card.total_overtime_hours || "0.00"}</td>
                 <td className="px-3 py-3 font-bold">{card.totalHours || card.total_hours || "0.00"}</td>
-                <td className="px-3 py-3 font-bold">{formatTimeCardStatus(card.status)}</td>
+                <td className="px-3 py-3">
+                  <span className={`inline-flex items-center whitespace-nowrap rounded-full border px-2 py-0.5 text-[11px] font-bold ${pill.className}`} title={formatTimeCardStatus(card.status)}>
+                    {pill.label}
+                  </span>
+                </td>
                 <td className="px-3 py-3">
                   <div className="flex flex-wrap gap-2">
                     <button
@@ -164,8 +302,12 @@ function TimesheetReviewTable({ timesheets, onApprove, onReject, highlightedTime
                       <ChevronDown className={`h-3.5 w-3.5 transition-transform ${isExpanded ? "rotate-180" : ""}`} />
                       {isExpanded ? "Hide Hours" : "View Hours"}
                     </button>
-                    <button type="button" onClick={() => onApprove(card)} className="min-h-9 rounded-xl bg-emerald-700 px-3 text-xs font-bold text-white">Approve</button>
-                    <button type="button" onClick={() => onReject(card)} className="min-h-9 rounded-xl border border-rose-200 bg-white px-3 text-xs font-bold text-rose-700">Reject</button>
+                    {bucket === "pending" && (
+                      <>
+                        <button type="button" onClick={() => onApprove(card)} className="min-h-9 rounded-xl bg-emerald-700 px-3 text-xs font-bold text-white">Approve</button>
+                        <button type="button" onClick={() => onReject(card)} className="min-h-9 rounded-xl border border-rose-200 bg-white px-3 text-xs font-bold text-rose-700">Reject</button>
+                      </>
+                    )}
                   </div>
                 </td>
               </tr>
@@ -296,7 +438,15 @@ function ManagerDashboard() {
   const [error, setError] = useState("");
   const [logFilter, setLogFilter] = useState("pending");
   const [logSearch, setLogSearch] = useState("");
+  const [logProject, setLogProject] = useState("all");
+  const [logDate, setLogDate] = useState("");
+  const [logPage, setLogPage] = useState(1);
   const [logsCollapsed, setLogsCollapsed] = useState(false);
+  const [tsFilter, setTsFilter] = useState("pending");
+  const [tsSearch, setTsSearch] = useState("");
+  const [tsProject, setTsProject] = useState("all");
+  const [tsDate, setTsDate] = useState("");
+  const [tsPage, setTsPage] = useState(1);
   const [timesheetsCollapsed, setTimesheetsCollapsed] = useState(false);
 
   useEffect(() => {
@@ -335,7 +485,8 @@ function ManagerDashboard() {
       .map(describeDailyLogRow)
       .map((log) => ({ ...log, bucket: logStatusBucket(log.status) }))
       .filter((log) => log.bucket)
-      .sort((a, b) => b.agingHours - a.agingHours)
+      // Most recent first: newest log date, then most recent submission.
+      .sort((a, b) => String(b.logDate).localeCompare(String(a.logDate)) || a.agingHours - b.agingHours)
   ), [dailyLogs]);
 
   const logCounts = useMemo(() => {
@@ -353,12 +504,28 @@ function ManagerDashboard() {
     };
   }, [describedLogs]);
 
+  const logProjectOptions = useMemo(() => (
+    Array.from(new Set(describedLogs.map((log) => log.projectName).filter(Boolean))).sort()
+  ), [describedLogs]);
+
   const filteredLogs = useMemo(() => {
     const term = logSearch.trim().toLowerCase();
     return describedLogs
       .filter((log) => logFilter === "all" || log.bucket === logFilter)
+      .filter((log) => logProject === "all" || log.projectName === logProject)
+      .filter((log) => !logDate || log.logDate === logDate)
       .filter((log) => !term || [log.number, log.projectName, log.technician, log.logDate].some((value) => String(value).toLowerCase().includes(term)));
-  }, [describedLogs, logFilter, logSearch]);
+  }, [describedLogs, logFilter, logSearch, logProject, logDate]);
+
+  // Changing any filter snaps back to page 1; the clamp below covers shrinking lists.
+  const logFilterHandlers = {
+    onFilter: (value) => { setLogFilter(value); setLogPage(1); },
+    onSearch: (value) => { setLogSearch(value); setLogPage(1); },
+    onProject: (value) => { setLogProject(value); setLogPage(1); },
+    onDate: (value) => { setLogDate(value); setLogPage(1); }
+  };
+  const logPageSafe = Math.min(logPage, Math.max(1, Math.ceil(filteredLogs.length / PAGE_SIZE)));
+  const pagedLogs = filteredLogs.slice((logPageSafe - 1) * PAGE_SIZE, logPageSafe * PAGE_SIZE);
 
   const pendingDailyLogs = useMemo(() => describedLogs.filter((log) => log.bucket === "pending"), [describedLogs]);
 
@@ -372,12 +539,54 @@ function ManagerDashboard() {
 
   const timesheetCounts = useMemo(() => {
     const countByStatuses = (statuses) => timeCards.filter((card) => statuses.includes(card.status)).length;
-    return {
-      pending: countByStatuses([TIME_CARD_STATUS.SUBMITTED, TIME_CARD_STATUS.PENDING_REVIEW]),
-      approved: countByStatuses([TIME_CARD_STATUS.APPROVED, TIME_CARD_STATUS.COMPLETED]),
-      rejected: countByStatuses([TIME_CARD_STATUS.REJECTED, TIME_CARD_STATUS.RETURNED])
-    };
+    const pending = countByStatuses([TIME_CARD_STATUS.SUBMITTED, TIME_CARD_STATUS.PENDING_REVIEW]);
+    const approved = countByStatuses([TIME_CARD_STATUS.APPROVED, TIME_CARD_STATUS.COMPLETED]);
+    const rejected = countByStatuses([TIME_CARD_STATUS.REJECTED, TIME_CARD_STATUS.RETURNED]);
+    return { pending, approved, rejected, all: pending + approved + rejected };
   }, [timeCards]);
+
+  const timesheetProjectOptions = useMemo(() => {
+    const names = new Set();
+    timeCards.forEach((card) => (card.projectRows || []).forEach((row) => {
+      const name = row.projectName || row.project_name;
+      if (name) names.add(name);
+    }));
+    return Array.from(names).sort();
+  }, [timeCards]);
+
+  const filteredTimesheets = useMemo(() => {
+    const term = tsSearch.trim().toLowerCase();
+    return timeCards
+      .filter((card) => timesheetStatusBucket(card.status))
+      .filter((card) => tsFilter === "all" || timesheetStatusBucket(card.status) === tsFilter)
+      .filter((card) => tsProject === "all" || (card.projectRows || []).some((row) => (row.projectName || row.project_name) === tsProject))
+      .filter((card) => {
+        if (!tsDate) return true;
+        const start = card.weekStartDate || card.week_start_date || "";
+        const end = card.weekEndDate || card.week_end_date || "";
+        return start && end && tsDate >= start && tsDate <= end;
+      })
+      .filter((card) => {
+        if (!term) return true;
+        const haystack = [
+          card.timesheetNumber || card.timesheet_number,
+          card.technicianName || card.technician_name,
+          ...(card.projectRows || []).map((row) => row.projectName || row.project_name)
+        ];
+        return haystack.some((value) => String(value || "").toLowerCase().includes(term));
+      })
+      // Most recent week first.
+      .sort((a, b) => String(b.weekStartDate || b.week_start_date || "").localeCompare(String(a.weekStartDate || a.week_start_date || "")));
+  }, [timeCards, tsFilter, tsSearch, tsProject, tsDate]);
+
+  const tsFilterHandlers = {
+    onFilter: (value) => { setTsFilter(value); setTsPage(1); },
+    onSearch: (value) => { setTsSearch(value); setTsPage(1); },
+    onProject: (value) => { setTsProject(value); setTsPage(1); },
+    onDate: (value) => { setTsDate(value); setTsPage(1); }
+  };
+  const tsPageSafe = Math.min(tsPage, Math.max(1, Math.ceil(filteredTimesheets.length / PAGE_SIZE)));
+  const pagedTimesheets = filteredTimesheets.slice((tsPageSafe - 1) * PAGE_SIZE, tsPageSafe * PAGE_SIZE);
 
   async function refreshTimeCards() {
     setTimeCards(await fetchTimesheetQueue());
@@ -533,36 +742,21 @@ function ManagerDashboard() {
 
               {!logsCollapsed && (
               <>
-              <div className="mt-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                <div className="flex flex-wrap gap-1.5 rounded-2xl bg-slate-100 p-1.5">
-                  {LOG_FILTERS.map(({ key, label }) => (
-                    <button
-                      key={key}
-                      type="button"
-                      onClick={() => setLogFilter(key)}
-                      className={`inline-flex min-h-9 items-center gap-1.5 rounded-xl px-3 text-xs font-bold transition ${
-                        logFilter === key ? "bg-white text-slate-950 shadow-sm" : "text-slate-600 hover:text-slate-950"
-                      }`}
-                    >
-                      {label}
-                      <span className={`inline-flex min-w-5 items-center justify-center rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
-                        logFilter === key ? "bg-blue-50 text-blue-700" : "bg-slate-200 text-slate-600"
-                      }`}>
-                        {logCounts[key]}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-                <div className="relative w-full lg:w-72">
-                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                  <input
-                    value={logSearch}
-                    onChange={(event) => setLogSearch(event.target.value)}
-                    placeholder="Search log #, project, technician..."
-                    className="min-h-10 w-full rounded-xl border border-slate-200 bg-white pl-9 pr-3 text-sm font-semibold text-slate-900 outline-none focus:border-blue-700 focus:ring-4 focus:ring-blue-100"
-                  />
-                </div>
-              </div>
+              <QueueFilters
+                filters={LOG_FILTERS}
+                active={logFilter}
+                counts={logCounts}
+                onFilter={logFilterHandlers.onFilter}
+                search={logSearch}
+                onSearch={logFilterHandlers.onSearch}
+                searchPlaceholder="Search log #, technician name..."
+                projectOptions={logProjectOptions}
+                project={logProject}
+                onProject={logFilterHandlers.onProject}
+                date={logDate}
+                onDate={logFilterHandlers.onDate}
+                dateLabel="Filter by log date"
+              />
 
               {error && (
                 <div className="mt-4 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm font-semibold text-rose-800">
@@ -570,87 +764,101 @@ function ManagerDashboard() {
                 </div>
               )}
 
-              <div className="mt-4 space-y-3">
-                {filteredLogs.map((log) => (
-                  <article key={log.rowId} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                    <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <p className="break-words text-sm font-bold text-slate-950">{log.number}</p>
-                          <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-bold ${logStatusPill(log.bucket).className}`}>
-                            {logStatusPill(log.bucket).label}
-                          </span>
-                          {log.bucket === "pending" && (
-                            <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-bold ${agingTone(log.agingHours)}`}>
-                              <Clock className="h-3 w-3" /> {agingLabel(log.agingHours)}
+              {filteredLogs.length > 0 && (
+                <div className="mt-4 overflow-x-auto rounded-2xl border border-slate-200">
+                  <table className="min-w-[1080px] w-full border-collapse text-left text-sm">
+                    <thead className="bg-slate-950 text-xs font-bold uppercase tracking-[0.08em] text-white">
+                      <tr>
+                        {["Log #", "Project", "Technician", "Date", "Contents", "Status", "Submitted", "Actions"].map((header) => (
+                          <th key={header} className="px-3 py-3">{header}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pagedLogs.map((log) => (
+                        <tr key={log.rowId} className="border-t border-slate-200">
+                          <td className="px-3 py-3 font-bold text-slate-950">{log.number}</td>
+                          <td className="px-3 py-3 font-semibold">{log.projectName}</td>
+                          <td className="px-3 py-3 font-semibold">
+                            <span className="inline-flex items-center gap-1.5">
+                              <HardHat className="h-3.5 w-3.5 text-slate-400" /> {log.technician}
                             </span>
-                          )}
-                        </div>
-                        <p className="mt-1 text-sm font-semibold text-slate-600">{log.projectName}</p>
-                        <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] font-bold text-slate-600">
-                          <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1">
-                            <HardHat className="h-3.5 w-3.5" /> {log.technician}
-                          </span>
-                          <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1">
-                            <CalendarDays className="h-3.5 w-3.5" /> {log.logDate}{log.shift ? ` • ${log.shift}` : ""}
-                          </span>
-                          <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1">
+                          </td>
+                          <td className="px-3 py-3 font-semibold whitespace-nowrap">{log.logDate}{log.shift ? ` • ${log.shift}` : ""}</td>
+                          <td className="px-3 py-3 text-xs font-semibold text-slate-600 whitespace-nowrap">
                             {log.activityCount} {log.activityCount === 1 ? "activity" : "activities"} • {log.reportCount} {log.reportCount === 1 ? "report" : "reports"}
-                          </span>
-                        </div>
-                      </div>
-                      <div className="flex shrink-0 flex-wrap items-center gap-2">
-                        {log.bucket === "pending" && (
-                          <button
-                            type="button"
-                            onClick={() => archiveDailyLog(log)}
-                            title="Remove a stale submission from the review queue"
-                            className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-500 hover:bg-slate-50 hover:text-slate-800"
-                          >
-                            <Archive className="h-4 w-4" /> Archive
-                          </button>
-                        )}
-                        {log.bucket === "archived" && (
-                          <button
-                            type="button"
-                            onClick={() => restoreDailyLog(log)}
-                            title="Return this submission to the pending review queue"
-                            className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-500 hover:bg-slate-50 hover:text-slate-800"
-                          >
-                            <Archive className="h-4 w-4" /> Restore
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => openDailyLogPdf(log)}
-                          className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-800 hover:bg-slate-50"
-                        >
-                          <Eye className="h-4 w-4" /> View PDF
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => navigate(`/manager/daily-log-review/${log.clientLogId || log.rowId}`)}
-                          className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-blue-700 px-4 text-xs font-bold text-white hover:bg-blue-600"
-                        >
-                          <ClipboardCheck className="h-4 w-4" /> {log.bucket === "pending" ? "Review" : "Open"}
-                        </button>
-                      </div>
-                    </div>
-                  </article>
-                ))}
-                {!loading && filteredLogs.length === 0 && (
-                  <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50/60 p-6 text-center">
-                    <p className="text-sm font-bold text-slate-700">
-                      {logSearch.trim()
-                        ? "No daily logs match your search."
-                        : logFilter === "pending"
-                          ? "No daily logs are waiting for review."
-                          : `No ${logFilter === "all" ? "" : logFilter + " "}daily logs yet.`}
-                    </p>
-                    <p className="mt-1 text-xs font-semibold text-slate-500">New technician submissions will appear here automatically.</p>
-                  </div>
-                )}
-              </div>
+                          </td>
+                          <td className="px-3 py-3">
+                            <span className={`inline-flex items-center whitespace-nowrap rounded-full border px-2 py-0.5 text-[11px] font-bold ${logStatusPill(log.bucket).className}`}>
+                              {logStatusPill(log.bucket).label}
+                            </span>
+                          </td>
+                          <td className="px-3 py-3">
+                            {log.bucket === "pending" ? (
+                              <span className={`inline-flex items-center gap-1 whitespace-nowrap rounded-full border px-2 py-0.5 text-[11px] font-bold ${agingTone(log.agingHours)}`}>
+                                <Clock className="h-3 w-3" /> {agingLabel(log.agingHours)}
+                              </span>
+                            ) : (
+                              <span className="whitespace-nowrap text-xs font-semibold text-slate-500">{agingLabel(log.agingHours)}</span>
+                            )}
+                          </td>
+                          <td className="px-3 py-3">
+                            <div className="flex flex-wrap items-center gap-2">
+                              {log.bucket === "pending" && (
+                                <button
+                                  type="button"
+                                  onClick={() => archiveDailyLog(log)}
+                                  title="Remove a stale submission from the review queue"
+                                  className="inline-flex min-h-9 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-500 hover:bg-slate-50 hover:text-slate-800"
+                                >
+                                  <Archive className="h-3.5 w-3.5" /> Archive
+                                </button>
+                              )}
+                              {log.bucket === "archived" && (
+                                <button
+                                  type="button"
+                                  onClick={() => restoreDailyLog(log)}
+                                  title="Return this submission to the pending review queue"
+                                  className="inline-flex min-h-9 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-500 hover:bg-slate-50 hover:text-slate-800"
+                                >
+                                  <Archive className="h-3.5 w-3.5" /> Restore
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => openDailyLogPdf(log)}
+                                className="inline-flex min-h-9 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-800 hover:bg-slate-50"
+                              >
+                                <Eye className="h-3.5 w-3.5" /> View PDF
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => navigate(`/manager/daily-log-review/${log.clientLogId || log.rowId}`)}
+                                className="inline-flex min-h-9 items-center gap-1.5 rounded-xl bg-blue-700 px-3 text-xs font-bold text-white hover:bg-blue-600"
+                              >
+                                <ClipboardCheck className="h-3.5 w-3.5" /> {log.bucket === "pending" ? "Review" : "Open"}
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {!loading && filteredLogs.length === 0 && (
+                <div className="mt-4 rounded-2xl border border-dashed border-slate-300 bg-slate-50/60 p-6 text-center">
+                  <p className="text-sm font-bold text-slate-700">
+                    {logSearch.trim() || logProject !== "all" || logDate
+                      ? "No daily logs match your filters."
+                      : logFilter === "pending"
+                        ? "No daily logs are waiting for review."
+                        : `No ${logFilter === "all" ? "" : logFilter + " "}daily logs yet.`}
+                  </p>
+                  <p className="mt-1 text-xs font-semibold text-slate-500">New technician submissions will appear here automatically.</p>
+                </div>
+              )}
+              <Paginator page={logPageSafe} total={filteredLogs.length} onPage={setLogPage} noun="daily logs" />
               </>
               )}
             </div>
@@ -673,24 +881,50 @@ function ManagerDashboard() {
                 <ChevronDown className={`h-5 w-5 text-slate-400 transition-transform ${timesheetsCollapsed ? "-rotate-90" : ""}`} />
               </button>
               {!timesheetsCollapsed && (
-                submittedTimesheets.length === 0 ? (
-                  <div className="mt-4 flex items-center gap-3 rounded-2xl border border-dashed border-slate-300 bg-slate-50/60 px-4 py-4">
-                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-400">
-                      <CalendarDays className="h-4 w-4" />
-                    </span>
-                    <div>
-                      <p className="text-sm font-bold text-slate-700">No weekly timesheets are pending review.</p>
-                      <p className="text-xs font-semibold text-slate-500">Submitted timesheets will appear here for approval.</p>
-                    </div>
-                  </div>
-                ) : (
-                  <TimesheetReviewTable
-                    timesheets={submittedTimesheets}
-                    onApprove={approveTimesheet}
-                    onReject={rejectTimesheet}
-                    highlightedTimesheet={highlightedTimesheet}
+                <>
+                  <QueueFilters
+                    filters={TIMESHEET_FILTERS}
+                    active={tsFilter}
+                    counts={timesheetCounts}
+                    onFilter={tsFilterHandlers.onFilter}
+                    search={tsSearch}
+                    onSearch={tsFilterHandlers.onSearch}
+                    searchPlaceholder="Search timesheet #, employee name..."
+                    projectOptions={timesheetProjectOptions}
+                    project={tsProject}
+                    onProject={tsFilterHandlers.onProject}
+                    date={tsDate}
+                    onDate={tsFilterHandlers.onDate}
+                    dateLabel="Show the week containing this date"
                   />
-                )
+                  {filteredTimesheets.length === 0 ? (
+                    <div className="mt-4 flex items-center gap-3 rounded-2xl border border-dashed border-slate-300 bg-slate-50/60 px-4 py-4">
+                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-400">
+                        <CalendarDays className="h-4 w-4" />
+                      </span>
+                      <div>
+                        <p className="text-sm font-bold text-slate-700">
+                          {tsSearch.trim() || tsProject !== "all" || tsDate
+                            ? "No timesheets match your filters."
+                            : tsFilter === "pending"
+                              ? "No weekly timesheets are pending review."
+                              : `No ${tsFilter === "all" ? "" : tsFilter + " "}timesheets yet.`}
+                        </p>
+                        <p className="text-xs font-semibold text-slate-500">Submitted timesheets will appear here for approval.</p>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <TimesheetReviewTable
+                        timesheets={pagedTimesheets}
+                        onApprove={approveTimesheet}
+                        onReject={rejectTimesheet}
+                        highlightedTimesheet={highlightedTimesheet}
+                      />
+                      <Paginator page={tsPageSafe} total={filteredTimesheets.length} onPage={setTsPage} noun="timesheets" />
+                    </>
+                  )}
+                </>
               )}
             </section>
           </div>
@@ -721,9 +955,9 @@ function ManagerDashboard() {
                   ]}
                 />
                 <div className="min-w-0 flex-1">
-                  <SummaryLegendRow color="#f59e0b" label="Pending" count={logCounts.pending} onClick={() => setLogFilter("pending")} />
-                  <SummaryLegendRow color="#10b981" label="Approved" count={logCounts.approved} onClick={() => setLogFilter("approved")} />
-                  <SummaryLegendRow color="#f43f5e" label="Returned" count={logCounts.returned} onClick={() => setLogFilter("returned")} />
+                  <SummaryLegendRow color="#f59e0b" label="Pending" count={logCounts.pending} onClick={() => logFilterHandlers.onFilter("pending")} />
+                  <SummaryLegendRow color="#10b981" label="Approved" count={logCounts.approved} onClick={() => logFilterHandlers.onFilter("approved")} />
+                  <SummaryLegendRow color="#f43f5e" label="Returned" count={logCounts.returned} onClick={() => logFilterHandlers.onFilter("returned")} />
                 </div>
               </div>
               <div className="mt-2.5 flex items-center justify-between rounded-xl bg-slate-950 px-3 py-2">
