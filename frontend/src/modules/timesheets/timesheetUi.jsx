@@ -587,17 +587,18 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, onJumpToDate
             </div>
           )}
         </div>
-        <dl className="mt-2 border-b border-slate-200 pb-3 sm:mt-4 sm:flex sm:flex-wrap sm:gap-x-10 sm:gap-y-2 sm:pb-5">
-          <div className="flex items-baseline gap-2 py-1 sm:block sm:py-0">
-            <dt className="shrink-0 text-[13px] font-medium text-slate-500">Employee</dt>
-            <dd className="min-w-0 truncate text-[15px] font-semibold text-slate-900 sm:mt-0.5">
-              {card.technicianName || card.technician_name || "-"}
-              <span className="font-medium text-slate-500 sm:hidden"> · {card.technicianRole || card.technician_role || "Field Engineer"}</span>
-            </dd>
+        <p className="mt-1.5 truncate border-b border-slate-200 pb-3 text-center text-sm text-slate-500 sm:hidden">
+          <span className="font-semibold text-slate-900">{card.technicianName || card.technician_name || "-"}</span>
+          {" · "}{card.technicianRole || card.technician_role || "Field Engineer"}
+        </p>
+        <dl className="mt-4 hidden flex-wrap gap-x-10 gap-y-2 border-b border-slate-200 pb-5 sm:flex">
+          <div>
+            <dt className="text-[13px] font-medium text-slate-500">Employee</dt>
+            <dd className="mt-0.5 text-[15px] font-semibold text-slate-900">{card.technicianName || card.technician_name || "-"}</dd>
           </div>
-          <div className="hidden sm:block">
+          <div>
             <dt className="text-[13px] font-medium text-slate-500">Role</dt>
-            <dd className="text-[15px] font-semibold text-slate-900 sm:mt-0.5">{card.technicianRole || card.technician_role || "Field Engineer"}</dd>
+            <dd className="mt-0.5 text-[15px] font-semibold text-slate-900">{card.technicianRole || card.technician_role || "Field Engineer"}</dd>
           </div>
         </dl>
       </header>
@@ -949,14 +950,18 @@ function TimeCardReadOnlyView({ card, onRecall, onViewPdf, onDownloadPdf, onNavi
           </div>
         </div>
         <div className="mt-3 border-b border-slate-200 pb-4 sm:mt-4 sm:flex sm:flex-wrap sm:items-end sm:justify-between sm:gap-4 sm:pb-5">
-          <dl className="sm:flex sm:flex-wrap sm:gap-x-10 sm:gap-y-2">
-            <div className="flex items-baseline gap-2 py-1 sm:block sm:py-0">
-              <dt className="shrink-0 text-[13px] font-medium text-slate-500">Employee</dt>
-              <dd className="min-w-0 truncate text-[15px] font-semibold text-slate-900 sm:mt-0.5">{card.technicianName || card.technician_name || "-"}</dd>
+          <p className="truncate text-center text-sm text-slate-500 sm:hidden">
+            <span className="font-semibold text-slate-900">{card.technicianName || card.technician_name || "-"}</span>
+            {submittedAt ? ` · Submitted ${formatDateTime(submittedAt)}` : ""}
+          </p>
+          <dl className="hidden sm:flex sm:flex-wrap sm:gap-x-10 sm:gap-y-2">
+            <div>
+              <dt className="text-[13px] font-medium text-slate-500">Employee</dt>
+              <dd className="mt-0.5 text-[15px] font-semibold text-slate-900">{card.technicianName || card.technician_name || "-"}</dd>
             </div>
-            <div className="flex items-baseline gap-2 py-1 sm:block sm:py-0">
-              <dt className="shrink-0 text-[13px] font-medium text-slate-500">Submitted</dt>
-              <dd className="min-w-0 truncate text-[15px] font-semibold text-slate-900 sm:mt-0.5">{submittedAt ? formatDateTime(submittedAt) : "-"}</dd>
+            <div>
+              <dt className="text-[13px] font-medium text-slate-500">Submitted</dt>
+              <dd className="mt-0.5 text-[15px] font-semibold text-slate-900">{submittedAt ? formatDateTime(submittedAt) : "-"}</dd>
             </div>
           </dl>
           <div className="mt-2 flex items-center gap-2 sm:mt-0">
