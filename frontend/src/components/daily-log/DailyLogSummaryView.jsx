@@ -777,7 +777,7 @@ export default function DailyLogSummaryView({ log, onEdit, onViewPdf, onDownload
                 type="button"
                 onClick={handleRegeneratePdf}
                 disabled={isRegeneratingPdf}
-                className="inline-flex min-h-9 items-center gap-1.5 text-[13px] font-bold text-blue-800 disabled:cursor-not-allowed disabled:opacity-60 sm:min-h-11 sm:rounded-2xl sm:border sm:border-blue-200 sm:bg-blue-50 sm:px-4 sm:text-sm"
+                className="inline-flex min-h-9 w-full items-center justify-center gap-1.5 text-[13px] font-bold text-blue-800 disabled:cursor-not-allowed disabled:opacity-60 sm:min-h-11 sm:w-auto sm:rounded-2xl sm:border sm:border-blue-200 sm:bg-blue-50 sm:px-4 sm:text-sm"
               >
                 <RotateCcw className={`h-4 w-4 ${isRegeneratingPdf ? "animate-spin" : ""}`} />
                 {isRegeneratingPdf ? "Regenerating..." : "Regenerate PDF"}
