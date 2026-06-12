@@ -10,6 +10,7 @@ import {
   findFiledCardForWeek,
   getTimeCardCollections,
   getTimeCards,
+  getWeekStartFor,
   normalizeWeeklyCard,
   saveTimeCard
 } from "../../services/timeCardService";
@@ -161,16 +162,7 @@ export default function TimesheetWorkspace() {
     setView("card");
   }
 
-  function navigateTimeCardWeek(card, direction) {
-    const currentWeekStart = card.weekStartDate || card.week_start_date || card.date;
-    const parsed = new Date(`${currentWeekStart}T00:00:00`);
-    if (Number.isNaN(parsed.getTime())) return;
-    parsed.setDate(parsed.getDate() + direction * 7);
-    const targetWeekStart = [
-      parsed.getFullYear(),
-      String(parsed.getMonth() + 1).padStart(2, "0"),
-      String(parsed.getDate()).padStart(2, "0")
-    ].join("-");
+  function openTimeCardWeek(targetWeekStart) {
     const cardsForWeek = getTimeCards()
       .filter((item) => (item.weekStartDate || item.week_start_date || item.date) === targetWeekStart)
       .sort((left, right) => new Date(right.updatedAt || 0) - new Date(left.updatedAt || 0));
@@ -192,6 +184,23 @@ export default function TimesheetWorkspace() {
       weekStartDate: targetWeekStart,
       week_start_date: targetWeekStart
     }));
+  }
+
+  function navigateTimeCardWeek(card, direction) {
+    const currentWeekStart = card.weekStartDate || card.week_start_date || card.date;
+    const parsed = new Date(`${currentWeekStart}T00:00:00`);
+    if (Number.isNaN(parsed.getTime())) return;
+    parsed.setDate(parsed.getDate() + direction * 7);
+    openTimeCardWeek(getWeekStartFor(parsed));
+  }
+
+  // Calendar jump: any picked date opens the timesheet week containing it,
+  // clamped to the current week since hours cannot be logged ahead of time.
+  function jumpToTimeCardDate(dateValue) {
+    if (!dateValue) return;
+    const targetWeekStart = getWeekStartFor(dateValue);
+    const currentWeekStart = getWeekStartFor(new Date());
+    openTimeCardWeek(targetWeekStart > currentWeekStart ? currentWeekStart : targetWeekStart);
   }
 
   function removeTimeCard(card) {
@@ -267,6 +276,7 @@ export default function TimesheetWorkspace() {
               onDownloadPdf={() => downloadTimeCardPdf(selectedTimeCard)}
               onRegeneratePdf={() => regenerateTimesheetPdf(selectedTimeCard)}
               onNavigateWeek={(direction) => navigateTimeCardWeek(selectedTimeCard, direction)}
+              onJumpToDate={jumpToTimeCardDate}
             />
           ) : (
             <TimeCardEditor
@@ -278,6 +288,7 @@ export default function TimesheetWorkspace() {
               onDelete={() => removeTimeCard(selectedTimeCard)}
               onCancel={() => setView("list")}
               onNavigateWeek={(direction) => navigateTimeCardWeek(selectedTimeCard, direction)}
+              onJumpToDate={jumpToTimeCardDate}
               assignedProjects={projectOptions}
             />
           )}

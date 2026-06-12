@@ -190,6 +190,12 @@ function migrateLegacyEntries(card) {
 
 // Ensure a card matches the weekly multi-project shape and recompute its totals.
 // Handles lazy migration of legacy daily/single-project cards.
+// Monday (YYYY-MM-DD) of the week containing any date — used by the week
+// picker so a tapped calendar date resolves to its timesheet week.
+export function getWeekStartFor(value) {
+  return toDateInputValue(getMonday(value));
+}
+
 export function normalizeWeeklyCard(card = {}) {
   const weekStartDate = toDateInputValue(getMonday(card.weekStartDate || card.week_start_date || card.date));
   const weekEndDate = addDays(weekStartDate, 6);

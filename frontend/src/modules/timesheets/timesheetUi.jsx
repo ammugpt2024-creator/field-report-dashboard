@@ -2,7 +2,7 @@
 // timesheets are a standalone, role-neutral module (every employee files one;
 // approval routes to their project manager). Shared by the technician
 // workspace and the /timesheets route.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   CalendarDays,
   ChevronDown,
@@ -149,13 +149,25 @@ function formatWeekRange(weekStartDate, weekEndDate) {
   return `${formatShortDate(weekStartDate).replace(/, \d{4}$/, "")} - ${formatShortDate(weekEndDate)}`;
 }
 
-function WeekNavigator({ weekStartDate, weekEndDate, onNavigate, variant = "light" }) {
+function WeekNavigator({ weekStartDate, weekEndDate, onNavigate, onJumpToDate, variant = "light" }) {
+  const weekPickerRef = useRef(null);
   const weekStart = weekStartDate ? new Date(`${weekStartDate}T00:00:00`) : null;
   const currentMonday = new Date();
   currentMonday.setHours(0, 0, 0, 0);
   currentMonday.setDate(currentMonday.getDate() + (currentMonday.getDay() === 0 ? -6 : 1 - currentMonday.getDay()));
   // Timesheets cannot be logged ahead of time, so navigation stops at the current week.
   const nextDisabled = !weekStart || Number.isNaN(weekStart.getTime()) || weekStart >= currentMonday;
+  const todayValue = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  function openWeekPicker() {
+    const input = weekPickerRef.current;
+    if (!input) return;
+    try {
+      input.showPicker();
+    } catch {
+      input.focus();
+      input.click();
+    }
+  }
   const isDark = variant === "dark";
   const arrowClass = isDark
     ? "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-600 bg-slate-800/80 text-slate-200 shadow-sm transition hover:border-slate-500 hover:bg-slate-700 hover:text-white disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none disabled:hover:border-slate-600 disabled:hover:bg-slate-800/80 disabled:hover:text-slate-200"
@@ -165,10 +177,34 @@ function WeekNavigator({ weekStartDate, weekEndDate, onNavigate, variant = "ligh
       <button type="button" onClick={() => onNavigate(-1)} aria-label="Previous week" title="Previous week" className={arrowClass}>
         <ChevronLeft className="h-4 w-4" />
       </button>
-      <span className={`inline-flex min-w-[176px] items-center justify-center gap-2 text-sm font-semibold ${isDark ? "text-white" : "text-slate-900"}`}>
-        <CalendarDays className={`h-4 w-4 shrink-0 ${isDark ? "text-slate-400" : "text-slate-400"}`} />
-        {formatWeekRange(weekStartDate, weekEndDate)}
-      </span>
+      {onJumpToDate ? (
+        <span className="relative inline-flex">
+          <button
+            type="button"
+            onClick={openWeekPicker}
+            title="Pick a date to jump to its week"
+            className={`inline-flex min-w-[176px] items-center justify-center gap-2 rounded-lg px-2 py-1.5 text-sm font-semibold transition ${isDark ? "text-white hover:bg-slate-700/60" : "text-slate-900 hover:bg-slate-100"}`}
+          >
+            <CalendarDays className="h-4 w-4 shrink-0 text-slate-400" />
+            {formatWeekRange(weekStartDate, weekEndDate)}
+          </button>
+          <input
+            ref={weekPickerRef}
+            type="date"
+            value={weekStartDate || ""}
+            max={todayValue}
+            onChange={(event) => event.target.value && onJumpToDate(event.target.value)}
+            aria-label="Jump to week containing date"
+            tabIndex={-1}
+            className="pointer-events-none absolute inset-0 h-full w-full opacity-0"
+          />
+        </span>
+      ) : (
+        <span className={`inline-flex min-w-[176px] items-center justify-center gap-2 text-sm font-semibold ${isDark ? "text-white" : "text-slate-900"}`}>
+          <CalendarDays className={`h-4 w-4 shrink-0 ${isDark ? "text-slate-400" : "text-slate-400"}`} />
+          {formatWeekRange(weekStartDate, weekEndDate)}
+        </span>
+      )}
       <button type="button" onClick={() => onNavigate(1)} disabled={nextDisabled} aria-label="Next week" title={nextDisabled ? "Future weeks are not available" : "Next week"} className={arrowClass}>
         <ChevronRight className="h-4 w-4" />
       </button>
@@ -303,7 +339,7 @@ function useTimesheetApprovers(projectRows) {
   return { approvers: Array.from(byManager.values()), managerByProject: projectManagers };
 }
 
-function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, assignedProjects = [] }) {
+function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, onJumpToDate, assignedProjects = [] }) {
   const isReturned = [TIME_CARD_STATUS.RETURNED, TIME_CARD_STATUS.REJECTED].includes(card.status);
   const isDraft = card.status === TIME_CARD_STATUS.DRAFT;
   const canEditHours = isDraft || isReturned;
@@ -507,7 +543,7 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, assignedProj
           </span>
           {onNavigateWeek && (
             <div className="ml-auto">
-              <WeekNavigator weekStartDate={weekStartDate} weekEndDate={weekEndDate} onNavigate={onNavigateWeek} />
+              <WeekNavigator weekStartDate={weekStartDate} weekEndDate={weekEndDate} onNavigate={onNavigateWeek} onJumpToDate={onJumpToDate} />
             </div>
           )}
         </div>
@@ -792,7 +828,7 @@ function ReadOnlyValue({ label, value }) {
   );
 }
 
-function TimeCardReadOnlyView({ card, onRecall, onViewPdf, onDownloadPdf, onRegeneratePdf, onNavigateWeek }) {
+function TimeCardReadOnlyView({ card, onRecall, onViewPdf, onDownloadPdf, onRegeneratePdf, onNavigateWeek, onJumpToDate }) {
   const isSubmitted = card.status === TIME_CARD_STATUS.SUBMITTED;
   const isApproved = card.status === TIME_CARD_STATUS.APPROVED;
   const isCompleted = card.status === TIME_CARD_STATUS.COMPLETED;
@@ -832,7 +868,7 @@ function TimeCardReadOnlyView({ card, onRecall, onViewPdf, onDownloadPdf, onRege
           </span>
           <div className="ml-auto flex flex-wrap items-center gap-2">
             {onNavigateWeek ? (
-              <WeekNavigator weekStartDate={weekStart} weekEndDate={weekEnd} onNavigate={onNavigateWeek} />
+              <WeekNavigator weekStartDate={weekStart} weekEndDate={weekEnd} onNavigate={onNavigateWeek} onJumpToDate={onJumpToDate} />
             ) : (
               <p className="text-sm font-semibold text-slate-900">{formatWeekRange(weekStart, weekEnd)}</p>
             )}
