@@ -14,7 +14,7 @@ import {
   normalizeWeeklyCard,
   saveTimeCard
 } from "../../services/timeCardService";
-import { openTimeCardPdf, regenerateTimeCardPdf } from "../../services/timeCardPdfService";
+import { openTimeCardPdf } from "../../services/timeCardPdfService";
 import { fetchTimesheetStatusUpdates, fetchTimesheetsForTechnician } from "../../services/timesheetSyncService";
 import { TimeCardEditor, TimeCardReadOnlyView, TimeCardsPage } from "./timesheetUi";
 
@@ -241,14 +241,6 @@ export default function TimesheetWorkspace() {
     }
   }
 
-  async function regenerateTimesheetPdf(card) {
-    const withPdf = await regenerateTimeCardPdf(card);
-    refreshTimeCards(withPdf);
-    if ((withPdf.pdfGenerationStatus || withPdf.pdf_generation_status) === "failed") {
-      window.alert("Unable to generate Timesheet PDF. Please click Regenerate PDF or contact support.");
-    }
-  }
-
   const selectedTimeCard = activeTimeCard;
   const isTimeCardReadOnly = selectedTimeCard && [
     TIME_CARD_STATUS.SUBMITTED,
@@ -274,7 +266,6 @@ export default function TimesheetWorkspace() {
               onRecall={() => recallTimeCard(selectedTimeCard)}
               onViewPdf={() => viewTimeCardPdf(selectedTimeCard)}
               onDownloadPdf={() => downloadTimeCardPdf(selectedTimeCard)}
-              onRegeneratePdf={() => regenerateTimesheetPdf(selectedTimeCard)}
               onNavigateWeek={(direction) => navigateTimeCardWeek(selectedTimeCard, direction)}
               onJumpToDate={jumpToTimeCardDate}
             />

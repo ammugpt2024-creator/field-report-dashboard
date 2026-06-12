@@ -6,7 +6,6 @@ import SignatureModal from '../components/SignatureModal';
 import PdfViewer from '../components/PdfViewer';
 import StatusBadge from '../components/StatusBadge';
 import ReportActions from '../components/ReportActions';
-import { generateConcreteTestLogPdf } from '../services/pdfGenerator';
 import { getSignatureStoragePath, uploadReportPdf, uploadSignature } from '../services/storageService';
 import { setReportStatus } from '../services/reportService';
 import { ChevronLeft, CircleAlert, ExternalLink, FolderKanban } from 'lucide-react';
@@ -700,65 +699,6 @@ export default function ConcreteTestLogDetails() {
         console.log('Action not handled in details:', actionId);
     }
   };
-
-  function mapReportToForm(reportData) {
-    return {
-      projectName: reportData.project_name,
-      projectNumber: reportData.project_number,
-      dateSampled: reportData.date_sampled,
-      weather: reportData.weather,
-      minTemp: reportData.min_temp,
-      maxTemp: reportData.max_temp,
-      location: reportData.location,
-      batchPlant: reportData.batch_plant,
-      gc: reportData.gc,
-      qcRep: reportData.qc_rep,
-      dataLogger: reportData.data_logger,
-      subContractor: reportData.sub_contractor,
-      totalQuantityPlaced: reportData.total_quantity_placed,
-      dfrNumber: reportData.dfr_number || specifications?.dfr_number,
-      timeIn: reportData.time_in,
-      timeOut: reportData.time_out,
-      airContentSpec: specifications?.air_content || reportData.air_content_spec,
-      unitWeightSpec: specifications?.unit_weight || reportData.unit_weight_spec,
-      slumpSpec: specifications?.slump || reportData.slump_spec,
-      jRingSpec: specifications?.j_ring || reportData.j_ring_spec,
-      spreadSpec: specifications?.spread || reportData.spread_spec,
-      strengthSpec: specifications?.speed_of_stress || reportData.strength_spec,
-      mixNoSpec: specifications?.mix_no || reportData.mix_no_spec
-    };
-  }
-
-  function mapRowsForPdf(savedRows) {
-    return savedRows.map((row) => ({
-      testNo: row.test_number,
-      ticketNo: row.ticket_number,
-      truckNo: row.truck_number,
-      cubicYards: row.cubic_yards,
-      totalPlaced: row.total_placed_qty,
-      timeBatched: row.time_batched,
-      arrivalTime: row.arrival_time,
-      timeSampled: row.time_tested,
-      startPlacement: row.placement,
-      finishUnload: row.finish_unload,
-      actualMinutes: row.actual_minutes,
-      waterAdded: row.water_added_gal,
-      airTemp: row.air_temp_f,
-      concreteTemp: row.concrete_temp_f,
-      slump: row.slump_in,
-      airContent: row.air_content_percent,
-      unitWeight: row.unit_weight_lbs_ft3,
-      jRing: row.j_ring_in,
-      spread: row.spread_in,
-      setNo: row.set_number,
-      labCylinders: row.lab_cylinders,
-      fieldCylinders: row.field_cylinders,
-      comments: row.comments,
-      status: row.row_status
-        ? row.row_status.replaceAll('_', ' ').toLowerCase().replace(/\b\w/g, (char) => char.toUpperCase())
-        : 'Open'
-    }));
-  }
 
   async function handleApproveDecision(signatureOverride = '', actionOverride = approvalAction) {
     if (!report) return;

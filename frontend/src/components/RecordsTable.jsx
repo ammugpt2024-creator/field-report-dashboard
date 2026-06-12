@@ -50,7 +50,7 @@ export default function RecordsTable({
       </div>
 
       <div className="space-y-4">
-        {rows.map((row, index) => (
+        {rows.map((row) => (
           <div key={row.id} className="overflow-hidden rounded-3xl border border-slate-200 bg-slate-50">
             <div className="border-b border-slate-200 bg-white px-4 py-3">
               <div className="flex flex-col gap-4 sm:grid sm:grid-cols-[1.3fr_1fr_1fr_1fr_1fr] sm:items-center sm:gap-3">

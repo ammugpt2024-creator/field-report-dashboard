@@ -26,12 +26,11 @@ import {
   getDailyLogCollections,
   getDailyLogs,
   saveDailyLog,
-  submitDailyLog,
   syncDailyLogsFromSupabase
 } from "../../services/dailyLogService";
 import { openDailyLogPdf, regenerateDailyLogPdf } from "../../services/dailyLogPdfService";
 import { generateAndUploadConcreteReportPdf, openConcreteReportPdf } from "../../services/concreteReportPdfService";
-import { openTimeCardPdf, regenerateTimeCardPdf } from "../../services/timeCardPdfService";
+import { openTimeCardPdf } from "../../services/timeCardPdfService";
 import {
   createTimeCard,
   deleteTimeCard,
@@ -42,7 +41,6 @@ import {
   LOCKED_TIME_CARD_STATUSES,
   normalizeWeeklyCard,
   saveTimeCard,
-  submitTimeCard,
   TIME_CARD_STATUS
 } from "../../services/timeCardService";
 import { formatDateTime } from "./fieldEngineerData";
@@ -334,7 +332,7 @@ function ActionTimeCardRow({ card, onOpen }) {
 
 
 
-function DashboardOverview({ profile, logCollections, timeCardCollections, onOpenLog, onOpenTimeCard, onCreateLog, onCreateTimeCard, navigate }) {
+function DashboardOverview({ profile, logCollections, timeCardCollections, onOpenLog, onOpenTimeCard, onCreateLog, navigate }) {
   // Collapsed by default — expand on demand via the +/- control.
   const [activityCollapsed, setActivityCollapsed] = useState(true);
   const actionRequiredLogs = [...logCollections.returnedLogs, ...logCollections.draftLogs];
@@ -876,7 +874,7 @@ function ConcreteReportPage({ log, activityId, reportId, onChange, onBack }) {
       return;
     }
     const completedAt = new Date().toISOString();
-    let pdfPatch = {};
+    let pdfPatch;
     try {
       pdfPatch = await generateAndUploadConcreteReportPdf(log, activity, { ...report, reportNumber, status: "completed", completedAt });
     } catch (error) {
@@ -1916,7 +1914,7 @@ const DAILY_LOG_TABS = [
   { id: "approved", label: "Approved" }
 ];
 
-function DailyLogsPage({ logCollections, initialTab = "draft", onOpenLog, onCreateLog, onDuplicateLog, onDeleteLog, onRecallLog, onResubmitLog, onDownloadLogPdf }) {
+function DailyLogsPage({ logCollections, initialTab = "draft", onOpenLog, onCreateLog, onDeleteLog, onRecallLog, onDownloadLogPdf }) {
   const [activeTab, setActiveTab] = useState(initialTab);
   const [searchTerm, setSearchTerm] = useState("");
   useEffect(() => {
@@ -2257,8 +2255,6 @@ function TechnicianProfilePage({ profile, companyName, projectOptions, logCollec
 export default function FieldEngineerWorkspace({
   view,
   profile,
-  role,
-  collections,
   defaultProjectId,
   projectLabel,
   assignedProjects = [],
@@ -2269,11 +2265,7 @@ export default function FieldEngineerWorkspace({
   activeReportId,
   loading,
   error,
-  discardingId,
-  navigate,
-  getActions,
-  onAction,
-  onDiscardDraft
+  navigate
 }) {
   const [dailyLogs, setDailyLogs] = useState([]);
   const [activeLog, setActiveLog] = useState(null);
@@ -2451,20 +2443,6 @@ export default function FieldEngineerWorkspace({
     navigate(`/technician/daily-log/${log.id}`);
   }
 
-  function duplicateLog(log) {
-    const duplicated = saveDailyLog({
-      ...log,
-      id: crypto.randomUUID(),
-      status: DAILY_LOG_STATUS.DRAFT,
-      submittedAt: "",
-      approvedAt: "",
-      returnedAt: "",
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    });
-    refreshLogs(duplicated);
-  }
-
   function deleteLog(log) {
     if (!window.confirm("Delete this draft Daily Log?")) return;
     deleteDailyLog(log.id);
@@ -2517,17 +2495,6 @@ export default function FieldEngineerWorkspace({
       updatedAt: recalledAt
     }, { allowStatusDowngrade: true });
     refreshLogs(recalled);
-  }
-
-  async function resubmitLog(log) {
-    const resubmitted = submitDailyLog(log);
-    refreshLogs(resubmitted);
-    try {
-      const withPdf = await regenerateDailyLogPdf(resubmitted);
-      refreshLogs(withPdf);
-    } catch (error) {
-      console.warn("Daily Log PDF generation failed after resubmission", error);
-    }
   }
 
   async function viewLogPdf(log) {
@@ -2677,13 +2644,6 @@ export default function FieldEngineerWorkspace({
     refreshTimeCards(recalled);
   }
 
-  async function resubmitTimeCard(card) {
-    const submitted = submitTimeCard(card);
-    refreshTimeCards(submitted);
-    const withPdf = await regenerateTimeCardPdf(submitted);
-    refreshTimeCards(withPdf);
-  }
-
   async function viewTimeCardPdf(card) {
     try {
       await openTimeCardPdf(card, { download: false });
@@ -2697,14 +2657,6 @@ export default function FieldEngineerWorkspace({
       await openTimeCardPdf(card, { download: true });
     } catch (error) {
       window.alert(error.message || "PDF is still being generated. Please try again in a few seconds.");
-    }
-  }
-
-  async function regenerateTimesheetPdf(card) {
-    const withPdf = await regenerateTimeCardPdf(card);
-    refreshTimeCards(withPdf);
-    if ((withPdf.pdfGenerationStatus || withPdf.pdf_generation_status) === "failed") {
-      window.alert("Unable to generate Timesheet PDF. Please click Regenerate PDF or contact support.");
     }
   }
 
@@ -3074,10 +3026,8 @@ export default function FieldEngineerWorkspace({
             initialTab={logTabByView[currentView]}
             onOpenLog={openLog}
             onCreateLog={createLog}
-            onDuplicateLog={duplicateLog}
             onDeleteLog={deleteLog}
             onRecallLog={recallLog}
-            onResubmitLog={resubmitLog}
             onDownloadLogPdf={downloadLogPdf}
           />
         )}
@@ -3089,7 +3039,6 @@ export default function FieldEngineerWorkspace({
               onRecall={() => recallTimeCard(selectedTimeCard)}
               onViewPdf={() => viewTimeCardPdf(selectedTimeCard)}
               onDownloadPdf={() => downloadTimeCardPdf(selectedTimeCard)}
-              onRegeneratePdf={() => regenerateTimesheetPdf(selectedTimeCard)}
               onNavigateWeek={(direction) => navigateTimeCardWeek(selectedTimeCard, direction)}
               onJumpToDate={jumpToTimeCardDate}
             />

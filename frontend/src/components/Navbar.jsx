@@ -1,4 +1,4 @@
-import { useLocation, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { useEffect, useRef, useState } from "react";
 import {
   BarChart3,
@@ -7,7 +7,6 @@ import {
   ClipboardCheck,
   FileCheck2,
   FileClock,
-  FileText,
   FolderKanban,
   Home,
   LayoutDashboard,
@@ -27,7 +26,6 @@ import { FIELD_ENGINEER_NAV } from "../modules/field-engineer/fieldEngineerConfi
 function Navbar() {
 
   const navigate = useNavigate();
-  const location = useLocation();
   const [profileOpen, setProfileOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const profileButtonRef = useRef(null);
@@ -51,7 +49,6 @@ function Navbar() {
     .slice(0, 2)
     .map((part) => part[0]?.toUpperCase())
     .join("") || "U";
-  const projectId = location.pathname.match(/\/project\/([^/]+)/)?.[1];
   const normalizedRole = String(role || "").toLowerCase();
   const mobileLinks = (() => {
     if (normalizedRole === ROLES.TECHNICIAN) {

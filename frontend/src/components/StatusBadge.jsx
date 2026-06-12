@@ -1,4 +1,3 @@
-import React from 'react';
 import { getStatusBadgeConfig } from '../workflow/workflowEngine';
 
 const TONE_CLASSES = {

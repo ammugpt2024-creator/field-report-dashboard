@@ -32,6 +32,7 @@ function writeTimeCards(cards) {
   // PDF data URLs are several MB each and overflow the localStorage quota fast.
   // They live in the in-memory cache (timeCardPdfService) and Supabase storage,
   // so strip them before persisting.
+  // eslint-disable-next-line no-unused-vars
   const slimCards = cards.map(({ pdfDataUrl, pdf_data_url, ...card }) => card);
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(slimCards));
 }
@@ -231,11 +232,13 @@ export function normalizeWeeklyCard(card = {}) {
     : (overDailyLimit ? `${overDailyLimit} hours cannot exceed ${MAX_DAILY_HOURS}.` : "");
 
   // Strip legacy daily-only fields.
+  /* eslint-disable no-unused-vars -- destructured only to omit legacy fields */
   const {
     entries, timeIn, time_in, timeOut, time_out, breakMinutes, break_minutes,
     isOvernightShift, is_overnight_shift, workDescription, work_description,
     ...rest
   } = card;
+  /* eslint-enable no-unused-vars */
 
   const total = totals.total.toFixed(2);
   return {

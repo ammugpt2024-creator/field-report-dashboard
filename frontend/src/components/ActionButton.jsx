@@ -1,4 +1,3 @@
-import React from 'react';
 
 const INTENT_CLASSES = {
   primary: 'bg-blue-600 text-white hover:bg-blue-700 shadow-blue-200',

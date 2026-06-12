@@ -1,4 +1,3 @@
-import React from 'react';
 import ActionButton from './ActionButton';
 import { getReportActions, ACTION_IDS } from '../workflow/workflowEngine';
 

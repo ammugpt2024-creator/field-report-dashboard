@@ -65,12 +65,6 @@ function TimeCardListRow({ card, activeTab, onOpen, onDelete, onRecall, onDownlo
   const weekStart = card.weekStartDate || card.week_start_date || card.date;
   const weekEnd = card.weekEndDate || card.week_end_date;
   const weekPeriod = `${formatShortDate(weekStart)} - ${formatShortDate(weekEnd)}`;
-  const statusDateLabel = {
-    draft: "Last Modified",
-    submitted: "Submitted Date",
-    returned: "Returned Date",
-    approved: "Approved Date"
-  }[activeTab] || "Status Date";
   const statusDate = {
     draft: card.updatedAt,
     submitted: card.submittedAt,
@@ -299,7 +293,7 @@ function useTimesheetApprovers(projectRows) {
       const managerMap = {};
       let fallback = null;
       for (const projectId of ids) {
-        let manager = null;
+        let manager;
         try {
           manager = await resolveManagerForProject(projectId);
         } catch {
@@ -819,16 +813,7 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, onJumpToDate
   );
 }
 
-function ReadOnlyValue({ label, value }) {
-  return (
-    <div className="rounded-2xl bg-slate-50 px-4 py-3">
-      <p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-400">{label}</p>
-      <p className="mt-1 break-words text-sm font-bold text-slate-900">{value || "-"}</p>
-    </div>
-  );
-}
-
-function TimeCardReadOnlyView({ card, onRecall, onViewPdf, onDownloadPdf, onRegeneratePdf, onNavigateWeek, onJumpToDate }) {
+function TimeCardReadOnlyView({ card, onRecall, onViewPdf, onDownloadPdf, onNavigateWeek, onJumpToDate }) {
   const isSubmitted = card.status === TIME_CARD_STATUS.SUBMITTED;
   const isApproved = card.status === TIME_CARD_STATUS.APPROVED;
   const isCompleted = card.status === TIME_CARD_STATUS.COMPLETED;

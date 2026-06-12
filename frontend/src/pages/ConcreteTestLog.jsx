@@ -461,23 +461,6 @@ function getMissingRequiredValueErrors({
   return validationErrors;
 }
 
-function getSpecificationValidationErrors(specifications) {
-  return specificationFields.reduce((validationErrors, field) => {
-    const required = workflow_validation.specifications.required.includes(field.key);
-    const value = specifications[field.key];
-
-    if (required && (value === '' || value === undefined || value === null)) {
-      validationErrors.push(`${field.label} is required.`);
-      return validationErrors;
-    }
-
-    const validationMessage = getFieldValidationMessage(field, value);
-    if (validationMessage) validationErrors.push(validationMessage);
-
-    return validationErrors;
-  }, []);
-}
-
 function focusFirstInvalidField() {
   const invalidInput = document.querySelector('.field-error input, .field-error textarea');
   if (invalidInput) invalidInput.focus();
@@ -598,7 +581,7 @@ async function validateStep(stepId, {
   return true;
 }
 
-function getRecordStatus(record, reportStatus = REPORT_STATUS.DRAFT) {
+function getRecordStatus(record) {
   const selectedStatus = String(record.row_status || '').toLowerCase();
   if (selectedStatus === 'pass' || selectedStatus === 'passed') {
     return { label: 'PASS', tone: 'emerald', severity: 1, messages: [] };
@@ -673,9 +656,9 @@ const DELIVERY_REVIEW_COLUMNS = [
   { key: 'comments', label: 'Comments' }
 ];
 
-function getDeliveryReviewRows(records, reportStatus = REPORT_STATUS.DRAFT) {
+function getDeliveryReviewRows(records) {
   return records.map((record, index) => {
-    const recordStatus = getRecordStatus(record, reportStatus);
+    const recordStatus = getRecordStatus(record);
     return {
       id: record.id || `${record.test_number || index + 1}-${index}`,
       status: recordStatus,
@@ -869,20 +852,6 @@ function addPdfImageSafely(doc, imageData, x, y, width, height) {
   }
 }
 
-function getAttachmentAccessText(attachment) {
-  if (attachment.url) return attachment.url;
-  if (attachment.storagePath) return `${ATTACHMENT_BUCKET}/${attachment.storagePath}`;
-  return 'Stored with submitted report';
-}
-
-function getAttachmentRecordLabel(attachment, deliveryRecords = []) {
-  if (!attachment.deliveryRecordId) return 'Report level';
-  const recordIndex = deliveryRecords.findIndex((record) => record.id === attachment.deliveryRecordId);
-  if (recordIndex < 0) return 'Delivery record';
-  const record = deliveryRecords[recordIndex];
-  return `Record #${recordIndex + 1}${record.truck_number ? ` · Truck ${record.truck_number}` : ''}${record.ticket_number ? ` · Ticket ${record.ticket_number}` : ''}`;
-}
-
 function isPdfAttachment(attachment) {
   return attachment.type === 'application/pdf' || /\.pdf$/i.test(attachment.name || '');
 }
@@ -943,12 +912,6 @@ function toProjectPrefix(projectName) {
     .join('')
     .toUpperCase();
   return initials || 'PRJ';
-}
-
-function generateSetNumber(projectName, recordIndex) {
-  const prefix = toProjectPrefix(projectName);
-  const sequence = String(recordIndex + 1).padStart(2, '0');
-  return `${prefix}-${sequence}`;
 }
 
 function generateSetNumberWithOffset(projectName, recordIndex, sequenceOffset = 0) {
@@ -1283,7 +1246,7 @@ function renderDeliveryRecords(doc, context, cursor, margins) {
       'Comments'
     ]],
     body: context.deliveryRecords.map((record, index) => {
-      const recordStatus = getRecordStatus(record, context.status);
+      const recordStatus = getRecordStatus(record);
       return [
         pdfValue(record.test_number, String(index + 1)),
         pdfValue(record.ticket_number),
@@ -1661,15 +1624,6 @@ async function mergePdfAttachments(basePdfBlob, attachments) {
   return new Blob([mergedBytes], { type: 'application/pdf' });
 }
 
-async function imageSourceToBytes(source) {
-  const dataUrl = source?.startsWith?.('data:image/') ? source : await urlToDataUrl(source);
-  if (!dataUrl) return null;
-  const cleanedDataUrl = await removeGeneratedSignatureCaption(dataUrl);
-  const response = await fetch(cleanedDataUrl);
-  if (!response.ok) return null;
-  return new Uint8Array(await response.arrayBuffer());
-}
-
 async function removeGeneratedSignatureCaption(dataUrl) {
   if (!dataUrl?.startsWith?.('data:image/')) return dataUrl;
 
@@ -1922,7 +1876,7 @@ function ConcreteTestLog() {
     specificationFields.reduce((fields, field) => ({ ...fields, [field.key]: field }), {})
   ), []);
   const currentSpecifications = getValues();
-  const deliveryReviewRows = getDeliveryReviewRows(deliveryRecords, status);
+  const deliveryReviewRows = getDeliveryReviewRows(deliveryRecords);
   const deliveryReviewColumns = useMemo(() => {
     const hasStrengthVerification = deliveryRecords.some(isStrengthVerificationRequired);
     return DELIVERY_REVIEW_COLUMNS.filter((column) => (
@@ -1944,13 +1898,13 @@ function ConcreteTestLog() {
       0
     );
     const failedTests = deliveryRecords.filter((record) => {
-      return ['FAIL', 'Needs Correction'].includes(getRecordStatus(record, status).label);
+      return ['FAIL', 'Needs Correction'].includes(getRecordStatus(record).label);
     }).length;
     const passedTests = deliveryRecords.filter((record) => {
-      return getRecordStatus(record, status).label === 'PASS';
+      return getRecordStatus(record).label === 'PASS';
     }).length;
     const pendingReview = deliveryRecords.filter((record) => {
-      return ['Pending', 'Needs Review', 'Ready for Review', 'QA Review', 'RETEST'].includes(getRecordStatus(record, status).label);
+      return ['Pending', 'Needs Review', 'Ready for Review', 'QA Review', 'RETEST'].includes(getRecordStatus(record).label);
     }).length;
     const completionPercent = deliveryRecords.length
       ? Math.round(((passedTests + failedTests) / deliveryRecords.length) * 100)
@@ -1993,8 +1947,6 @@ function ConcreteTestLog() {
     Object.values(currentSpecifications).some(Boolean) ||
     deliveryRecords.length > 0 ||
     attachments.length > 0;
-
-  const workflowStatus = getStatusLabel(status);
 
   const stepState = stepIds.reduce((state, stepId, index) => {
     const isComplete = stepCompletion[stepId];
@@ -3054,7 +3006,7 @@ function ConcreteTestLog() {
     }
   }
 
-  async function createEngineeringPdfDocument(targetStatus = status, overrides = {}) {
+  async function createEngineeringPdfDocument(targetStatus = status) {
     const normalizedTargetStatus = normalizeReportStatus(targetStatus);
     const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'letter' });
     const margins = { top: 28, right: 32, bottom: 36, left: 32 };
@@ -3102,7 +3054,7 @@ function ConcreteTestLog() {
         cursor = renderSummary(doc, pdfContext, cursor, margins);
         if (isFinalApproved) drawApprovalSeal(doc);
       }
-      cursor = await renderAttachments(doc, pdfContext, cursor, margins);
+      await renderAttachments(doc, pdfContext, cursor, margins);
       renderFooter(doc, pdfContext, margins);
 
       let pdfBlob = await mergePdfAttachments(doc.output('blob'), attachments);
@@ -3433,7 +3385,7 @@ function ConcreteTestLog() {
               <div className="space-y-4">
                 {deliveryRecords.map((record, recordIndex) => {
                   const collapsed = collapsedRecords[record.id];
-                  const rawRecordStatus = getRecordStatus(record, status);
+                  const rawRecordStatus = getRecordStatus(record);
                   const hasRecordResultError = Boolean(recordFieldErrors[record.id]?.row_status);
                   const recordStatus = rawRecordStatus.label === 'Missing Result' && !hasRecordResultError
                     ? { label: 'Draft', tone: 'slate', severity: 0, messages: [] }

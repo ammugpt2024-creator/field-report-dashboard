@@ -9,7 +9,6 @@ import PhotosAttachmentsSection, { isAllowedDailyLogAttachment } from "./PhotosA
 import WeatherConditionsCard from "./WeatherConditionsCard";
 import { supabase } from "../../services/supabase";
 import {
-  createConcreteReport,
   createActivity,
   DAILY_LOG_STATUS,
   getDailyLogById,
@@ -99,18 +98,6 @@ function withSubmissionTimeout(promise, message, timeoutMs = 15000) {
     timeoutId = window.setTimeout(() => reject(new Error(message)), timeoutMs);
   });
   return Promise.race([promise, timeout]).finally(() => window.clearTimeout(timeoutId));
-}
-
-const requiredConcreteSpecFields = [
-  ["mixDesignNumber", "Mix Design Number"],
-  ["batchPlantSupplier", "Batch Plant / Supplier"],
-  ["slumpSpreadRange", "Slump / Spread Range"],
-  ["airContentRange", "Air Content Range"],
-  ["temperatureRange", "Temperature Range"]
-];
-
-function hasConcreteSpecErrors(report) {
-  return requiredConcreteSpecFields.some(([key]) => !String(report?.[key] || "").trim());
 }
 
 function getReportIdentityKeys(report) {
@@ -623,21 +610,6 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
     });
   }
 
-  function updateConcreteReport(activityId, reportId, patch) {
-    updateLog({
-      activities: log.activities.map((activity) => {
-        if (activity.id !== activityId) return activity;
-        return {
-          ...activity,
-          concreteReports: (activity.concreteReports || []).map((report) => (
-            report.id === reportId ? { ...report, ...patch, updatedAt: new Date().toISOString() } : report
-          )),
-          updatedAt: new Date().toISOString()
-        };
-      })
-    });
-  }
-
   async function addActivityAttachments(activityId, files, attachmentType) {
     const selectedFiles = Array.from(files || []);
     const validFiles = selectedFiles.filter((file) => isAllowedDailyLogAttachment(file, attachmentType));
@@ -749,81 +721,6 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
   function previewAttachment(attachment) {
     const previewUrl = attachment.objectUrl || attachment.previewUrl || attachment.url || "";
     if (previewUrl) window.open(previewUrl, "_blank", "noopener,noreferrer");
-  }
-
-  function addReportAttachments(activityId, reportId, files, attachmentType) {
-    const validAttachments = files
-      .filter((file) => isAllowedDailyLogAttachment(file, attachmentType))
-      .map((file) => createAttachmentRecord(file, attachmentType, {
-        ...ownershipContext,
-        projectId: log.projectId,
-        dailyLogId: log.id,
-        activityId,
-        reportId
-      }));
-
-    if (validAttachments.length !== files.length) {
-      window.alert("Some files were skipped. Only photos, PDF, DOC, DOCX, XLS, and XLSX files up to 25 MB are allowed.");
-    }
-
-    if (validAttachments.length === 0) return;
-
-    updateLog({
-      activities: log.activities.map((activity) => {
-        if (activity.id !== activityId) return activity;
-        return {
-          ...activity,
-          concreteReports: (activity.concreteReports || []).map((report) => (
-            report.id === reportId
-              ? { ...report, attachments: [...(report.attachments || []), ...validAttachments], updatedAt: new Date().toISOString() }
-              : report
-          )),
-          updatedAt: new Date().toISOString()
-        };
-      })
-    });
-  }
-
-  function removeReportAttachment(activityId, reportId, attachmentId) {
-    updateLog({
-      activities: log.activities.map((activity) => {
-        if (activity.id !== activityId) return activity;
-        return {
-          ...activity,
-          concreteReports: (activity.concreteReports || []).map((report) => (
-            report.id === reportId
-              ? { ...report, attachments: (report.attachments || []).filter((attachment) => attachment.id !== attachmentId), updatedAt: new Date().toISOString() }
-              : report
-          )),
-          updatedAt: new Date().toISOString()
-        };
-      })
-    });
-  }
-
-  function retryReportAttachment(activityId, reportId, attachmentId) {
-    updateLog({
-      activities: log.activities.map((activity) => {
-        if (activity.id !== activityId) return activity;
-        return {
-          ...activity,
-          concreteReports: (activity.concreteReports || []).map((report) => (
-            report.id === reportId
-              ? {
-                  ...report,
-                  attachments: (report.attachments || []).map((attachment) => (
-                    attachment.id === attachmentId
-                      ? { ...attachment, uploadStatus: "pending_sync", uploadProgress: 100 }
-                      : attachment
-                  )),
-                  updatedAt: new Date().toISOString()
-                }
-              : report
-          )),
-          updatedAt: new Date().toISOString()
-        };
-      })
-    });
   }
 
   function deleteActivity(activityToDelete) {

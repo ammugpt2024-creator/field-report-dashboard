@@ -503,6 +503,7 @@ export async function updateDailyLogPdfMetadataInSupabase(log, pdfPatch = {}) {
 }
 
 function sanitizeAttachmentForStorage(attachment = {}) {
+  /* eslint-disable no-unused-vars -- destructured only to omit from storage */
   const {
     dataUrl,
     data_url,
@@ -514,6 +515,7 @@ function sanitizeAttachmentForStorage(attachment = {}) {
     blob,
     ...rest
   } = attachment;
+  /* eslint-enable no-unused-vars */
 
   return {
     ...rest,
@@ -625,6 +627,7 @@ function mergeConcreteReportsForSave(nextActivity, existingActivity) {
     !deletedAttachmentIds.has(String(photo.id || ""))
   ));
 
+  // eslint-disable-next-line no-unused-vars
   const { _deletedConcreteReportIds, _deletedAttachmentIds, ...cleanActivity } = nextActivity;
   return {
     ...cleanActivity,

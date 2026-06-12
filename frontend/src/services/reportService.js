@@ -1,5 +1,5 @@
 import { supabase } from './supabase';
-import { logStatusChange, logActivity } from './auditService';
+import { logStatusChange } from './auditService';
 
 export async function saveConcreteTestLog({ projectId, reportId, form, status, metadata = {} }) {
   const payload = {

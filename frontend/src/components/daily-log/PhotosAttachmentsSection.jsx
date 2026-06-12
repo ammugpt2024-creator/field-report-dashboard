@@ -81,21 +81,6 @@ function attachmentFileType(attachment) {
   return attachment.fileType || attachment.file_type || attachment.mimeType || attachment.mime_type || "";
 }
 
-function hasRenderableAttachmentSource(attachment) {
-  const durableUrl = attachment.dataUrl ||
-    attachment.data_url ||
-    attachment.url ||
-    attachment.downloadUrl ||
-    attachment.fileUrl ||
-    attachment.file_url;
-  const storagePath = attachmentStoragePath(attachment);
-  const previewUrl = attachment.previewUrl || attachment.objectUrl || "";
-
-  if (durableUrl) return true;
-  if (storagePath) return true;
-  return Boolean(previewUrl && !String(previewUrl).startsWith("blob:"));
-}
-
 function isImageAttachment(attachment) {
   return attachment.attachmentType === "photo" || attachmentFileType(attachment).startsWith("image/") || /\.(jpg|jpeg|png|gif|webp|heic)$/i.test(attachmentFileName(attachment));
 }
