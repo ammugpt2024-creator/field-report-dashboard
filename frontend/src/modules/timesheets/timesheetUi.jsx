@@ -1194,7 +1194,7 @@ function TimeCardsPage({
           className="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-xl bg-blue-700 px-3 text-sm font-semibold text-white transition hover:bg-blue-600 sm:h-11 sm:gap-2 sm:px-5"
         >
           <Plus className="h-4 w-4" />
-          <span className="sm:hidden">Current Week</span>
+          <span className="sm:hidden">Open Timesheet</span>
           <span className="hidden sm:inline">Open Current Timesheet</span>
         </button>
       </div>
