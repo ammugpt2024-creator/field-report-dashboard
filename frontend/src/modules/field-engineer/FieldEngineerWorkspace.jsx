@@ -237,15 +237,23 @@ function ActionLogRow({ log, onOpen }) {
   );
 }
 
+function activityEventDotClass(label = "") {
+  const normalized = label.toLowerCase();
+  if (normalized.includes("approved")) return "bg-emerald-500";
+  if (normalized.includes("returned")) return "bg-rose-500";
+  if (normalized.includes("submitted")) return "bg-blue-600";
+  return "bg-slate-400";
+}
+
 function ActivityEventRow({ event }) {
   return (
-    <article className="flex min-h-12 items-center gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2 transition hover:bg-slate-50/70">
-      <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-blue-700" />
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-bold text-slate-950">{event.label}</p>
-        {event.detail && <p className="mt-0.5 truncate text-xs font-semibold text-slate-500">{event.detail}</p>}
+    <article className="flex items-center gap-3 border-b border-slate-100 px-1 py-2.5 last:border-b-0">
+      <span className={`h-2 w-2 shrink-0 rounded-full ${activityEventDotClass(event.label)}`} />
+      <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2">
+        <p className="text-sm font-bold text-slate-900">{event.label}</p>
+        {event.detail && <p className="truncate text-xs font-semibold text-slate-500">{event.detail}</p>}
       </div>
-      <p className="shrink-0 text-xs font-bold uppercase tracking-[0.12em] text-slate-400">{formatDateTime(event.at)}</p>
+      <p className="shrink-0 text-xs font-semibold text-slate-400">{formatDateTime(event.at)}</p>
     </article>
   );
 }
@@ -459,7 +467,7 @@ function DashboardOverview({ profile, logCollections, timeCardCollections, onOpe
                 View Full History
               </button>
             </div>
-            <div className="mt-4 space-y-2">
+            <div className="mt-3">
               {latestActivity.map((event) => <ActivityEventRow key={event.id} event={event} />)}
               {!latestActivity.length && (
                 <p className="rounded-2xl border border-dashed border-slate-300 bg-slate-50/60 p-4 text-sm font-semibold text-slate-500">No recent activity yet.</p>
