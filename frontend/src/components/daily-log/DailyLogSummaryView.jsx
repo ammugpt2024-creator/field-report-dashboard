@@ -19,7 +19,7 @@ function getDisplayLogNumber(log = {}) {
 
 function Value({ label, value }) {
   return (
-    <div className="rounded-2xl bg-slate-50 px-4 py-3">
+    <div className="rounded-2xl bg-slate-50 px-3 py-2.5 sm:px-4 sm:py-3">
       <p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-400">{label}</p>
       <p className="mt-1 break-words text-sm font-bold text-slate-900">{value || "-"}</p>
     </div>
@@ -583,7 +583,7 @@ function ConcreteReportSummary({ report, reportIndex = 0, activity, log }) {
   const pdfAvailable = Boolean(pdfUrl || report.pdfStoragePath || report.pdf_storage_path);
 
   return (
-    <article className="rounded-2xl border border-blue-100 bg-white p-4">
+    <article className="rounded-2xl border border-blue-100 bg-white p-3 sm:p-4">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-400">{reportLabel}</p>
@@ -593,7 +593,7 @@ function ConcreteReportSummary({ report, reportIndex = 0, activity, log }) {
       </div>
       {compaction && (
         <>
-          <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="mt-4 grid grid-cols-2 gap-2 lg:grid-cols-4">
             <Value label="Report Type" value="Compaction Report" />
             <Value label="Report Number" value={report.reportNumber || report.report_number} />
             <Value label="Material Type" value={report.materialType || report.material_type} />
@@ -620,7 +620,7 @@ function ConcreteReportSummary({ report, reportIndex = 0, activity, log }) {
           : <ConcreteReportInlineContent report={report} reportLabel={reportLabel} />
       )}
       {attachments.length > 0 && (
-        <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+        <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-3 sm:p-4">
           <h4 className="text-base font-bold text-slate-950">Photos & Attachments</h4>
           <div className="mt-3">
             <AttachmentList attachments={attachments} />
@@ -646,7 +646,7 @@ function ActivitySummaryCard({ activity, index, log }) {
   const filesCount = activityAttachments.filter(isFileAttachment).length + reportAttachments.filter(isFileAttachment).length;
 
   return (
-    <article className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+    <article className="rounded-3xl border border-slate-200 bg-slate-50 p-3 sm:p-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">Activity {index + 1}</p>
@@ -675,7 +675,7 @@ function ActivitySummaryCard({ activity, index, log }) {
         {!reports.length && <p className="rounded-2xl bg-white p-4 text-sm font-semibold text-slate-500">No report attached.</p>}
       </div>
       {activityAttachments.length > 0 && (
-        <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
+        <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-3 sm:p-4">
           <h4 className="text-base font-bold text-slate-950">Photos & Attachments</h4>
           <div className="mt-3">
             <AttachmentList attachments={activityAttachments} />
@@ -795,7 +795,7 @@ export default function DailyLogSummaryView({ log, onEdit, onViewPdf, onDownload
 
       <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
         <h2 className="text-xl font-bold text-slate-950">Daily Log Summary</h2>
-        <dl className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <dl className="mt-4 grid grid-cols-2 gap-2 sm:gap-3 xl:grid-cols-4">
           <Value label="Daily Log Number" value={getDisplayLogNumber(log)} />
           <Value label="Date" value={log.date} />
           <Value label="Shift" value={log.shift} />
@@ -820,7 +820,7 @@ export default function DailyLogSummaryView({ log, onEdit, onViewPdf, onDownload
 
       <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
         <h2 className="text-xl font-bold text-slate-950">Project Details</h2>
-        <dl className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        <dl className="mt-4 grid grid-cols-2 gap-2 sm:gap-3 xl:grid-cols-3">
           <Value label="Project Name" value={log.projectName} />
           <Value label="Project Number" value={log.projectNumber} />
           <Value label="Project Location" value={log.projectLocation} />

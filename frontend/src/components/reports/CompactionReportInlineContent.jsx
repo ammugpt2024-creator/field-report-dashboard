@@ -41,7 +41,7 @@ export default function CompactionReportInlineContent({ report, reportLabel = "R
   ].some((value) => String(value || "").trim());
 
   return (
-    <div className="mt-4 space-y-4 rounded-2xl border border-slate-200 bg-white p-4">
+    <div className="mt-4 space-y-4 rounded-2xl border border-slate-200 bg-white p-3 sm:p-4">
       <section className="report-section keep-together">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
@@ -59,7 +59,7 @@ export default function CompactionReportInlineContent({ report, reportLabel = "R
 
       <section className="report-section keep-together">
         <h5 className="text-sm font-bold text-slate-950">Report Header</h5>
-        <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
+        <div className="mt-3 grid grid-cols-2 gap-2 xl:grid-cols-3">
           <FieldValue label="Project Name" value={report.projectName || report.project_name} />
           <FieldValue label="Project Number" value={report.projectNumber || report.project_number} />
           <FieldValue label="Section" value={report.section} />
@@ -71,7 +71,7 @@ export default function CompactionReportInlineContent({ report, reportLabel = "R
 
       <section className="report-section keep-together">
         <h5 className="text-sm font-bold text-slate-950">Gauge & Material</h5>
-        <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
+        <div className="mt-3 grid grid-cols-2 gap-2 xl:grid-cols-3">
           <FieldValue label="Serial Number" value={report.serialNumber || report.serial_number} />
           <FieldValue label="Gauge Model" value={report.gaugeModel || report.gauge_model} />
           <FieldValue label="Calibration Due" value={report.calibrationDueDate || report.calibration_due_date} />
@@ -85,7 +85,7 @@ export default function CompactionReportInlineContent({ report, reportLabel = "R
 
       {hasSpecs && <section className="report-section keep-together">
         <h5 className="text-sm font-bold text-slate-950">Specifications</h5>
-        <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
+        <div className="mt-3 grid grid-cols-2 gap-2 xl:grid-cols-3">
           <FieldValue label="Maximum Dry Density" value={report.maximumDryDensity || report.maximum_dry_density} />
           <FieldValue label="Percent Optimum Moisture" value={report.percentOptimumMoisture || report.percent_optimum_moisture} />
           <FieldValue label="Percent of Plus #4" value={report.percentPassingNo4 || report.percent_passing_no4} />

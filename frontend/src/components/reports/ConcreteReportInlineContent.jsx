@@ -21,9 +21,9 @@ function statusClass(value) {
   return "border-slate-200 bg-slate-50 text-slate-700";
 }
 
-function FieldValue({ label, value }) {
+function FieldValue({ label, value, className = "" }) {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2">
+    <div className={`rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 ${className}`}>
       <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">{label}</p>
       <p className="mt-1 break-words text-sm font-bold text-slate-950">{valueOrDash(value)}</p>
     </div>
@@ -184,7 +184,7 @@ export default function ConcreteReportInlineContent({ report, reportLabel = "Rep
   const summary = getSummary(hydratedReport, records);
 
   return (
-    <div className="mt-4 space-y-4 rounded-2xl border border-slate-200 bg-white p-4">
+    <div className="mt-4 space-y-4 rounded-2xl border border-slate-200 bg-white p-3 sm:p-4">
       <section className="report-section keep-together">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
           <div>
@@ -199,9 +199,10 @@ export default function ConcreteReportInlineContent({ report, reportLabel = "Rep
 
       <section className="report-section keep-together specification-summary">
         <h5 className="text-sm font-bold text-slate-950">Inspection Requirements</h5>
-        <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
+        <div className="mt-3 grid grid-cols-2 gap-2 xl:grid-cols-3">
           {specifications.map(([label, value]) => (
-            <FieldValue key={label} label={label} value={value} />
+            // Free-text fields get the full row so they don't crush the grid on phones.
+            <FieldValue key={label} label={label} value={value} className={label === "Comments" || label === "DFR Number" ? "col-span-2 xl:col-span-1" : ""} />
           ))}
         </div>
       </section>
@@ -260,7 +261,7 @@ export default function ConcreteReportInlineContent({ report, reportLabel = "Rep
 
       <section className="report-section keep-together">
         <h5 className="text-sm font-bold text-slate-950">Compliance Summary</h5>
-        <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-5">
+        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
           <FieldValue label="Total Records" value={summary.totalRecords} />
           <FieldValue label="Total Quantity" value={summary.totalQuantity} />
           <FieldValue label="Passed" value={summary.passed} />
