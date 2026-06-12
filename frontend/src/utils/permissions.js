@@ -4,6 +4,14 @@
  */
 
 export const ROLES = {
+  // Platform / SaaS roles
+  PLATFORM_ADMIN: 'platform_admin',
+  COMPANY_ADMIN: 'company_admin',
+  PROJECT_MANAGER: 'project_manager',
+  DEPUTY_PROJECT_MANAGER: 'deputy_project_manager',
+  INSPECTOR: 'inspector',
+  LAB_TECHNICIAN: 'lab_technician',
+  // Legacy roles kept so existing accounts and flows are untouched
   ADMIN: 'admin',
   QC_MANAGER: 'qc_manager',
   QC_APPROVER: 'qc_approver',
@@ -14,6 +22,12 @@ export const ROLES = {
 };
 
 export const ROLE_HIERARCHY = {
+  [ROLES.PLATFORM_ADMIN]: 8,
+  [ROLES.COMPANY_ADMIN]: 7,
+  [ROLES.PROJECT_MANAGER]: 5,
+  [ROLES.DEPUTY_PROJECT_MANAGER]: 5,
+  [ROLES.INSPECTOR]: 3,
+  [ROLES.LAB_TECHNICIAN]: 3,
   [ROLES.ADMIN]: 6,
   [ROLES.QC_MANAGER]: 5,
   [ROLES.QC_APPROVER]: 4,

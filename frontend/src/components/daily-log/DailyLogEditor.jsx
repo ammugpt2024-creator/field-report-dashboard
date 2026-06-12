@@ -21,6 +21,7 @@ import {
   updateDailyLogPdfMetadataInSupabase
 } from "../../services/dailyLogService";
 import { createDailyLogPdfSignedUrl, generateHydratedDailyLogPdfBlob, regenerateDailyLogPdf } from "../../services/dailyLogPdfService";
+import { logAuditEvent } from "../../services/auditLogService";
 import { sendDailyLogReviewEmail } from "../../services/notificationService";
 import DailyLogSubmitPanel from "./DailyLogSubmitPanel";
 
@@ -778,6 +779,13 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
         submittedAt,
         submitted_at: submittedAt
       };
+
+      logAuditEvent({
+        action: "report_submitted",
+        entityType: "daily_report",
+        entityId: latestLog.id,
+        newValue: { projectNumber: latestLog.projectNumber, date: latestLog.date }
+      });
 
       let persistedSubmission;
       try {

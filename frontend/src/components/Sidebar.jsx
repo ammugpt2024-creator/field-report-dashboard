@@ -52,23 +52,54 @@ const navByRole = {
     { label: MODULE_NAMES.digitalDeliverables, path: "/client/dashboard?view=approved", icon: FileCheck2 },
     { label: "Project Summaries", path: "/client/dashboard?view=projects", icon: FolderKanban },
     { label: MODULE_NAMES.activityStream, path: "/client/dashboard?view=notifications", icon: Bell }
+  ],
+  platform_admin: [
+    { label: "Platform Dashboard", path: "/platform-admin", icon: LayoutDashboard },
+    { label: "Companies", path: "/platform-admin?section=companies", icon: Building2 },
+    { label: "Subscriptions", path: "/platform-admin?section=subscriptions", icon: FileText },
+    { label: "Usage", path: "/platform-admin?section=usage", icon: BarChart3 },
+    { label: "Support Access", path: "/platform-admin?section=support", icon: ShieldCheck },
+    { label: "Audit Logs", path: "/platform-admin?section=audit", icon: ListChecks },
+    { label: "Settings", path: "/platform-admin?section=settings", icon: Settings }
+  ],
+  company_admin: [
+    { label: "Company Dashboard", path: "/company-admin", icon: LayoutDashboard },
+    { label: "Projects", path: "/company-admin?section=projects", icon: FolderKanban },
+    { label: "Employees", path: "/company-admin?section=employees", icon: Users },
+    { label: "Clients", path: "/company-admin?section=clients", icon: Building2 },
+    { label: "Reports", path: "/manager/dashboard", icon: FileCheck2 },
+    { label: "Timesheets", path: "/timesheets", icon: FileClock },
+    { label: "Lab Reports", path: "/company-admin?section=lab-reports", icon: FileText },
+    { label: "Equipment", path: "/company-admin?section=equipment", icon: Workflow },
+    { label: "Billing", path: "/company-admin?section=billing", icon: BarChart3 },
+    { label: "Company Settings", path: "/company-admin?section=settings", icon: Settings }
   ]
 };
 
-function getNavKey(role) {
+function getNavKey(role, { isPlatformAdmin = false, companyRole = "" } = {}) {
   const normalizedRole = String(role || "").toLowerCase();
+  if (normalizedRole === ROLES.PLATFORM_ADMIN || isPlatformAdmin) return "platform_admin";
+  if (normalizedRole === ROLES.COMPANY_ADMIN) return "company_admin";
   if (normalizedRole === ROLES.ADMIN) return "admin";
-  if (normalizedRole === ROLES.QC_MANAGER || normalizedRole === "project_manager" || normalizedRole === "manager") return "manager";
-  if (isQcRole(normalizedRole)) return "qc";
-  if (normalizedRole === ROLES.TECHNICIAN) return "technician";
+  if (
+    normalizedRole === ROLES.QC_MANAGER ||
+    normalizedRole === "project_manager" ||
+    normalizedRole === "deputy_project_manager" ||
+    normalizedRole === "manager"
+  ) {
+    // Legacy managers who also administer the company get the company menu.
+    return companyRole === "company_admin" ? "company_admin" : "manager";
+  }
+  if (isQcRole(normalizedRole) || normalizedRole === "inspector") return "qc";
+  if (normalizedRole === ROLES.TECHNICIAN || normalizedRole === "lab_technician") return "technician";
   if (normalizedRole === ROLES.CLIENT || normalizedRole === "client_viewer") return "client";
   return "client";
 }
 
 function Sidebar() {
-  const { role } = useAuth();
+  const { role, isPlatformAdmin, companyRole } = useAuth();
   const location = useLocation();
-  const navItems = navByRole[getNavKey(role)] || navByRole.client;
+  const navItems = navByRole[getNavKey(role, { isPlatformAdmin, companyRole })] || navByRole.client;
 
   return (
     <aside className="sticky top-[73px] hidden h-[calc(100vh-73px)] w-64 shrink-0 overflow-y-auto border-r border-slate-200 bg-white px-3 py-4 lg:block">

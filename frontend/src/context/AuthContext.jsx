@@ -8,10 +8,16 @@ import {
 } from "react";
 
 import { supabase } from "../services/supabase";
+import { preloadCompanyBranding } from "../services/brandingService";
 
 const AuthContext = createContext();
 
 const ROLE_LABELS = {
+  platform_admin: "Platform Admin",
+  company_admin: "Company Admin",
+  deputy_project_manager: "Deputy Project Manager",
+  inspector: "Inspector",
+  lab_technician: "Lab Technician",
   technician: "Field Engineer",
   qc: "Quality Reviewer",
   qc_approver: "Quality Reviewer",
@@ -59,12 +65,50 @@ export function AuthProvider({ children }) {
   // role would strand managers on the wrong home page.
   const [profileUserId, setProfileUserId] = useState(null);
 
+  // Multi-tenant context: the caller's company membership (SaaS role), the
+  // company record itself (branding), and platform ownership.
+  const [company, setCompany] = useState(null);
+  const [companyRole, setCompanyRole] = useState("");
+  const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
+
+  const loadTenantContext = useCallback(async (userId) => {
+    if (!userId) {
+      setCompany(null);
+      setCompanyRole("");
+      setIsPlatformAdmin(false);
+      return;
+    }
+    try {
+      const [membershipRes, platformRes] = await Promise.all([
+        supabase.from("company_users").select("company_id, role, status").eq("user_id", userId).eq("status", "active").maybeSingle(),
+        supabase.from("platform_admins").select("user_id, status").eq("user_id", userId).eq("status", "active").maybeSingle()
+      ]);
+      setCompanyRole(membershipRes.data?.role || "");
+      setIsPlatformAdmin(Boolean(platformRes.data));
+      if (membershipRes.data?.company_id) {
+        const { data: companyRow } = await supabase
+          .from("companies")
+          .select("*")
+          .eq("id", membershipRes.data.company_id)
+          .maybeSingle();
+        setCompany(companyRow || null);
+      } else {
+        setCompany(null);
+      }
+    } catch (error) {
+      console.warn("Tenant context could not be loaded.", error);
+    }
+  }, []);
+
   const loadProfile = useCallback(async (currentSession) => {
     if (!currentSession?.user?.id) {
       setProfile(null);
       setRole("viewer");
       setCompanyName("");
       setProfileUserId(null);
+      setCompany(null);
+      setCompanyRole("");
+      setIsPlatformAdmin(false);
       return;
     }
 
@@ -96,7 +140,9 @@ export function AuthProvider({ children }) {
     setRole(resolvedRole);
     setCompanyName(resolvedProfile?.company_name || "");
     setProfileUserId(currentSession.user.id);
-  }, []);
+    loadTenantContext(currentSession.user.id);
+    preloadCompanyBranding();
+  }, [loadTenantContext]);
 
   useEffect(() => {
 
@@ -153,6 +199,10 @@ export function AuthProvider({ children }) {
         role,
         roleLabel: ROLE_LABELS[role] || "Viewer",
         profileReady: !session?.user?.id || profileUserId === session.user.id,
+        company,
+        companyId: company?.id || profile?.company_id || null,
+        companyRole,
+        isPlatformAdmin,
         companyName,
         loading
       }}

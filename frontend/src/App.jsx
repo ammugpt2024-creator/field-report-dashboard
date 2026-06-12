@@ -23,6 +23,8 @@ import ConcreteTestLogDetails from "./pages/ConcreteTestLogDetails";
 import QCReviewDashboard from "./pages/QCReviewDashboard";
 import Reports from "./pages/Reports";
 import DailyLogReview from "./pages/DailyLogReview";
+import PlatformAdminDashboard from "./pages/PlatformAdminDashboard";
+import CompanyAdminDashboard from "./pages/CompanyAdminDashboard";
 
 function App() {
 
@@ -30,7 +32,9 @@ function App() {
     session,
     role,
     loading,
-    profileReady
+    profileReady,
+    isPlatformAdmin,
+    companyRole
   } = useAuth();
 
   // profileReady guards the fresh-login race: the session exists before the
@@ -66,7 +70,27 @@ function App() {
     return children;
   }
 
-  const MANAGER_ROLES = ["project_manager", "manager", "qc_manager", "admin"];
+  const MANAGER_ROLES = ["project_manager", "deputy_project_manager", "manager", "qc_manager", "admin", "company_admin"];
+
+  // Platform admin area: platform_admins membership (or the role) only.
+  function RequirePlatformAdmin({ children }) {
+    if (!isPlatformAdmin && String(role).toLowerCase() !== "platform_admin") {
+      return <Navigate to={getRoleHomeRoute(role)} replace />;
+    }
+    return children;
+  }
+
+  // Company admin area: the company_users role, the profile role, or legacy
+  // admin-equivalents (qc_manager/admin run today's single company).
+  function RequireCompanyAdmin({ children }) {
+    const normalized = String(role || "").toLowerCase();
+    const allowed = companyRole === "company_admin" ||
+      ["company_admin", "admin", "qc_manager"].includes(normalized);
+    if (!allowed) {
+      return <Navigate to={getRoleHomeRoute(role)} replace />;
+    }
+    return children;
+  }
   const QC_ROLES = ["qc", "qc_approver", "qc_manager", "project_manager", "manager", "admin"];
 
   function ProfileRoute() {
@@ -131,6 +155,16 @@ function App() {
         <Route
           path="/qc/dashboard"
           element={<RequireRole roles={QC_ROLES}><QCReviewDashboard /></RequireRole>}
+        />
+
+        <Route
+          path="/platform-admin"
+          element={<RequirePlatformAdmin><PlatformAdminDashboard /></RequirePlatformAdmin>}
+        />
+
+        <Route
+          path="/company-admin"
+          element={<RequireCompanyAdmin><CompanyAdminDashboard /></RequireCompanyAdmin>}
         />
 
         <Route
