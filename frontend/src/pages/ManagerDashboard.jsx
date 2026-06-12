@@ -772,7 +772,7 @@ function ManagerDashboard() {
   const today = new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" });
 
   return (
-    <div className="min-h-screen w-full max-w-full overflow-x-hidden bg-slate-100 px-4 py-5 sm:px-6 lg:p-8">
+    <div className="w-full max-w-full overflow-x-hidden bg-slate-100 px-4 py-5 sm:px-6 lg:p-8">
       <div className="mx-auto w-full max-w-[1500px] space-y-5">
         <section className="overflow-hidden rounded-3xl border border-slate-200 shadow-sm">
           <div className="bg-gradient-to-r from-slate-950 via-slate-900 to-blue-950 px-5 py-6 sm:px-8">

@@ -853,7 +853,7 @@ export default function ConcreteTestLogDetails() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-100 text-slate-700">
+      <div className="min-h-[60vh] flex items-center justify-center bg-slate-100 text-slate-700">
         Loading report details...
       </div>
     );
@@ -861,7 +861,7 @@ export default function ConcreteTestLogDetails() {
 
   if (error) {
     return (
-      <div className="min-h-screen bg-slate-100 p-6">
+      <div className="bg-slate-100 p-6">
         <div className="mx-auto max-w-4xl rounded-3xl border border-red-200 bg-red-50 p-8 text-red-700">
           <h1 className="text-2xl font-semibold">Unable to load report</h1>
           <p className="mt-4 text-sm">{error}</p>
@@ -877,7 +877,7 @@ export default function ConcreteTestLogDetails() {
   }
 
   return (
-    <div className="min-h-screen w-full max-w-full overflow-x-hidden bg-slate-100 pb-44 md:pb-32">
+    <div className="w-full max-w-full overflow-x-hidden bg-slate-100 pb-44 md:pb-32">
       <div className="mx-auto w-full max-w-[1600px] space-y-5 px-4 py-5 sm:px-6 sm:space-y-6">
         <div className="rounded-3xl bg-slate-950 p-5 text-white shadow-lg sm:p-8">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">

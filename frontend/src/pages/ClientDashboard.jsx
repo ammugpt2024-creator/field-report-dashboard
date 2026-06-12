@@ -61,7 +61,7 @@ function ClientDashboard() {
   const projectCount = new Set(filteredReports.map((report) => report.project_id).filter(Boolean)).size;
 
   return (
-    <div className="min-h-screen w-full max-w-full overflow-x-hidden bg-slate-100 px-4 py-5 sm:px-6 lg:p-8">
+    <div className="w-full max-w-full overflow-x-hidden bg-slate-100 px-4 py-5 sm:px-6 lg:p-8">
       <div className="mx-auto w-full max-w-[1500px] space-y-5 sm:space-y-7">
         <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-8">
           <p className="text-xs font-semibold uppercase tracking-[0.28em] text-slate-400">Client Visibility Portal</p>

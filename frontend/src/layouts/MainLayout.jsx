@@ -9,11 +9,11 @@ function MainLayout({ children }) {
   }, []);
 
   return (
-    <div className="min-h-screen w-full max-w-full overflow-x-hidden bg-slate-100">
+    <div className="flex min-h-screen w-full max-w-full flex-col overflow-x-hidden bg-slate-100">
       <Navbar />
-      <div className="flex w-full max-w-full overflow-x-hidden">
+      <div className="flex w-full max-w-full flex-1 overflow-x-hidden">
         <Sidebar />
-        <main className="min-h-[calc(100vh-73px)] min-w-0 flex-1 overflow-x-hidden overflow-y-auto p-0">
+        <main className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto p-0">
           {children}
         </main>
       </div>

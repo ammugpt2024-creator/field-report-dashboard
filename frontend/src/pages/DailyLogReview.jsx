@@ -144,7 +144,7 @@ export default function DailyLogReview() {
 
   if (loadingLog) {
     return (
-      <div className="min-h-screen bg-slate-100 p-6">
+      <div className="bg-slate-100 p-6">
         <section className="mx-auto max-w-3xl rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
           <h1 className="text-2xl font-bold text-slate-950">Loading Daily Log...</h1>
           <p className="mt-2 text-sm font-semibold text-slate-500">Fetching the submitted log from the server.</p>
@@ -155,7 +155,7 @@ export default function DailyLogReview() {
 
   if (!log) {
     return (
-      <div className="min-h-screen bg-slate-100 p-6">
+      <div className="bg-slate-100 p-6">
         <section className="mx-auto max-w-3xl rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
           <h1 className="text-2xl font-bold text-slate-950">Daily Log not found</h1>
           <button type="button" onClick={() => navigate("/manager/dashboard")} className="mt-4 min-h-11 rounded-2xl bg-slate-950 px-4 text-sm font-bold text-white">Back to Manager Dashboard</button>
@@ -168,7 +168,7 @@ export default function DailyLogReview() {
   const isPendingDecision = ["submitted", "pending_manager_review"].includes(normalizedStatus);
 
   return (
-    <div className="min-h-screen w-full max-w-full overflow-x-hidden bg-slate-100 px-4 py-5 sm:px-6 lg:p-8">
+    <div className="w-full max-w-full overflow-x-hidden bg-slate-100 px-4 py-5 sm:px-6 lg:p-8">
       <div className="mx-auto w-full max-w-[1400px] space-y-5">
         <section className="rounded-3xl bg-slate-950 p-5 text-white shadow-sm sm:p-7">
           <button type="button" onClick={() => navigate(-1)} className="inline-flex min-h-10 items-center gap-2 rounded-2xl bg-white/10 px-4 text-sm font-bold text-white">

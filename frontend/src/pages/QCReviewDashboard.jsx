@@ -340,7 +340,7 @@ function QCReviewDashboard() {
   const defaultProjectId = projectId || enrichedReports.find((report) => report.project_id)?.project_id || 1;
 
   return (
-    <div className="min-h-screen w-full max-w-full overflow-x-hidden bg-slate-100 px-4 py-5 sm:px-6 lg:p-8">
+    <div className="w-full max-w-full overflow-x-hidden bg-slate-100 px-4 py-5 sm:px-6 lg:p-8">
       <div className="mx-auto w-full max-w-[1500px] space-y-5 sm:space-y-6">
         <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-8">
           <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">

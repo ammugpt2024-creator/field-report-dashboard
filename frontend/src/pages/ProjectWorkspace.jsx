@@ -275,7 +275,7 @@ function ProjectWorkspace() {
 
   if (loadingProject) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-100 text-sm font-semibold text-slate-700">
+      <div className="flex min-h-[60vh] items-center justify-center bg-slate-100 text-sm font-semibold text-slate-700">
         Loading project workspace...
       </div>
     );
@@ -283,7 +283,7 @@ function ProjectWorkspace() {
 
   if (!project) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-100 text-sm font-semibold text-red-700">
+      <div className="flex min-h-[60vh] items-center justify-center bg-slate-100 text-sm font-semibold text-red-700">
         Project could not be loaded from Supabase.
       </div>
     );
@@ -291,7 +291,7 @@ function ProjectWorkspace() {
 
   return (
 
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
+    <div className="bg-gradient-to-br from-slate-50 to-slate-100">
 
       {/* HEADER */}
 

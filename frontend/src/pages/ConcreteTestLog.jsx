@@ -3182,14 +3182,14 @@ function ConcreteTestLog() {
 
   if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-100 text-sm font-semibold text-slate-700">
+      <div className="flex min-h-[60vh] items-center justify-center bg-slate-100 text-sm font-semibold text-slate-700">
         Loading field operations workspace...
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen w-full max-w-full overflow-x-hidden bg-slate-100">
+    <div className="w-full max-w-full overflow-x-hidden bg-slate-100">
       <div className="sticky top-0 z-20 border-b border-slate-200 bg-white/95 backdrop-blur-sm">
         <div className="mx-auto flex w-full max-w-6xl flex-col gap-3 px-4 py-3 sm:px-6 lg:flex-row lg:items-center lg:justify-between">
           <div className="min-w-0">
