@@ -53,6 +53,14 @@ function baseEmailShell({ title, intro, rows, ctaLabel, ctaUrl, footer = BRAND.n
   `;
 }
 
+// Email clients auto-link raw URLs, so a bare signed URL renders as several
+// lines of token noise. Wrap it in a short labeled anchor instead.
+function secureLinkValue(url, label = 'View the signed PDF') {
+  return url
+    ? `<a href="${url}" style="color:#2563eb;font-weight:700;text-decoration:underline;">${label}</a>`
+    : `Available in ${BRAND.name}`;
+}
+
 export function buildQcReviewEmail({ report, reviewUrl, pdfUrl }) {
   const dfr = report.dfr_number || MODULE_NAMES.materialAssurance;
   return {
@@ -67,7 +75,7 @@ export function buildQcReviewEmail({ report, reviewUrl, pdfUrl }) {
         ['Submitted On', formatDateTime(report.submitted_at || new Date())],
         ['Status', getReportStatusLabel(report.status)],
         ['Digital Deliverable', 'Attached to this email'],
-        ['Secure Link', pdfUrl || `Available in ${BRAND.name}`]
+        ['Secure Link', secureLinkValue(pdfUrl)]
       ],
       ctaLabel: 'Open Validation Workspace',
       ctaUrl: reviewUrl
@@ -359,7 +367,7 @@ export function buildDailyLogReviewEmail({ log, reviewUrl, pdfUrl }) {
         ['Attached Reports', String(reportCount)],
         ['Submitted On', formatDateTime(log.submittedAt || log.submitted_at || new Date())],
         ['Signed PDF', 'Attached to this email'],
-        ['Secure Link', pdfUrl || `Available in ${BRAND.name}`]
+        ['Secure Link', secureLinkValue(pdfUrl)]
       ],
       ctaLabel: 'Open Daily Log Review',
       ctaUrl: reviewUrl
@@ -404,7 +412,7 @@ export function buildDailyLogApprovalEmail({ log, reviewerName, viewUrl, pdfUrl 
         ['Approved On', formatDateTime(log.approvedAt || log.approved_at || new Date())],
         ['Status', 'Approved'],
         ['Countersigned PDF', 'Attached to this email'],
-        ['Secure Link', pdfUrl || `Available in ${BRAND.name}`]
+        ['Secure Link', secureLinkValue(pdfUrl)]
       ],
       ctaLabel: 'View Submitted Log',
       ctaUrl: viewUrl
