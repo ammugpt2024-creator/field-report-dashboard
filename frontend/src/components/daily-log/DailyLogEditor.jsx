@@ -3,6 +3,7 @@ import { Camera, ClipboardList, Edit, FileText, HardHat, MessageSquare, Papercli
 import ActivityReportSelector from "../reports/ActivityReportSelector";
 import ConcreteReportInlineContent from "../reports/ConcreteReportInlineContent";
 import CompactionReportInlineContent from "../reports/CompactionReportInlineContent";
+import AsphaltCompactionReportInlineContent from "../reports/AsphaltCompactionReportInlineContent";
 import BottomActionBar from "../mobile/BottomActionBar";
 import SignatureModal from "../SignatureModal";
 import PhotosAttachmentsSection, { isAllowedDailyLogAttachment } from "./PhotosAttachmentsSection";
@@ -221,9 +222,31 @@ function isConcreteReportSubmitReady(report = {}) {
   return ["completed", "submitted", "approved", "finalized"].includes(reportStatus) || hasConcreteReportContent(report);
 }
 
+function isAsphaltReport(report = {}) {
+  const type = String(report.type || report.reportType || report.report_type || "").toLowerCase();
+  return type.includes("asphalt");
+}
+
 function isCompactionReport(report = {}) {
   const type = String(report.type || report.reportType || report.report_type || "").toLowerCase();
+  if (type.includes("asphalt")) return false;
   return type.includes("compaction") || type.includes("density") || type.includes("nuclear");
+}
+
+function hasAsphaltReportContent(report = {}) {
+  const groups = Array.isArray(report.materialGroups) ? report.materialGroups : [];
+  return Boolean(
+    groups.length ||
+    String(report.reportNumber || report.report_number || "").trim() ||
+    String(report.status || "").trim()
+  );
+}
+
+function isAsphaltReportSubmitReady(report = {}) {
+  const reportStatus = String(report.status || "").toLowerCase();
+  if (["completed", "submitted", "approved", "finalized"].includes(reportStatus)) return true;
+  const groups = Array.isArray(report.materialGroups) ? report.materialGroups : [];
+  return groups.some(g => (g.testRecords || []).length > 0);
 }
 
 function isCompactionReportSubmitReady(report = {}) {
@@ -255,6 +278,7 @@ function hasCompactionReportContent(report = {}) {
 }
 
 function isAttachedReportSubmitReady(report = {}) {
+  if (isAsphaltReport(report)) return isAsphaltReportSubmitReady(report);
   return isCompactionReport(report) ? isCompactionReportSubmitReady(report) : isConcreteReportSubmitReady(report);
 }
 
@@ -386,7 +410,7 @@ async function createUploadReadyAttachment(file, attachmentType, context) {
   };
 }
 
-export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateConcreteReport, onOpenConcreteReport, onCreateCompactionReport, onOpenCompactionReport }) {
+export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateConcreteReport, onOpenConcreteReport, onCreateCompactionReport, onOpenCompactionReport, onCreateAsphaltReport, onOpenAsphaltReport }) {
   const [lastAutosavedAt, setLastAutosavedAt] = useState("");
   const [reportPickerActivityId, setReportPickerActivityId] = useState("");
   const [reportSectionError, setReportSectionError] = useState("");
@@ -554,6 +578,27 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
       setReportPickerActivityId("");
     } catch (error) {
       console.error("Compaction report section failed", error);
+      setReportSectionError("Unable to load report section. Please try again.");
+    }
+  }
+
+  function addAsphaltReport(activityId) {
+    try {
+      setReportSectionError("");
+      const activity = (log.activities || []).find((item) => item.id === activityId);
+      if (getActivityAttachedReports(activity).length >= 1) {
+        setReportSectionError("Only one report can be attached to each activity.");
+        setReportPickerActivityId("");
+        return;
+      }
+      const createdReport = onCreateAsphaltReport?.(log, activityId);
+      if (!createdReport) {
+        setReportSectionError("Unable to load report section. Please try again.");
+        return;
+      }
+      setReportPickerActivityId("");
+    } catch (error) {
+      console.error("Asphalt report section failed", error);
       setReportSectionError("Unable to load report section. Please try again.");
     }
   }
@@ -1209,11 +1254,12 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
                   </div>
                 </div>
                 {concreteReports.map((report) => {
-                  const compaction = isCompactionReport(report);
-                  const shouldShowReportContent = compaction ? hasCompactionReportContent(report) : isAttachedReportSubmitReady(report);
+                  const asphalt = isAsphaltReport(report);
+                  const compaction = !asphalt && isCompactionReport(report);
+                  const shouldShowReportContent = asphalt ? hasAsphaltReportContent(report) : compaction ? hasCompactionReportContent(report) : isAttachedReportSubmitReady(report);
                   visibleReportOrdinal += 1;
                   const reportLabel = `Report ${visibleReportOrdinal}`;
-                  const displayReportType = compaction ? "Compaction Report" : "Concrete Report";
+                  const displayReportType = asphalt ? "Asphalt Compaction Report" : compaction ? "Compaction Report" : "Concrete Report";
 
                   return (
                     <div key={report.id} className="mt-3 rounded-2xl border border-slate-200 bg-white p-4">
@@ -1233,9 +1279,11 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
                           <button
                             type="button"
                             onClick={() => (
-                              isCompactionReport(report)
-                                ? onOpenCompactionReport?.(log, activity.id, report.id, { mode: "edit" })
-                                : onOpenConcreteReport?.(log, activity.id, report.id, { mode: "edit" })
+                              asphalt
+                                ? onOpenAsphaltReport?.(log, activity.id, report.id, { mode: "edit" })
+                                : compaction
+                                  ? onOpenCompactionReport?.(log, activity.id, report.id, { mode: "edit" })
+                                  : onOpenConcreteReport?.(log, activity.id, report.id, { mode: "edit" })
                             )}
                             className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-slate-950 px-3 text-xs font-bold text-white"
                           >
@@ -1246,9 +1294,11 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
                         </div>
                       </div>
                       {shouldShowReportContent && (
-                        isCompactionReport(report)
-                          ? <CompactionReportInlineContent report={report} reportLabel={reportLabel} />
-                          : <ConcreteReportInlineContent report={report} reportLabel={reportLabel} />
+                        asphalt
+                          ? <AsphaltCompactionReportInlineContent report={report} reportLabel={reportLabel} />
+                          : compaction
+                            ? <CompactionReportInlineContent report={report} reportLabel={reportLabel} />
+                            : <ConcreteReportInlineContent report={report} reportLabel={reportLabel} />
                       )}
                     </div>
                   );
@@ -1281,6 +1331,7 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
                     <ActivityReportSelector
                       onAddConcreteReport={() => addConcreteReport(activity.id)}
                       onAddCompactionReport={() => addCompactionReport(activity.id)}
+                      onAddAsphaltReport={() => addAsphaltReport(activity.id)}
                     />
                   </div>
                 )}

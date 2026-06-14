@@ -112,6 +112,8 @@ function TechnicianDashboard() {
   }, [defaultProjectId, enrichedReports, projectLabel, projects]);
   const routeView = location.pathname === "/technician/activity-history"
     ? "activity-history"
+    : location.pathname.includes("/asphalt-report/")
+      ? "asphalt-report"
     : location.pathname.includes("/compaction-report/")
       ? "compaction-report"
     : location.pathname.includes("/concrete-report/")

@@ -1522,6 +1522,24 @@ function toFiniteNumber(value) {
   return Number.isFinite(number) ? number : null;
 }
 
+function calculateAsphaltTestRecord(record = {}, group = {}) {
+  const fieldDensity = toFiniteNumber(record.fieldDensity);
+  const marshallValue = toFiniteNumber(group.marshallValue);
+  const requiredCompaction = toFiniteNumber(group.requiredCompaction);
+  const compactionPercent = fieldDensity !== null && marshallValue !== null && marshallValue > 0
+    ? (fieldDensity / marshallValue) * 100
+    : null;
+  const result = compactionPercent !== null && requiredCompaction !== null
+    ? (compactionPercent >= requiredCompaction ? "PASS" : "FAIL")
+    : "";
+  return {
+    ...record,
+    compactionPercent: compactionPercent === null ? "" : compactionPercent.toFixed(1),
+    result,
+    exceededLimit: compactionPercent !== null && compactionPercent > 102
+  };
+}
+
 function getCompactionRecordMoistureRange(record = {}, materialType = "") {
   const correctedOptimum = toFiniteNumber(record.correctedOptimumMoisture ?? record.corrected_optimum_moisture);
   if (correctedOptimum === null || correctedOptimum <= 0) return null;
@@ -1594,6 +1612,10 @@ function CompactionReportPage({ log, activityId, reportId, onChange, onBack }) {
   const report = localReport || persistedReport;
   const isReadOnly = [DAILY_LOG_STATUS.SUBMITTED, DAILY_LOG_STATUS.APPROVED].includes(log.status);
   const isStandardizationNo = String(report?.standardizedGauge || report?.standardized_gauge || "").toLowerCase() === "no";
+  const outOfCalibration = Boolean(
+    (report?.calibrationDueDate || report?.calibration_due_date) && log.date &&
+    (report.calibrationDueDate || report.calibration_due_date) < log.date
+  );
   const requiredMissing = [
     ["serialNumber", "Serial Number"],
     ["gaugeModel", "Gauge Model"],
@@ -1788,7 +1810,7 @@ function CompactionReportPage({ log, activityId, reportId, onChange, onBack }) {
         <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
           <Field label="Serial Number *"><input value={report.serialNumber || ""} disabled={isReadOnly} onChange={(event) => updateReport({ serialNumber: event.target.value, serial_number: event.target.value })} className={inputClass()} /></Field>
           <Field label="Gauge Model *"><input value={report.gaugeModel || ""} disabled={isReadOnly} onChange={(event) => updateReport({ gaugeModel: event.target.value, gauge_model: event.target.value })} className={inputClass()} /></Field>
-          <Field label="Calibration Due Date *"><input type="date" value={report.calibrationDueDate || ""} disabled={isReadOnly} onChange={(event) => updateReport({ calibrationDueDate: event.target.value, calibration_due_date: event.target.value })} className={inputClass()} /></Field>
+          <Field label="Calibration Due Date *"><input type="date" value={report.calibrationDueDate || ""} disabled={isReadOnly} onChange={(event) => updateReport({ calibrationDueDate: event.target.value, calibration_due_date: event.target.value })} className={`${inputClass()} ${outOfCalibration ? "border-rose-400 bg-rose-50" : ""}`} /></Field>
           <Field label="Did you standardize the nuclear gauge? *">
             <select value={report.standardizedGauge || ""} disabled={isReadOnly} onChange={(event) => updateReport({ standardizedGauge: event.target.value, standardized_gauge: event.target.value })} className={inputClass()}>
               <option value="">Select</option>
@@ -1800,6 +1822,9 @@ function CompactionReportPage({ log, activityId, reportId, onChange, onBack }) {
           <Field label="Standard Count Moisture *"><input type="number" value={report.standardMoisture || ""} disabled={isReadOnly} onChange={(event) => updateReport({ standardMoisture: event.target.value, standard_moisture: event.target.value })} className={inputClass()} /></Field>
           <Field label="SP. GR. of +4 Material (Optional)"><input value={report.specificGravityPlus4 || ""} disabled={isReadOnly} onChange={(event) => updateReport({ specificGravityPlus4: event.target.value, specific_gravity_plus4: event.target.value })} className={inputClass()} /></Field>
         </div>
+        {outOfCalibration && (
+          <p className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 p-3 text-sm font-bold text-rose-800">⚠ OUT OF CALIBRATION — Calibration expired before the report date ({log.date}). Do not use this gauge until recalibrated.</p>
+        )}
         {isStandardizationNo && (
           <p className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 p-3 text-sm font-bold text-rose-800">
             Nuclear gauge must be standardized before testing.
@@ -1949,6 +1974,294 @@ function CompactionReportPage({ log, activityId, reportId, onChange, onBack }) {
             </div>
           ))}
           {!records.length && <p className="rounded-2xl border border-dashed border-slate-300 bg-white p-4 text-sm font-semibold text-slate-600">No test records yet. Add test data to begin.</p>}
+        </div>
+      </section>
+
+      {requiredMissing.length > 0 && (
+        <p className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm font-bold text-amber-900">
+          Missing required fields: {requiredMissing.map(([, label]) => label).join(", ")}
+        </p>
+      )}
+
+      <div className="sticky bottom-0 z-20 -mx-4 flex flex-col gap-2 border-t border-slate-200 bg-white/95 p-4 backdrop-blur sm:mx-0 sm:flex-row sm:justify-end sm:rounded-2xl sm:border">
+        <button type="button" onClick={onBack} className="min-h-11 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-800">Back</button>
+        {!isReadOnly && <button type="button" onClick={() => saveReport(report)} className="min-h-11 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-800">Save Draft</button>}
+        {!isReadOnly && <button type="button" onClick={completeReport} disabled={!canComplete} className="min-h-11 rounded-2xl bg-emerald-700 px-4 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-600">Finish Report</button>}
+      </div>
+    </div>
+  );
+}
+
+function AsphaltCompactionReportPage({ log, activityId, reportId, onChange, onBack }) {
+  const activity = (log.activities || []).find((item) => item.id === activityId);
+  const persistedReport = (activity?.reports || []).find((item) => item.id === reportId);
+  const [localReport, setLocalReport] = useState(persistedReport || null);
+  const report = localReport || persistedReport;
+  const isReadOnly = [DAILY_LOG_STATUS.SUBMITTED, DAILY_LOG_STATUS.APPROVED].includes(log.status);
+
+  const requiredMissing = [
+    ["serialNumber", "Serial Number"],
+    ["gaugeModel", "Gauge Model"],
+    ["calibrationDueDate", "Calibration Due Date"],
+    ["standardizedGauge", "Gauge Standardization"],
+    ["standardDensity", "Standard Count Density"],
+    ["standardMoisture", "Standard Count Moisture"]
+  ].filter(([key]) => !String(report?.[key] || "").trim());
+
+  const materialGroups = report?.materialGroups || [];
+  const hasTestData = materialGroups.some((g) => (g.testRecords || []).length > 0);
+  const canComplete = report && requiredMissing.length === 0 && hasTestData;
+
+  if (!activity || !report) {
+    return (
+      <section className={cardClass()}>
+        <h1 className="text-xl font-bold text-slate-950">Asphalt Compaction Report Not Found</h1>
+        <button type="button" onClick={onBack} className="mt-4 min-h-10 rounded-xl border border-slate-200 px-4 text-sm font-bold">Back</button>
+      </section>
+    );
+  }
+
+  function saveReport(nextReport) {
+    const normalized = { ...nextReport, updatedAt: new Date().toISOString() };
+    setLocalReport(normalized);
+    const nextLog = saveDailyLog({
+      ...log,
+      activities: (log.activities || []).map((item) => (
+        item.id === activityId
+          ? { ...item, reports: (item.reports || []).map((r) => (r.id === normalized.id ? normalized : r)), updatedAt: new Date().toISOString() }
+          : item
+      )),
+      updatedAt: new Date().toISOString()
+    });
+    onChange(nextLog);
+  }
+
+  function updateReport(patch) {
+    if (isReadOnly) return;
+    saveReport({ ...report, ...patch, status: "draft" });
+  }
+
+  function addMaterialGroup() {
+    updateReport({
+      materialGroups: [
+        ...(report.materialGroups || []),
+        { id: crypto.randomUUID(), mixId: "", marshallValue: "", requiredCompaction: "", testRecords: [] }
+      ]
+    });
+  }
+
+  function updateMaterialGroup(groupId, patch) {
+    updateReport({
+      materialGroups: (report.materialGroups || []).map((g) => {
+        if (g.id !== groupId) return g;
+        const updated = { ...g, ...patch };
+        if ("marshallValue" in patch || "requiredCompaction" in patch) {
+          updated.testRecords = (updated.testRecords || []).map((r) => calculateAsphaltTestRecord(r, updated));
+        }
+        return updated;
+      })
+    });
+  }
+
+  function deleteMaterialGroup(groupId) {
+    updateReport({ materialGroups: (report.materialGroups || []).filter((g) => g.id !== groupId) });
+  }
+
+  function addTestRecord(groupId) {
+    const group = (report.materialGroups || []).find((g) => g.id === groupId);
+    if (!group) return;
+    const nextNumber = (group.testRecords || []).length + 1;
+    const newRecord = calculateAsphaltTestRecord({ id: crypto.randomUUID(), testNo: nextNumber, location: "", fieldDensity: "", compactionPercent: "", result: "" }, group);
+    updateReport({
+      materialGroups: (report.materialGroups || []).map((g) =>
+        g.id === groupId ? { ...g, testRecords: [...(g.testRecords || []), newRecord] } : g
+      )
+    });
+  }
+
+  function updateTestRecord(groupId, recordId, patch) {
+    updateReport({
+      materialGroups: (report.materialGroups || []).map((g) => {
+        if (g.id !== groupId) return g;
+        return { ...g, testRecords: (g.testRecords || []).map((r) => r.id === recordId ? calculateAsphaltTestRecord({ ...r, ...patch }, g) : r) };
+      })
+    });
+  }
+
+  function deleteTestRecord(groupId, recordId) {
+    updateReport({
+      materialGroups: (report.materialGroups || []).map((g) => {
+        if (g.id !== groupId) return g;
+        return {
+          ...g,
+          testRecords: (g.testRecords || [])
+            .filter((r) => r.id !== recordId)
+            .map((r, i) => ({ ...r, testNo: i + 1 }))
+        };
+      })
+    });
+  }
+
+  function completeReport() {
+    if (!canComplete) return;
+    saveReport({ ...report, status: "completed", completedAt: new Date().toISOString() });
+    onBack();
+  }
+
+  const outOfCalibration = Boolean(
+    report.calibrationDueDate && log.date && report.calibrationDueDate < log.date
+  );
+
+  function resultTone(result) {
+    if (result === "PASS") return "border-emerald-300 bg-emerald-50 text-emerald-800";
+    if (result === "FAIL") return "border-rose-300 bg-rose-50 text-rose-800";
+    return "border-slate-200 bg-white text-slate-400";
+  }
+
+  return (
+    <div className="space-y-4">
+      <section className={cardClass()}>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-400">Asphalt Compaction Report</p>
+            <h1 className="mt-2 text-2xl font-bold text-slate-950">Compaction Report</h1>
+            <p className="mt-1 text-sm font-semibold text-slate-600">{report.reportNumber} · {report.projectName}</p>
+          </div>
+          <span className="w-fit rounded-full border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-bold uppercase tracking-[0.12em] text-slate-700">{report.status || "Draft"}</span>
+        </div>
+      </section>
+
+      <section className={cardClass()}>
+        <h2 className="text-lg font-bold text-slate-950">Gauge Information</h2>
+        <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
+          <Field label="Serial Number *"><input value={report.serialNumber || ""} disabled={isReadOnly} onChange={(e) => updateReport({ serialNumber: e.target.value })} className={inputClass()} /></Field>
+          <Field label="Gauge Model *"><input value={report.gaugeModel || ""} disabled={isReadOnly} onChange={(e) => updateReport({ gaugeModel: e.target.value })} className={inputClass()} /></Field>
+          <Field label="Calibration Due Date *"><input type="date" value={report.calibrationDueDate || ""} disabled={isReadOnly} onChange={(e) => updateReport({ calibrationDueDate: e.target.value })} className={`${inputClass()} ${outOfCalibration ? "border-rose-400 bg-rose-50" : ""}`} /></Field>
+          <Field label="Did you standardize the nuclear gauge? *">
+            <select value={report.standardizedGauge || ""} disabled={isReadOnly} onChange={(e) => updateReport({ standardizedGauge: e.target.value })} className={inputClass()}>
+              <option value="">Select</option>
+              <option>Yes</option>
+              <option>No</option>
+            </select>
+          </Field>
+          <Field label="Standard Count Density *"><input type="number" value={report.standardDensity || ""} disabled={isReadOnly} onChange={(e) => updateReport({ standardDensity: e.target.value })} className={inputClass()} /></Field>
+          <Field label="Standard Count Moisture *"><input type="number" value={report.standardMoisture || ""} disabled={isReadOnly} onChange={(e) => updateReport({ standardMoisture: e.target.value })} className={inputClass()} /></Field>
+        </div>
+        {outOfCalibration && (
+          <p className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 p-3 text-sm font-bold text-rose-800">⚠ OUT OF CALIBRATION — Calibration expired before the report date ({log.date}). Do not use this gauge until recalibrated.</p>
+        )}
+        {String(report.standardizedGauge || "").toLowerCase() === "no" && (
+          <p className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 p-3 text-sm font-bold text-rose-800">Nuclear gauge must be standardized before testing.</p>
+        )}
+      </section>
+
+      {materialGroups.map((group, groupIndex) => (
+        <section key={group.id} className={cardClass()}>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <h2 className="text-lg font-bold text-slate-950">Material {groupIndex + 1}</h2>
+            {!isReadOnly && materialGroups.length > 1 && (
+              <button type="button" onClick={() => deleteMaterialGroup(group.id)} className="min-h-9 rounded-xl border border-rose-200 bg-white px-3 text-xs font-bold text-rose-700">Remove Material</button>
+            )}
+          </div>
+          <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
+            <Field label="Material Mix ID *">
+              <input value={group.mixId || ""} disabled={isReadOnly} onChange={(e) => updateMaterialGroup(group.id, { mixId: e.target.value })} className={inputClass()} placeholder="e.g. SM-9.5A, BM-25.0" />
+            </Field>
+            <Field label="Marshall Value from Plant (pcf) *">
+              <input type="number" value={group.marshallValue || ""} disabled={isReadOnly} onChange={(e) => updateMaterialGroup(group.id, { marshallValue: e.target.value })} className={inputClass()} placeholder="e.g. 148.5" />
+            </Field>
+            <Field label="Required Compaction (%) *">
+              <input type="number" value={group.requiredCompaction || ""} disabled={isReadOnly} onChange={(e) => updateMaterialGroup(group.id, { requiredCompaction: e.target.value })} className={inputClass()} placeholder="e.g. 92" />
+            </Field>
+          </div>
+
+          <div className="mt-5">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <h3 className="text-sm font-bold text-slate-950">Test Data</h3>
+              {!isReadOnly && (
+                <button type="button" onClick={() => addTestRecord(group.id)} className="min-h-9 rounded-xl bg-slate-950 px-3 text-sm font-bold text-white">+ Add Test Data</button>
+              )}
+            </div>
+            <div className="mt-3 space-y-3">
+              {(group.testRecords || []).map((record) => (
+                <div key={record.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <h4 className="text-sm font-bold text-slate-950">Test No. {record.testNo}</h4>
+                    {!isReadOnly && (
+                      <button type="button" onClick={() => deleteTestRecord(group.id, record.id)} className="min-h-8 rounded-xl border border-rose-200 bg-white px-3 text-xs font-bold text-rose-700">Delete</button>
+                    )}
+                  </div>
+                  <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
+                    <Field label="Test Location *">
+                      <input value={record.location || ""} disabled={isReadOnly} onChange={(e) => updateTestRecord(group.id, record.id, { location: e.target.value })} className={inputClass()} placeholder="e.g. STA 10+00, Lane 1" />
+                    </Field>
+                    <Field label="Field Density (pcf) *">
+                      <input type="number" value={record.fieldDensity || ""} disabled={isReadOnly} onChange={(e) => updateTestRecord(group.id, record.id, { fieldDensity: e.target.value })} className={inputClass()} placeholder="e.g. 138.2" />
+                    </Field>
+                    <div className={`rounded-2xl border px-3 py-2 ${record.result === "PASS" ? "border-emerald-200 bg-emerald-50" : record.result === "FAIL" ? "border-rose-200 bg-rose-50" : "border-slate-200 bg-slate-100"}`}>
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">Compaction %</p>
+                        <span className="inline-flex items-center gap-1 rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-700">
+                          <Calculator className="h-3 w-3" /> Calc
+                        </span>
+                      </div>
+                      <p className="mt-2 text-sm font-bold text-slate-950">{record.compactionPercent ? `${record.compactionPercent}%` : "-"}</p>
+                      <p className="mt-1 text-xs font-semibold text-slate-500">Field Density ÷ Marshall × 100</p>
+                    </div>
+                    <div className={`rounded-2xl border px-4 py-3 md:col-span-3 ${resultTone(record.result)}`}>
+                      <p className="text-xs font-bold uppercase tracking-[0.14em]">Result</p>
+                      <p className="mt-1 text-2xl font-bold">{record.result || "-"}</p>
+                      {group.requiredCompaction && record.compactionPercent && (
+                        <p className="mt-1 text-xs font-semibold">Required: {group.requiredCompaction}% · Achieved: {record.compactionPercent}%</p>
+                      )}
+                      {record.exceededLimit && (
+                        <p className="mt-2 inline-flex items-center gap-1 rounded-full bg-amber-100 border border-amber-300 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-amber-800">
+                          ⚠ Exceeded allowed limit (&gt;102%)
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {!(group.testRecords || []).length && (
+                <p className="rounded-2xl border border-dashed border-slate-300 bg-white p-3 text-sm font-semibold text-slate-600">No test data yet. Click &quot;+ Add Test Data&quot; to begin.</p>
+              )}
+            </div>
+          </div>
+        </section>
+      ))}
+
+      {!isReadOnly && (
+        <button type="button" onClick={addMaterialGroup} className="w-full min-h-11 rounded-2xl border-2 border-dashed border-slate-300 bg-white text-sm font-bold text-slate-700 hover:border-blue-400 hover:text-blue-700 transition-colors">
+          + Add Different Material
+        </button>
+      )}
+
+      <section className={cardClass()}>
+        <h2 className="text-lg font-bold text-slate-950">Cores</h2>
+        <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
+          <Field label="Were cores taken?">
+            <select value={report.coresTaken || ""} disabled={isReadOnly} onChange={(e) => updateReport({ coresTaken: e.target.value })} className={inputClass()}>
+              <option value="">Select</option>
+              <option>Yes</option>
+              <option>No</option>
+            </select>
+          </Field>
+          {report.coresTaken === "Yes" && (
+            <>
+              <Field label="Number of Cores">
+                <input type="number" value={report.coreCount || ""} disabled={isReadOnly} onChange={(e) => updateReport({ coreCount: e.target.value })} className={inputClass()} placeholder="e.g. 3" />
+              </Field>
+              <Field label="Core Locations">
+                <input value={report.coreLocations || ""} disabled={isReadOnly} onChange={(e) => updateReport({ coreLocations: e.target.value })} className={inputClass()} placeholder="e.g. STA 10+00, 12+50, 15+00" />
+              </Field>
+              <div className="md:col-span-3">
+                <Field label="Core Notes">
+                  <textarea value={report.coreNotes || ""} disabled={isReadOnly} onChange={(e) => updateReport({ coreNotes: e.target.value })} rows={3} className={`${inputClass()} py-3 leading-6`} placeholder="Core results, lab submission, observations..." />
+                </Field>
+              </div>
+            </>
+          )}
         </div>
       </section>
 
@@ -2334,6 +2647,7 @@ export default function FieldEngineerWorkspace({
     "command-center",
     "concrete-report",
     "compaction-report",
+    "asphalt-report",
     "daily-logs",
     "create-daily-log",
     "draft-logs",
@@ -2736,6 +3050,10 @@ export default function FieldEngineerWorkspace({
     return `/technician/daily-log/${log.id}/activity/${activityId}/compaction-report/${report?.id || "new"}?returnTo=${encodeURIComponent(`/technician/daily-log/${log.id}`)}`;
   }
 
+  function getAsphaltReportRoute(log, activityId, report) {
+    return `/technician/daily-log/${log.id}/activity/${activityId}/asphalt-report/${report?.id || "new"}?returnTo=${encodeURIComponent(`/technician/daily-log/${log.id}`)}`;
+  }
+
   function openReportRoute(reportUrl) {
     const isDesktop = window.matchMedia("(min-width: 1024px)").matches;
     if (isDesktop) {
@@ -2955,6 +3273,74 @@ export default function FieldEngineerWorkspace({
     openReportRoute(getCompactionReportRoute(log, activityId, report || { id: reportId }));
   }
 
+  function createAsphaltReportForActivity(log, activityId) {
+    const activity = (log.activities || []).find((item) => item.id === activityId);
+    if (!activity) return null;
+    const existingActivityReport = [...(activity.concreteReports || []), ...(activity.reports || [])][0];
+    if (existingActivityReport) {
+      const type = String(existingActivityReport.type || existingActivityReport.reportType || "").toLowerCase();
+      if (type.includes("asphalt")) {
+        openReportRoute(getAsphaltReportRoute(log, activityId, existingActivityReport));
+      } else {
+        window.alert("Only one report can be attached to each activity.");
+      }
+      return existingActivityReport;
+    }
+    const reportYear = new Date(log.date || Date.now()).getFullYear();
+    const nextSequence = String((activity.reports || []).length + 1).padStart(6, "0");
+    const report = {
+      id: crypto.randomUUID(),
+      type: "Asphalt Compaction Report",
+      reportType: "Asphalt Compaction Report",
+      report_type: "Asphalt Compaction Report",
+      status: "draft",
+      reportNumber: `ACR-${reportYear}-${nextSequence}`,
+      report_number: `ACR-${reportYear}-${nextSequence}`,
+      dailyLogId: log.id,
+      daily_log_id: log.id,
+      activityId,
+      activity_id: activityId,
+      projectName: log.projectName || projectLabel,
+      project_name: log.projectName || projectLabel,
+      projectNumber: log.projectNumber || log.project_number || String(defaultProjectId || ""),
+      project_number: log.projectNumber || log.project_number || String(defaultProjectId || ""),
+      date: log.date || new Date().toISOString().slice(0, 10),
+      client: log.client || log.clientName || companyName || "",
+      serialNumber: "",
+      gaugeModel: "",
+      calibrationDueDate: "",
+      standardizedGauge: "",
+      standardDensity: "",
+      standardMoisture: "",
+      materialGroups: [{ id: crypto.randomUUID(), mixId: "", marshallValue: "", requiredCompaction: "", testRecords: [] }],
+      coresTaken: "",
+      coreCount: "",
+      coreLocations: "",
+      coreNotes: "",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    const nextLog = saveDailyLog({
+      ...log,
+      activities: log.activities.map((item) => (
+        item.id === activityId
+          ? { ...item, reports: [...(item.reports || []), report], updatedAt: new Date().toISOString() }
+          : item
+      )),
+      updatedAt: new Date().toISOString()
+    });
+    refreshLogs(nextLog);
+    openReportRoute(getAsphaltReportRoute(nextLog, activityId, report));
+    return report;
+  }
+
+  function openAsphaltReport(log, activityId, reportId) {
+    if (!log?.id || !activityId || !reportId) return;
+    const activity = (log.activities || []).find((item) => item.id === activityId);
+    const report = (activity?.reports || []).find((item) => item.id === reportId);
+    openReportRoute(getAsphaltReportRoute(log, activityId, report || { id: reportId }));
+  }
+
   function backToDailyLog(logId = selectedDailyLog?.id) {
     if (!logId) return;
     navigate(`/technician/daily-log/${logId}`);
@@ -3054,6 +3440,8 @@ export default function FieldEngineerWorkspace({
               onOpenConcreteReport={openConcreteReport}
               onCreateCompactionReport={createCompactionReportForActivity}
               onOpenCompactionReport={openCompactionReport}
+              onCreateAsphaltReport={createAsphaltReportForActivity}
+              onOpenAsphaltReport={openAsphaltReport}
             />
           )
         )}
@@ -3070,6 +3458,16 @@ export default function FieldEngineerWorkspace({
 
         {currentView === "compaction-report" && selectedDailyLog && (
           <CompactionReportPage
+            log={selectedDailyLog}
+            activityId={activeActivityId}
+            reportId={activeReportId}
+            onChange={refreshLogs}
+            onBack={() => backToDailyLog(selectedDailyLog.id)}
+          />
+        )}
+
+        {currentView === "asphalt-report" && selectedDailyLog && (
+          <AsphaltCompactionReportPage
             log={selectedDailyLog}
             activityId={activeActivityId}
             reportId={activeReportId}

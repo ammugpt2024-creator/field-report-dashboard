@@ -119,7 +119,7 @@ function getProjectNumber(log) {
 }
 
 function getDailyReportNumber(log) {
-  const explicitNumber = log.logNumber || log.log_number || log.reportNumber || log.report_number || log.dailyLogNumber || log.daily_log_number;
+  const explicitNumber = log.dfrNumber || log.dfr_number || log.logNumber || log.log_number || log.reportNumber || log.report_number || log.dailyLogNumber || log.daily_log_number;
   if (explicitNumber && !/^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(String(explicitNumber))) return explicitNumber;
   const projectPart = safePathSegment(getProjectNumber(log), "PROJECT").toUpperCase();
   const datePart = safePathSegment(log.date || log.reportDate || log.report_date, "DATE").replace(/-/g, "");
@@ -790,7 +790,11 @@ async function hydrateDailyLogForPdf(log) {
   const logWithAttachments = await hydrateAttachmentsForPdf(logWithProject);
   const activities = await Promise.all((logWithAttachments.activities || []).map(async (activity) => {
     const concreteReports = await Promise.all((activity.concreteReports || []).map(hydrateConcreteReportForPdf));
-    const legacyReports = await Promise.all((activity.reports || []).map(hydrateConcreteReportForPdf));
+    const legacyReports = await Promise.all((activity.reports || []).map((report) => {
+      const type = String(report.type || report.reportType || report.report_type || "").toLowerCase();
+      if (type.includes("concrete")) return hydrateConcreteReportForPdf(report);
+      return Promise.resolve(report);
+    }));
     return {
       ...activity,
       concreteReports,
@@ -804,17 +808,27 @@ function safePathSegment(value, fallback = "unassigned") {
   return String(value || fallback).replace(/[^a-zA-Z0-9_.-]/g, "_");
 }
 
+function getTechnicianInitials(log) {
+  const name = log.technicianName || log.technician_name || log.userName || log.user_name || log.submittedByName || log.submitted_by_name || "";
+  if (!name) return "";
+  return name.trim().split(/\s+/).map((w) => w[0] || "").join("").toUpperCase().slice(0, 4);
+}
+
 function getPdfStoragePath(log) {
+  const initials = getTechnicianInitials(log);
+  const fileName = initials ? `daily-log-${initials}.pdf` : "daily-log.pdf";
   return [
     safePathSegment(log.companyId || log.organizationId || "company"),
     safePathSegment(log.projectId || log.project_id || "project"),
     safePathSegment(log.id || "daily-log"),
-    "daily-log.pdf"
+    fileName
   ].join("/");
 }
 
 function getPdfFileName(log) {
-  return `Daily-Field-Log-${safePathSegment(log.projectNumber || log.projectId)}-${safePathSegment(log.date)}-${safePathSegment(log.id)}.pdf`;
+  const initials = getTechnicianInitials(log);
+  const suffix = initials ? `-${initials}` : "";
+  return `Daily-Field-Log-${safePathSegment(log.projectNumber || log.projectId)}-${safePathSegment(log.date)}-${safePathSegment(log.id)}${suffix}.pdf`;
 }
 
 function arrayBufferToBase64(buffer) {
@@ -1517,6 +1531,181 @@ async function renderReferenceAttachmentContent(doc, attachments, y, title) {
   return y + 6;
 }
 
+function getReportKind(report) {
+  const type = String(report.type || report.reportType || report.report_type || "").toLowerCase();
+  if (type.includes("asphalt")) return "asphalt";
+  if (type.includes("compaction") || type.includes("density") || type.includes("nuclear")) return "compaction";
+  return "concrete";
+}
+
+async function renderReferenceAsphaltReportBlock(doc, report, reportIndex, y, activity, log) {
+  const logDate = log.date || log.logDate || log.log_date || "";
+  const calibrationDueDate = report.calibrationDueDate || report.calibration_due_date || "";
+  const isOutOfCalibration = Boolean(calibrationDueDate && logDate && calibrationDueDate < logDate);
+
+  y = ensurePage(doc, y, 160);
+  y = renderReferenceSectionBar(doc, `Asphalt Compaction Report ${reportIndex + 1}`, y, {
+    afterGap: 10,
+    rightText: formatStatus(report.status || "Draft")
+  });
+
+  y = renderReferenceCardGrid(doc, [
+    { label: "Serial Number", value: pdfValue(report.serialNumber) },
+    { label: "Gauge Model", value: pdfValue(report.gaugeModel) },
+    { label: "Calibration Due Date", value: isOutOfCalibration ? `${calibrationDueDate} ⚠ OUT OF CALIBRATION` : pdfValue(calibrationDueDate) },
+    { label: "Gauge Standardized", value: pdfValue(report.standardizedGauge) },
+    { label: "Standard Count Density", value: pdfValue(report.standardDensity) },
+    { label: "Standard Count Moisture", value: pdfValue(report.standardMoisture) }
+  ], y, { columns: 3, afterGap: isOutOfCalibration ? 6 : 10 });
+
+  if (isOutOfCalibration) {
+    y = ensurePage(doc, y, 24);
+    doc.setFillColor(...[254, 226, 226]);
+    doc.roundedRect(PAGE_MARGIN, y, getContentWidth(doc), 18, 3, 3, "F");
+    setReportFont(doc, "bold", 8.5, [185, 28, 28]);
+    doc.text(`⚠ OUT OF CALIBRATION — Calibration expired before report date (${logDate}).`, PAGE_MARGIN + 6, y + 11);
+    y += 24;
+  }
+
+  const materialGroups = Array.isArray(report.materialGroups) ? report.materialGroups : [];
+  if (!materialGroups.length) {
+    y = renderReferenceTextBox(doc, "Test Data", "No material groups or test records recorded.", y);
+  }
+
+  for (const [gi, group] of materialGroups.entries()) {
+    y = ensurePage(doc, y, 80);
+    y = renderReferenceSubTitle(doc, `Material ${gi + 1} — Mix ID: ${pdfValue(group.mixId)}`, y, { rightText: `${(group.testRecords || []).length} test(s)` });
+    y = renderReferenceCardGrid(doc, [
+      { label: "Marshall Value (pcf)", value: pdfValue(group.marshallValue) },
+      { label: "Required Compaction (%)", value: pdfValue(group.requiredCompaction) }
+    ], y, { columns: 3, afterGap: 8 });
+
+    const records = Array.isArray(group.testRecords) ? group.testRecords : [];
+    if (records.length) {
+      y = ensurePage(doc, y, 80);
+      const fontFamily = reportFontsRegistered ? REPORT_FONT_FAMILY : "helvetica";
+      autoTable(doc, {
+        startY: y,
+        head: [["Test #", "Location", "Field Density (pcf)", "Compaction %", "Result"]],
+        body: records.map((r) => [
+          pdfValue(r.testNo),
+          pdfValue(r.location),
+          pdfValue(r.fieldDensity),
+          r.compactionPercent ? `${r.compactionPercent}%` : "N/A",
+          pdfValue(r.result)
+        ]),
+        theme: "grid",
+        margin: { left: PAGE_MARGIN, right: PAGE_MARGIN, top: PAGE_TOP_MARGIN, bottom: PAGE_BOTTOM_MARGIN + 16 },
+        tableWidth: getContentWidth(doc),
+        showHead: "everyPage",
+        styles: { font: fontFamily, fontSize: 8, textColor: PDF_COLORS.navy, cellPadding: 5, valign: "middle" },
+        headStyles: { fillColor: PDF_COLORS.navy, textColor: PDF_COLORS.white, fontStyle: "bold", fontSize: 8 },
+        bodyStyles: { fillColor: PDF_COLORS.white },
+        alternateRowStyles: { fillColor: PDF_COLORS.soft },
+        didParseCell(data) {
+          if (data.section === "body") {
+            if (data.column.index === 4) {
+              const val = String(data.cell.raw || "").toUpperCase();
+              if (val === "PASS") data.cell.styles.textColor = [4, 120, 87];
+              else if (val === "FAIL") data.cell.styles.textColor = [185, 28, 28];
+            }
+            if (data.column.index === 3) {
+              const pct = parseFloat(String(data.cell.raw || "").replace("%", ""));
+              if (!Number.isNaN(pct) && pct > 102) {
+                data.cell.styles.textColor = [146, 64, 14];
+                data.cell.styles.fontStyle = "bold";
+              }
+            }
+          }
+        }
+      });
+      y = doc.lastAutoTable.finalY + 10;
+    } else {
+      y = renderReferenceTextBox(doc, "Test Records", "No test records for this material.", y);
+    }
+  }
+
+  if (report.coresTaken) {
+    const coreItems = [{ label: "Cores Taken", value: pdfValue(report.coresTaken) }];
+    if (report.coresTaken === "Yes") {
+      coreItems.push({ label: "Number of Cores", value: pdfValue(report.coreCount) });
+      coreItems.push({ label: "Core Locations", value: pdfValue(report.coreLocations) });
+    }
+    y = renderReferenceCardGrid(doc, coreItems, y, { columns: 3, afterGap: 8 });
+    if (report.coreNotes) {
+      y = renderReferenceTextBox(doc, "Core Notes", report.coreNotes, y);
+    }
+  }
+
+  y = await renderReferenceAttachmentContent(doc, getReportAttachments(report, activity, log), y, `Asphalt Report ${reportIndex + 1} Attachments`);
+  return y + 6;
+}
+
+async function renderReferenceNuclearCompactionReportBlock(doc, report, reportIndex, y, activity, log) {
+  const logDate = log.date || log.logDate || log.log_date || "";
+  const calibrationDueDate = report.calibrationDueDate || report.calibration_due_date || "";
+  const isOutOfCalibration = Boolean(calibrationDueDate && logDate && calibrationDueDate < logDate);
+
+  y = ensurePage(doc, y, 160);
+  y = renderReferenceSectionBar(doc, `Nuclear Density Report ${reportIndex + 1}`, y, {
+    afterGap: 10,
+    rightText: formatStatus(report.status || "Draft")
+  });
+
+  y = renderReferenceCardGrid(doc, [
+    { label: "Serial Number", value: pdfValue(report.serialNumber || report.serial_number) },
+    { label: "Gauge Model", value: pdfValue(report.gaugeModel || report.gauge_model) },
+    { label: "Calibration Due Date", value: isOutOfCalibration ? `${calibrationDueDate} ⚠ OUT OF CALIBRATION` : pdfValue(calibrationDueDate) },
+    { label: "Gauge Standardized", value: pdfValue(report.standardizedGauge || report.standardized_gauge) },
+    { label: "Standard Count Density", value: pdfValue(report.standardDensity || report.standard_density) },
+    { label: "Standard Count Moisture", value: pdfValue(report.standardMoisture || report.standard_moisture) },
+    { label: "Material Type", value: pdfValue(report.materialType || report.material_type) },
+    { label: "Material Name", value: pdfValue(report.materialName || report.material_name) },
+    { label: "Min. Density Required (%)", value: pdfValue(report.percentMinimumDensityRequired || report.percent_minimum_density_required) }
+  ], y, { columns: 3, afterGap: isOutOfCalibration ? 6 : 10 });
+
+  if (isOutOfCalibration) {
+    y = ensurePage(doc, y, 24);
+    doc.setFillColor(...[254, 226, 226]);
+    doc.roundedRect(PAGE_MARGIN, y, getContentWidth(doc), 18, 3, 3, "F");
+    setReportFont(doc, "bold", 8.5, [185, 28, 28]);
+    doc.text(`⚠ OUT OF CALIBRATION — Calibration expired before report date (${logDate}).`, PAGE_MARGIN + 6, y + 11);
+    y += 24;
+  }
+
+  const records = Array.isArray(report.testRecords) ? report.testRecords : [];
+  if (records.length) {
+    y = ensurePage(doc, y, 80);
+    const fontFamily = reportFontsRegistered ? REPORT_FONT_FAMILY : "helvetica";
+    autoTable(doc, {
+      startY: y,
+      head: [["Test #", "Location", "Wet Density", "Dry Density", "% Dry Density", "Result"]],
+      body: records.map((r) => [
+        pdfValue(r.testNo || r.test_no),
+        pdfValue(r.location),
+        pdfValue(r.wetDensity || r.wet_density),
+        pdfValue(r.dryDensity || r.dry_density),
+        pdfValue(r.percentDryDensity || r.percent_dry_density),
+        pdfValue(r.densityResult || r.density_result)
+      ]),
+      theme: "grid",
+      margin: { left: PAGE_MARGIN, right: PAGE_MARGIN, top: PAGE_TOP_MARGIN, bottom: PAGE_BOTTOM_MARGIN + 16 },
+      tableWidth: getContentWidth(doc),
+      showHead: "everyPage",
+      styles: { font: fontFamily, fontSize: 8, textColor: PDF_COLORS.navy, cellPadding: 5, valign: "middle" },
+      headStyles: { fillColor: PDF_COLORS.navy, textColor: PDF_COLORS.white, fontStyle: "bold", fontSize: 8 },
+      bodyStyles: { fillColor: PDF_COLORS.white },
+      alternateRowStyles: { fillColor: PDF_COLORS.soft }
+    });
+    y = doc.lastAutoTable.finalY + 10;
+  } else {
+    y = renderReferenceTextBox(doc, "Test Records", "No test records recorded for this report.", y);
+  }
+
+  y = await renderReferenceAttachmentContent(doc, getReportAttachments(report, activity, log), y, `Nuclear Density Report ${reportIndex + 1} Attachments`);
+  return y + 6;
+}
+
 async function renderReferenceConcreteReportBlock(doc, report, reportIndex, y, activity, log) {
   y = ensurePage(doc, y, 160);
   y = renderReferenceSectionBar(doc, `Concrete Report ${reportIndex + 1} — ${getReportDfrNumber(report)}`, y, {
@@ -1585,7 +1774,14 @@ async function renderReferenceActivityDetails(doc, log, y) {
     }
 
     for (const [reportIndex, report] of reports.entries()) {
-      y = await renderReferenceConcreteReportBlock(doc, report, reportIndex, y, activity, log);
+      const kind = getReportKind(report);
+      if (kind === "asphalt") {
+        y = await renderReferenceAsphaltReportBlock(doc, report, reportIndex, y, activity, log);
+      } else if (kind === "compaction") {
+        y = await renderReferenceNuclearCompactionReportBlock(doc, report, reportIndex, y, activity, log);
+      } else {
+        y = await renderReferenceConcreteReportBlock(doc, report, reportIndex, y, activity, log);
+      }
     }
 
     y = await renderReferenceAttachmentContent(doc, attachments, y, `Activity ${String(index + 1).padStart(2, "0")} Attachments`);

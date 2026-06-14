@@ -254,6 +254,24 @@ export function filterDailyLogsForAccess(logs, access = {}) {
   });
 }
 
+function getProjectInitials(projectName) {
+  return (projectName || "")
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => word[0].toUpperCase())
+    .join("")
+    .slice(0, 6);
+}
+
+function getNextDfrNumber(projectId, projectName) {
+  const counterKey = `dfrCounter:${projectId}`;
+  let counter = parseInt(window.localStorage.getItem(counterKey) || "0", 10);
+  counter += 1;
+  window.localStorage.setItem(counterKey, String(counter));
+  const initials = getProjectInitials(projectName);
+  return `${initials}DFR${counter}`;
+}
+
 export function createDailyLog({
   projectLabel = "DC Water Potomac Tunnel",
   technicianName = "Ammu",
@@ -263,8 +281,11 @@ export function createDailyLog({
   userId = null
 } = {}) {
   const today = new Date();
+  const dfrNumber = getNextDfrNumber(defaultProjectId, projectLabel);
   return {
     id: crypto.randomUUID(),
+    dfrNumber,
+    logNumber: dfrNumber,
     companyId,
     companyName,
     userId,

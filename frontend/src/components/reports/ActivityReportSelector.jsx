@@ -1,12 +1,12 @@
 import { FileText, Plus } from "lucide-react";
 
-export default function ActivityReportSelector({ onAddConcreteReport, onAddCompactionReport, disabled = false }) {
+export default function ActivityReportSelector({ onAddConcreteReport, onAddCompactionReport, onAddAsphaltReport, disabled = false }) {
   const reportTypes = [
     { label: "Concrete Report", description: "Create concrete testing documentation.", available: true, onClick: onAddConcreteReport },
     { label: "Inspection Report", description: "Coming soon", available: false },
     { label: "Density Report", description: "Create nuclear density compaction documentation.", available: true, onClick: onAddCompactionReport },
     { label: "Nuclear Gauge Report", description: "Coming soon", available: false },
-    { label: "Asphalt Report", description: "Coming soon", available: false },
+    { label: "Asphalt Compaction Report", description: "Material mix, Marshall value, compaction %, PASS/FAIL, cores.", available: true, onClick: onAddAsphaltReport },
     { label: "Other", description: "Coming soon", available: false }
   ];
 
