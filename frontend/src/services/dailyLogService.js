@@ -472,28 +472,43 @@ export async function submitDailyLogToSupabase(log, { signatureId, submittedAt, 
     throw new Error("Daily Log submission failed. Please try again.");
   }
 
-  const payload = buildSupabaseDailyLogPayload(log, user.id, {
+  const clientLogId = String(log.id);
+  const submissionPatch = {
     status: DAILY_LOG_STATUS.SUBMITTED,
     submitted_at: submittedAt || new Date().toISOString(),
     submitted_by: user.id,
     signature_id: signatureId || null
-  });
+  };
+  const payload = buildSupabaseDailyLogPayload(log, user.id, submissionPatch);
 
-  // The upsert returns the persisted row, so its status is already the
-  // authoritative verification; a separate read-back round trip only adds
-  // another failure point inside the submission timeout budget.
-  const { data, error } = await supabase
+  // Look for an existing row first so we can UPDATE it — avoids depending on
+  // a unique index for ON CONFLICT resolution (the index may not exist on all
+  // environments). INSERT for new logs, UPDATE for re-submissions.
+  const { data: existing } = await supabase
     .from("daily_logs")
-    .upsert(payload, { onConflict: "client_log_id" })
-    .select("id,status,submitted_at,submitted_by,signature_id,pdf_url,pdf_storage_path")
-    .single();
+    .select("id")
+    .eq("client_log_id", clientLogId)
+    .maybeSingle();
+
+  let data, error;
+  if (existing?.id) {
+    ({ data, error } = await supabase
+      .from("daily_logs")
+      .update({ ...payload, updated_at: new Date().toISOString() })
+      .eq("id", existing.id)
+      .select("id,status,submitted_at,submitted_by,signature_id,pdf_url,pdf_storage_path")
+      .single());
+  } else {
+    ({ data, error } = await supabase
+      .from("daily_logs")
+      .insert(payload)
+      .select("id,status,submitted_at,submitted_by,signature_id,pdf_url,pdf_storage_path")
+      .single());
+  }
 
   if (error) {
-    console.error("Daily Log submission upsert failed", { code: error.code, message: error.message, details: error.details, hint: error.hint });
-    const hint = error.code === "42P10"
-      ? "Database is missing a unique index on client_log_id. Run migration 023."
-      : (error.message || "Unknown database error");
-    throw new Error(`Daily Log submission failed: ${hint}`);
+    console.error("Daily Log submission failed", { code: error.code, message: error.message, details: error.details });
+    throw new Error(`Daily Log submission failed: ${error.message || "Unknown database error"}`);
   }
   if (data?.status !== DAILY_LOG_STATUS.SUBMITTED) {
     console.error("Daily Log submission returned unexpected status", data?.status);
