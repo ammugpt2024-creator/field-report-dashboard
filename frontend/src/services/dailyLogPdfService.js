@@ -912,8 +912,9 @@ function addImageToPdf(doc, source, attachment, x, y, maxWidth, maxHeight) {
   }
 }
 
-// Collected during a single generateDailyLogPdfBlob call; reset at the start
-// of each generation so concurrent calls don't mix their attachments.
+// Reset at the start of each generateDailyLogPdfBlob call.
+// Each entry records the 1-based page number of the jsPDF placeholder page
+// so pdf-lib can replace it with the real PDF pages at the exact position.
 let _pdfMergeQueue = [];
 
 async function renderPdfAttachment(doc, attachment, y) {
@@ -921,36 +922,50 @@ async function renderPdfAttachment(doc, attachment, y) {
   const source = await resolveAttachmentSource(attachment);
   const arrayBuffer = await sourceToArrayBuffer(source);
 
-  y = ensurePage(doc, y, 36);
-  setReportFont(doc, "medium", 9, PDF_COLORS.slate);
-  doc.text(`Attached PDF: ${fileName}`, PAGE_MARGIN, y);
-  y += 14;
-
   if (!arrayBuffer) {
+    y = ensurePage(doc, y, 22);
     setReportFont(doc, "regular", 8.5, [185, 28, 28]);
-    doc.text("(Attachment could not be retrieved.)", PAGE_MARGIN, y);
+    doc.text(`PDF attachment unavailable: ${fileName}`, PAGE_MARGIN, y);
     return y + 14;
   }
 
-  _pdfMergeQueue.push({ fileName, arrayBuffer });
-  setReportFont(doc, "regular", 8.5, PDF_COLORS.slate);
-  doc.text(`(Full document appended as page${_pdfMergeQueue.length > 1 ? "s" : ""} at end of report — attachment ${_pdfMergeQueue.length})`, PAGE_MARGIN, y);
-  return y + 14;
+  // If ensurePage already moved us to the top of a fresh page, use that page
+  // as the placeholder; otherwise add a new one.  This avoids a blank page
+  // between the activity content and the attachment.
+  if (y > PAGE_TOP_MARGIN + 4) {
+    doc.addPage("letter", "portrait");
+  }
+  const placeholderPage = doc.internal.getNumberOfPages(); // 1-based
+  // Minimal fallback label visible only if the merge step fails
+  setReportFont(doc, "medium", 8.5, PDF_COLORS.slate);
+  doc.text(`Attached PDF: ${fileName}`, PAGE_MARGIN, PAGE_TOP_MARGIN);
+  _pdfMergeQueue.push({ pageNumber: placeholderPage, fileName, arrayBuffer });
+
+  // Return y beyond the page height so the next ensurePage() opens a fresh page
+  return doc.internal.pageSize.getHeight() + 1;
 }
 
 async function mergePdfAttachments(mainBlob, queue) {
   if (!queue.length) return mainBlob;
   try {
     const { PDFDocument } = await import("pdf-lib");
-    const mainBytes = await mainBlob.arrayBuffer();
-    const mainDoc = await PDFDocument.load(mainBytes);
+    const mainDoc = await PDFDocument.load(await mainBlob.arrayBuffer());
 
-    for (const { fileName, arrayBuffer } of queue) {
+    // Process highest page number first so earlier insertions don't shift
+    // the 0-based indices of pages still waiting to be processed.
+    const sorted = [...queue].sort((a, b) => b.pageNumber - a.pageNumber);
+
+    for (const { pageNumber, fileName, arrayBuffer } of sorted) {
+      const idx = pageNumber - 1; // pdf-lib uses 0-based indices
       try {
         const attachedDoc = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
-        const indices = attachedDoc.getPageIndices();
-        const copied = await mainDoc.copyPages(attachedDoc, indices);
-        copied.forEach((page) => mainDoc.addPage(page));
+        const copied = await mainDoc.copyPages(attachedDoc, attachedDoc.getPageIndices());
+        // Remove the placeholder page
+        mainDoc.removePage(idx);
+        // Insert the real pages at the same position in original order
+        for (let i = 0; i < copied.length; i++) {
+          mainDoc.insertPage(idx + i, copied[i]);
+        }
       } catch (err) {
         console.warn(`[Daily Log PDF] Could not merge attachment: ${fileName}`, err);
       }
