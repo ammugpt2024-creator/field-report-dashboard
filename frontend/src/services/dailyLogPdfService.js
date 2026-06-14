@@ -1,6 +1,5 @@
 import jsPdfModule from "jspdf";
 import autoTable from "jspdf-autotable";
-import pdfWorkerUrl from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
 import interRegularUrl from "../assets/fonts/Inter-Regular.ttf?url";
 import interSemiBoldUrl from "../assets/fonts/Inter-SemiBold.ttf?url";
 import { supabase } from "./supabase.js";
@@ -534,14 +533,6 @@ async function sourceToArrayBuffer(source) {
   }
 }
 
-function getPdfRenderScale(page) {
-  const viewport = page.getViewport({ scale: 1 });
-  const targetWidth = viewport.width > viewport.height ? 1200 : 950;
-  const rawScale = targetWidth / Math.max(viewport.width, 1);
-  const maxPixels = 1_800_000;
-  const pixelScale = Math.sqrt(maxPixels / Math.max(viewport.width * viewport.height, 1));
-  return Math.max(0.85, Math.min(rawScale, pixelScale, 1.6));
-}
 
 function openDataUrl(dataUrl, { download, fileName }) {
   if (download) {
@@ -921,60 +912,56 @@ function addImageToPdf(doc, source, attachment, x, y, maxWidth, maxHeight) {
   }
 }
 
+// Collected during a single generateDailyLogPdfBlob call; reset at the start
+// of each generation so concurrent calls don't mix their attachments.
+let _pdfMergeQueue = [];
+
 async function renderPdfAttachment(doc, attachment, y) {
+  const fileName = getAttachmentFileName(attachment);
   const source = await resolveAttachmentSource(attachment);
   const arrayBuffer = await sourceToArrayBuffer(source);
+
+  y = ensurePage(doc, y, 36);
+  setReportFont(doc, "medium", 9, PDF_COLORS.slate);
+  doc.text(`Attached PDF: ${fileName}`, PAGE_MARGIN, y);
+  y += 14;
+
   if (!arrayBuffer) {
-    y = ensurePage(doc, y, 22);
-    setReportFont(doc, "regular", 9, PDF_COLORS.slate);
-    doc.text(`PDF attachment unavailable: ${getAttachmentFileName(attachment)}`, PAGE_MARGIN, y);
+    setReportFont(doc, "regular", 8.5, [185, 28, 28]);
+    doc.text("(Attachment could not be retrieved.)", PAGE_MARGIN, y);
     return y + 14;
   }
 
+  _pdfMergeQueue.push({ fileName, arrayBuffer });
+  setReportFont(doc, "regular", 8.5, PDF_COLORS.slate);
+  doc.text(`(Full document appended as page${_pdfMergeQueue.length > 1 ? "s" : ""} at end of report — attachment ${_pdfMergeQueue.length})`, PAGE_MARGIN, y);
+  return y + 14;
+}
+
+async function mergePdfAttachments(mainBlob, queue) {
+  if (!queue.length) return mainBlob;
   try {
-    const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-    pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
-    const pdf = await pdfjs.getDocument({ data: arrayBuffer.slice(0) }).promise;
+    const { PDFDocument } = await import("pdf-lib");
+    const mainBytes = await mainBlob.arrayBuffer();
+    const mainDoc = await PDFDocument.load(mainBytes);
 
-    setReportFont(doc, "medium", 9, PDF_COLORS.slate);
-    doc.text(`Attached PDF: ${getAttachmentFileName(attachment)}`, PAGE_MARGIN, y);
-    y += 12;
-
-    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
-      const page = await pdf.getPage(pageNumber);
-      const viewport = page.getViewport({ scale: getPdfRenderScale(page) });
-      const canvas = document.createElement("canvas");
-      const context = canvas.getContext("2d");
-      if (!context) throw new Error("Canvas rendering is not available.");
-      canvas.width = Math.ceil(viewport.width);
-      canvas.height = Math.ceil(viewport.height);
-      context.fillStyle = "#ffffff";
-      context.fillRect(0, 0, canvas.width, canvas.height);
-      await page.render({ canvasContext: context, viewport }).promise;
-
-      const pageImage = canvas.toDataURL("image/jpeg", 0.72);
-      // Cap attached pages at roughly two-thirds of the printable height so they
-      // read as embedded figures instead of consuming a full page each.
-      const maxAttachedPageHeight = 440;
-      const ratio = Math.min(getContentWidth(doc) / canvas.width, maxAttachedPageHeight / canvas.height);
-      const width = canvas.width * ratio;
-      const height = canvas.height * ratio;
-      y = ensurePage(doc, y, height + 22);
-      const x = PAGE_MARGIN + (getContentWidth(doc) - width) / 2;
-      doc.setDrawColor(226, 232, 240);
-      doc.setFillColor(255, 255, 255);
-      doc.rect(x - 4, y - 4, width + 8, height + 8, "FD");
-      doc.addImage(pageImage, "JPEG", x, y, width, height, undefined, "FAST");
-      y += height + 14;
+    for (const { fileName, arrayBuffer } of queue) {
+      try {
+        const attachedDoc = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
+        const indices = attachedDoc.getPageIndices();
+        const copied = await mainDoc.copyPages(attachedDoc, indices);
+        copied.forEach((page) => mainDoc.addPage(page));
+      } catch (err) {
+        console.warn(`[Daily Log PDF] Could not merge attachment: ${fileName}`, err);
+      }
     }
-  } catch (error) {
-    console.warn("[Daily Log PDF] Unable to render PDF attachment", error);
-    y = ensurePage(doc, y, 22);
-    setReportFont(doc, "regular", 9, PDF_COLORS.slate);
-    doc.text(`PDF attachment could not be rendered: ${getAttachmentFileName(attachment)}`, PAGE_MARGIN, y);
-    y += 14;
+
+    const merged = await mainDoc.save();
+    return new Blob([merged], { type: "application/pdf" });
+  } catch (err) {
+    console.warn("[Daily Log PDF] pdf-lib merge failed, returning unmerged PDF", err);
+    return mainBlob;
   }
-  return y;
 }
 
 async function renderSignatureImage(doc, source, x, y, width, height) {
@@ -1836,6 +1823,8 @@ export async function generateHydratedDailyLogPdfBlob(log) {
 }
 
 export async function generateDailyLogPdfBlob(log) {
+  _pdfMergeQueue = [];
+
   const doc = new JsPDFConstructor({ orientation: "portrait", unit: "pt", format: "letter", compress: true });
   await registerReportFonts(doc);
   let y = PAGE_TOP_MARGIN;
@@ -1851,14 +1840,13 @@ export async function generateDailyLogPdfBlob(log) {
     { label: "Weather", value: getWeatherText(log) },
     { label: "Shift", value: log.shift || log.shift_name || "Not recorded" }
   ], y, { columns: 2, cardHeight: 38, minSpace: 128 });
-  // Front matter: reviewers see the QA/QC totals and sign-off block first;
-  // per-activity details and attachments follow as the supporting record.
   y = renderReferenceQaqcSummary(doc, log, y);
   y = await renderReferenceSignatures(doc, log, y);
   await renderReferenceActivityDetails(doc, log, y);
   PdfFooter(doc, log);
 
-  return doc.output("blob");
+  const mainBlob = doc.output("blob");
+  return mergePdfAttachments(mainBlob, _pdfMergeQueue);
 }
 
 export async function uploadDailyLogPdf(log, pdfBlob) {
