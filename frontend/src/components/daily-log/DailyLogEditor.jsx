@@ -836,7 +836,7 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
         );
       } catch (error) {
         console.error("Daily Log status update failed", error);
-        window.alert("Daily Log submission failed. Signature saved successfully. Please try again.");
+        window.alert(`${error?.message || "Daily Log submission failed."}\n\nYour signature was saved. Please try again.`);
         return false;
       }
 

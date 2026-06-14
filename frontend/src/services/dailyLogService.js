@@ -488,8 +488,15 @@ export async function submitDailyLogToSupabase(log, { signatureId, submittedAt, 
     .select("id,status,submitted_at,submitted_by,signature_id,pdf_url,pdf_storage_path")
     .single();
 
-  if (error || data?.status !== DAILY_LOG_STATUS.SUBMITTED) {
-    if (error) console.error("Daily Log submission upsert failed", error);
+  if (error) {
+    console.error("Daily Log submission upsert failed", { code: error.code, message: error.message, details: error.details, hint: error.hint });
+    const hint = error.code === "42P10"
+      ? "Database is missing a unique index on client_log_id. Run migration 023."
+      : (error.message || "Unknown database error");
+    throw new Error(`Daily Log submission failed: ${hint}`);
+  }
+  if (data?.status !== DAILY_LOG_STATUS.SUBMITTED) {
+    console.error("Daily Log submission returned unexpected status", data?.status);
     throw new Error("Daily Log submission failed. Please try again.");
   }
 
