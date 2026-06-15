@@ -18,7 +18,7 @@ function ClientLogo({ className = "" }) {
     <img
       src={src}
       alt={alt}
-      className={`h-9 w-auto max-w-[140px] object-contain sm:h-10 sm:max-w-[180px] ${className}`}
+      className={`h-7 w-auto max-w-[88px] object-contain sm:h-10 sm:max-w-[180px] ${className}`}
     />
   );
 }
