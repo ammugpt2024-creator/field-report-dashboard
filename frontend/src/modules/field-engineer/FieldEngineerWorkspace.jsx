@@ -2688,7 +2688,8 @@ const VTM12_CURVES = {
 // SVG chart of VTM-12 Set "C" moisture-density curves (Figure 1).
 // All 26 curves are rendered as solid black lines; the selected curve is heavier.
 // If field moisture and density are provided, the test point is plotted as an ×.
-function ProctorCurvesChart({ selectedCurve, moistureContent, fieldDryDensity }) {
+function ProctorCurvesChart({ selectedCurve, moistureContent, fieldDryDensity, wetDensity, onSelectCurve, isReadOnly }) {
+  const [hoverCurve, setHoverCurve] = useState("");
   const W = 560, H = 420;
   const ml = 46, mr = 10, mt = 12, mb = 44;
   const gw = W - ml - mr, gh = H - mt - mb;
@@ -2702,13 +2703,22 @@ function ProctorCurvesChart({ selectedCurve, moistureContent, fieldDryDensity })
   const HALF_SPAN = 7;
   const PTS = 60;
 
-  function curvePath(mdd, omc) {
+  // Sample one curve as {w, d} points; used for both the drawn path and hit-testing.
+  function curveSamples(mdd, omc) {
     const k = K_FACTOR * mdd;
-    let path = "";
-    let first = true;
+    const pts = [];
     for (let i = 0; i <= PTS; i++) {
       const w = (omc - HALF_SPAN) + HALF_SPAN * 2 * i / PTS;
       const d = mdd - k * (w - omc) * (w - omc);
+      pts.push({ w, d });
+    }
+    return pts;
+  }
+
+  function samplesToPath(pts) {
+    let path = "";
+    let first = true;
+    for (const { w, d } of pts) {
       if (w < moistMin || w > moistMax || d < densMin || d > densMax) { first = true; continue; }
       path += `${first ? "M" : "L"} ${toX(w).toFixed(1)} ${toY(d).toFixed(1)} `;
       first = false;
@@ -2716,21 +2726,103 @@ function ProctorCurvesChart({ selectedCurve, moistureContent, fieldDryDensity })
     return path.trim();
   }
 
+  // Precompute each curve's drawn path once.
+  const curveList = Object.entries(VTM12_CURVES).map(([letter, c]) => ({
+    letter,
+    mdd: c.maxDryDensity,
+    omc: c.optimumMoisture,
+    d: samplesToPath(curveSamples(c.maxDryDensity, c.optimumMoisture))
+  })).filter((c) => c.d);
+
   const mc = parseFloat(moistureContent);
   const fd = parseFloat(fieldDryDensity);
-  const hasPoint = !isNaN(mc) && !isNaN(fd) &&
-    mc >= moistMin && mc <= moistMax && fd >= densMin && fd <= densMax;
+  const wd = parseFloat(wetDensity);
+  // One-point molded dry density — the point overlaid on the family of curves to pick
+  // the curve. Computed live from wet density (D) and moisture (F): D / (1 + w/100).
+  const moldedDry = (!isNaN(wd) && !isNaN(mc) && wd > 0) ? wd / (1 + mc / 100) : NaN;
+
+  const inRange = (w, d) => w >= moistMin && w <= moistMax && d >= densMin && d <= densMax;
+  const hasMolded = !isNaN(mc) && !isNaN(moldedDry) && inRange(mc, moldedDry);
+  const hasField = !isNaN(mc) && !isNaN(fd) && inRange(mc, fd);
+
+  const canSelect = !isReadOnly && typeof onSelectCurve === "function";
+
+  // Suggested curve = family curve nearest (in plotted pixels) to the one-point test point.
+  // Falls back to the field-density point if the molded point isn't available yet.
+  const sx = hasMolded ? toX(mc) : (hasField ? toX(mc) : null);
+  const sy = hasMolded ? toY(moldedDry) : (hasField ? toY(fd) : null);
+  let suggested = "";
+  if (sx !== null && sy !== null) {
+    let best = Infinity;
+    Object.entries(VTM12_CURVES).forEach(([letter, { maxDryDensity: mdd, optimumMoisture: omc }]) => {
+      curveSamples(mdd, omc).forEach(({ w, d }) => {
+        const dist = (toX(w) - sx) ** 2 + (toY(d) - sy) ** 2;
+        if (dist < best) { best = dist; suggested = letter; }
+      });
+    });
+  }
+  const showSuggestApply = canSelect && suggested && suggested !== selectedCurve;
+
+  function styleFor(letter) {
+    if (letter === selectedCurve) return { stroke: "#000", width: 3, dash: "" };
+    if (canSelect && letter === hoverCurve) return { stroke: "#1d4ed8", width: 2.2, dash: "" };
+    if (letter === suggested) return { stroke: "#2563eb", width: 1.6, dash: "4 3" };
+    return { stroke: "#000", width: 0.75, dash: "" };
+  }
+
+  // Draw emphasized curves (suggested / hovered / selected) last so they sit on top.
+  const emphasized = [...new Set([suggested, hoverCurve, selectedCurve].filter(Boolean))];
+  const baseCurves = curveList.filter((c) => !emphasized.includes(c.letter));
+  const topCurves = emphasized.map((l) => curveList.find((c) => c.letter === l)).filter(Boolean);
 
   const xTicks = [], yTicks = [];
   for (let m = 4; m <= 34; m += 2) xTicks.push(m);
   for (let d = 80; d <= 144; d += 4) yTicks.push(d);
 
+  function renderCurve({ letter, mdd, omc, d }) {
+    const s = styleFor(letter);
+    const labeled = omc >= moistMin && omc <= moistMax && mdd >= densMin && mdd <= densMax;
+    const isEmph = letter === selectedCurve || letter === suggested || (canSelect && letter === hoverCurve);
+    return (
+      <g key={letter}>
+        <path d={d} fill="none" stroke={s.stroke} strokeWidth={s.width} strokeDasharray={s.dash} />
+        {labeled && (
+          <text x={toX(omc)} y={toY(mdd) - (isEmph ? 7 : 2)} textAnchor="middle"
+            fontSize={isEmph ? 11 : 6} fontWeight="bold" fill={s.stroke}>{letter}</text>
+        )}
+      </g>
+    );
+  }
+
   return (
-    <div className="mt-2 md:col-span-3 overflow-x-auto">
+    <div className="mt-2 md:col-span-3">
       <p className="mb-1 text-[10px] font-bold uppercase tracking-[0.14em] text-blue-600">
         Fig. 1 — Typical Moisture-Density Curves, Set &quot;C&quot; (VTM-12)
         {selectedCurve ? <span className="ml-2 text-blue-900">· Curve {selectedCurve} selected</span> : null}
       </p>
+      <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-orange-700">
+          <span className="inline-block h-2.5 w-2.5 rounded-full bg-orange-600" /> 1-Pt test point (live)
+        </span>
+        <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-500">
+          <span className="text-slate-400">✕</span> Field density
+        </span>
+        {canSelect && (
+          <span className="text-[11px] font-semibold text-slate-500">· Tap any curve to select it.</span>
+        )}
+        {showSuggestApply && (
+          <button type="button" onClick={() => onSelectCurve(suggested)}
+            className="inline-flex min-h-8 items-center rounded-xl border border-blue-300 bg-blue-50 px-3 text-[11px] font-bold text-blue-800 hover:bg-blue-100">
+            Suggested: Curve {suggested} — tap to apply
+          </button>
+        )}
+        {!hasMolded && (
+          <span className="inline-flex items-center rounded-lg border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
+            Enter A &amp; B (mold weights) + F (moisture) to plot the live 1-Pt test point
+          </span>
+        )}
+      </div>
+      <div className="overflow-x-auto">
       <svg viewBox={`0 0 ${W} ${H}`} className="w-full min-w-[300px]"
         style={{ border: "1px solid #bfdbfe", borderRadius: "12px", background: "white" }}>
         {/* Grid */}
@@ -2741,39 +2833,42 @@ function ProctorCurvesChart({ selectedCurve, moistureContent, fieldDryDensity })
           <line key={d} x1={ml} y1={toY(d)} x2={ml + gw} y2={toY(d)} stroke="#e2e8f0" strokeWidth="0.5" />
         ))}
 
-        {/* All non-selected curves — thin solid black */}
-        {Object.entries(VTM12_CURVES).filter(([l]) => l !== selectedCurve).map(([letter, { maxDryDensity: mdd, optimumMoisture: omc }]) => {
-          const d = curvePath(mdd, omc);
-          return d ? (
-            <g key={letter}>
-              <path d={d} fill="none" stroke="#000" strokeWidth="0.75" />
-              {omc >= moistMin && omc <= moistMax && mdd >= densMin && mdd <= densMax && (
-                <text x={toX(omc)} y={toY(mdd) - 2} textAnchor="middle" fontSize="6" fontWeight="bold" fill="#000">{letter}</text>
-              )}
-            </g>
-          ) : null;
-        })}
+        {/* Base curves — thin solid black (emphasized ones drawn later, on top) */}
+        {baseCurves.map(renderCurve)}
 
-        {/* Selected curve — heavy solid black */}
-        {selectedCurve && VTM12_CURVES[selectedCurve] && (() => {
-          const { maxDryDensity: mdd, optimumMoisture: omc } = VTM12_CURVES[selectedCurve];
-          const d = curvePath(mdd, omc);
-          return d ? (
-            <g>
-              <path d={d} fill="none" stroke="#000" strokeWidth="3" />
-              <text x={toX(omc)} y={toY(mdd) - 7} textAnchor="middle" fontSize="11" fontWeight="bold" fill="#000">{selectedCurve}</text>
-            </g>
-          ) : null;
-        })()}
+        {/* Emphasized curves — suggested (dashed blue), hovered (blue), selected (heavy black) */}
+        {topCurves.map(renderCurve)}
 
-        {/* Field test point — × marker */}
-        {hasPoint && (() => {
-          const px = toX(mc), py = toY(fd), s = 5;
+        {/* Transparent wide hit-areas so a curve can be tapped/clicked to select it */}
+        {canSelect && curveList.map(({ letter, d }) => (
+          <path key={`hit-${letter}`} d={d} fill="none" stroke="transparent" strokeWidth="11"
+            style={{ cursor: "pointer" }}
+            onMouseEnter={() => setHoverCurve(letter)}
+            onMouseLeave={() => setHoverCurve((prev) => (prev === letter ? "" : prev))}
+            onClick={() => onSelectCurve(letter)}>
+            <title>Curve {letter} — MDD {VTM12_CURVES[letter]?.maxDryDensity} lb/ft³, OMC {VTM12_CURVES[letter]?.optimumMoisture}%</title>
+          </path>
+        ))}
+
+        {/* Field density point — light grey × (kept for reference; matches the PDF) */}
+        {hasField && (() => {
+          const px = toX(mc), py = toY(fd), s = 4;
           return (
             <g>
-              <line x1={px - s} y1={py - s} x2={px + s} y2={py + s} stroke="#000" strokeWidth="2.5" />
-              <line x1={px + s} y1={py - s} x2={px - s} y2={py + s} stroke="#000" strokeWidth="2.5" />
-              <text x={px + s + 3} y={py + 3} fontSize="8" fontWeight="bold" fill="#000">Field Pt.</text>
+              <line x1={px - s} y1={py - s} x2={px + s} y2={py + s} stroke="#94a3b8" strokeWidth="1.8" />
+              <line x1={px + s} y1={py - s} x2={px - s} y2={py + s} stroke="#94a3b8" strokeWidth="1.8" />
+              <text x={px + s + 3} y={py + 3} fontSize="7.5" fontWeight="bold" fill="#64748b">Field</text>
+            </g>
+          );
+        })()}
+
+        {/* One-point molded test point — live marker used to read the family of curves */}
+        {hasMolded && (() => {
+          const px = toX(mc), py = toY(moldedDry);
+          return (
+            <g>
+              <circle cx={px} cy={py} r={4.5} fill="#ea580c" stroke="#7c2d12" strokeWidth="1" />
+              <text x={px + 7} y={py + 3} fontSize="8.5" fontWeight="bold" fill="#9a3412">1-Pt Test</text>
             </g>
           );
         })()}
@@ -2803,6 +2898,7 @@ function ProctorCurvesChart({ selectedCurve, moistureContent, fieldDryDensity })
           DRY DENSITY (lb/ft³)
         </text>
       </svg>
+      </div>
     </div>
   );
 }
@@ -3040,6 +3136,9 @@ function ProctorReportPage({ log, activityId, reportId, onChange, onBack }) {
                   selectedCurve={record.selectedCurve}
                   moistureContent={record.moistureContent}
                   fieldDryDensity={record.fieldDryDensity}
+                  wetDensity={record.wetDensity}
+                  isReadOnly={isReadOnly}
+                  onSelectCurve={(letter) => updateTestRecord(record.id, { selectedCurve: letter })}
                 />
               </div>
 
