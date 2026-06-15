@@ -209,7 +209,7 @@ function Navbar() {
 
       <div className="relative flex shrink-0 items-center gap-2 sm:gap-3">
 
-        <ClientLogo className="mr-1 hidden sm:block" />
+        <ClientLogo className="mr-1 shrink-0" />
 
         <button
           type="button"
