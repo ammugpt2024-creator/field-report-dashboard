@@ -14,6 +14,8 @@ import AdminDashboard from "./pages/AdminDashboard";
 import ClientDashboard from "./pages/ClientDashboard";
 import ManagerDashboard from "./pages/ManagerDashboard";
 import TechnicianDashboard from "./pages/TechnicianDashboard";
+import CylinderBreakReport from "./pages/CylinderBreakReport";
+import CylinderBreakList from "./pages/CylinderBreakList";
 import TimesheetsPage from "./pages/TimesheetsPage";
 import ProjectWorkspace from "./pages/ProjectWorkspace";
 import FieldReports from "./pages/FieldReports";
@@ -101,6 +103,16 @@ function App() {
         <Route
           path="/technician/activity-history"
           element={<TechnicianDashboard />}
+        />
+
+        <Route
+          path="/technician/lab/cylinder-break"
+          element={<CylinderBreakList />}
+        />
+
+        <Route
+          path="/technician/lab/cylinder-break/:reportId"
+          element={<CylinderBreakReport />}
         />
 
         <Route

@@ -458,14 +458,32 @@ export async function submitDailyLogToSupabase(log, { signatureId, submittedAt, 
     signature_id: signatureId || null
   });
 
-  // The upsert returns the persisted row, so its status is already the
-  // authoritative verification; a separate read-back round trip only adds
-  // another failure point inside the submission timeout budget.
-  const { data, error } = await supabase
+  // Upsert with onConflict requires a unique index on client_log_id, which is
+  // not guaranteed to exist on every environment. Do an explicit
+  // select-then-update-or-insert so submission works regardless of DB constraints.
+  const selectColumns = "id,status,submitted_at,submitted_by,signature_id,pdf_url,pdf_storage_path";
+  const { data: existing } = await supabase
     .from("daily_logs")
-    .upsert(payload, { onConflict: "client_log_id" })
-    .select("id,status,submitted_at,submitted_by,signature_id,pdf_url,pdf_storage_path")
-    .single();
+    .select("id")
+    .eq("client_log_id", payload.client_log_id)
+    .maybeSingle();
+
+  let data;
+  let error;
+  if (existing?.id) {
+    ({ data, error } = await supabase
+      .from("daily_logs")
+      .update(payload)
+      .eq("id", existing.id)
+      .select(selectColumns)
+      .single());
+  } else {
+    ({ data, error } = await supabase
+      .from("daily_logs")
+      .insert(payload)
+      .select(selectColumns)
+      .single());
+  }
 
   if (error || data?.status !== DAILY_LOG_STATUS.SUBMITTED) {
     if (error) console.error("Daily Log submission upsert failed", error);
