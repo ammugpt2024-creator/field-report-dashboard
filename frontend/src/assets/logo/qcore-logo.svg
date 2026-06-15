@@ -1,0 +1,11 @@
+<svg width="540" height="132" viewBox="0 0 540 132" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="QCore — Enterprise Field Operations Platform">
+  <g transform="translate(8,16)">
+    <circle cx="48" cy="48" r="30" fill="none" stroke="#1c2f4a" stroke-width="11" stroke-linecap="round" stroke-dasharray="150 38" stroke-dashoffset="-124"/>
+    <circle cx="48" cy="48" r="11" fill="#bd5d3a"/>
+    <line x1="65" y1="65" x2="82" y2="82" stroke="#bd5d3a" stroke-width="11" stroke-linecap="round"/>
+  </g>
+  <text x="150" y="60" font-family="Arial, Helvetica, sans-serif" font-size="46" font-weight="bold" letter-spacing="-1.5" fill="#1c2f4a">Q<tspan fill="#bd5d3a">Core</tspan></text>
+  <text x="153" y="84" font-family="Arial, Helvetica, sans-serif" font-size="10.5" letter-spacing="3.4" fill="#6b7280">ENTERPRISE FIELD OPERATIONS PLATFORM</text>
+  <line x1="153" y1="96" x2="500" y2="96" stroke="#e4e4dd" stroke-width="1"/>
+  <text x="153" y="113" font-family="Arial, Helvetica, sans-serif" font-size="10.5" font-weight="bold" letter-spacing="2.6" fill="#1c2f4a">QUALITY. COMPLIANCE. CONFIDENCE.</text>
+</svg>
