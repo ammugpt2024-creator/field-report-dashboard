@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { supabase } from "../services/supabase";
 import { getRoleHomeRoute } from "../utils/navigation";
 import { BRAND } from "../config/branding";
+import Logo from "../components/Logo";
 
 function Login() {
 
@@ -38,16 +39,10 @@ function Login() {
 
         <div className="text-center mb-8">
 
-          <h1 className="text-4xl font-bold text-slate-950 mb-2">
-            {BRAND.name}
-          </h1>
+          <Logo variant="full" className="mb-4" />
 
-          <p className="text-xs font-semibold uppercase tracking-[0.28em] text-blue-700">
+          <p className="mt-3 text-xs font-semibold uppercase tracking-[0.2em] text-[#1c2f4a]">
             {BRAND.tagline}
-          </p>
-
-          <p className="mt-3 text-sm font-medium text-gray-500">
-            {BRAND.platformDescription}
           </p>
 
         </div>

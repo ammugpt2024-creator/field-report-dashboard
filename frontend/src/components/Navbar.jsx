@@ -22,6 +22,8 @@ import { getRoleHomeRoute } from "../utils/navigation";
 import { isQcRole, ROLES } from "../utils/permissions";
 import { BRAND, MODULE_NAMES } from "../config/branding";
 import { FIELD_ENGINEER_NAV } from "../modules/field-engineer/fieldEngineerConfig";
+import Logo, { LogoMark } from "./Logo";
+import ClientLogo from "./ClientLogo";
 
 function Navbar() {
 
@@ -198,40 +200,7 @@ function Navbar() {
 
         <div className="min-w-0">
 
-          <h2 className="
-            text-xl
-            sm:text-2xl
-            font-bold
-            text-slate-900
-            leading-none
-          ">
-            {BRAND.name}
-          </h2>
-
-          <p className="
-            hidden
-            text-xs
-            text-slate-500
-            tracking-wide
-            uppercase
-            mt-1
-            sm:block
-          ">
-            {BRAND.platformDescription}
-          </p>
-
-          {companyName && (
-            <p className="
-              hidden
-              text-sm
-              text-slate-600
-              mt-1
-              font-medium
-              sm:block
-            ">
-              {companyName}
-            </p>
-          )}
+          <Logo variant="lockup" />
 
         </div>
       </div>
@@ -239,6 +208,8 @@ function Navbar() {
       {/* RIGHT SECTION */}
 
       <div className="relative flex shrink-0 items-center gap-2 sm:gap-3">
+
+        <ClientLogo className="mr-1 hidden sm:block" />
 
         <button
           type="button"
@@ -384,9 +355,12 @@ function Navbar() {
           />
           <aside className="absolute right-0 top-0 flex h-full w-[min(88vw,360px)] max-w-full flex-col bg-white p-5 shadow-2xl">
             <div className="flex items-start justify-between gap-4 border-b border-slate-100 pb-4">
-              <div className="min-w-0">
-                <p className="text-xl font-bold text-slate-950">{BRAND.name}</p>
-                <p className="mt-1 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{roleLabel || "Field User"}</p>
+              <div className="flex min-w-0 items-center gap-2.5">
+                <LogoMark className="h-9 w-9 shrink-0" />
+                <div className="min-w-0">
+                  <p className="text-xl font-bold text-slate-950">{BRAND.name}</p>
+                  <p className="mt-1 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{roleLabel || "Field User"}</p>
+                </div>
               </div>
               <button
                 type="button"
