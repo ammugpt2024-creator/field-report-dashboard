@@ -2746,7 +2746,7 @@ function ProctorReportPage({ log, activityId, reportId, onChange, onBack }) {
   }
 
   function completeReport() {
-    saveReport({ ...report, completedAt: new Date().toISOString() });
+    saveReport({ ...report, status: "completed", completedAt: new Date().toISOString() });
     onBack();
   }
 
@@ -4053,9 +4053,17 @@ export default function FieldEngineerWorkspace({
       id: crypto.randomUUID(),
       type: "One-Point Proctor Report",
       reportType: "One-Point Proctor Report",
-      projectName: log.projectName || "",
-      projectNumber: log.projectNumber || "",
-      date: log.date || "",
+      report_type: "One-Point Proctor Report",
+      status: "draft",
+      dailyLogId: log.id,
+      daily_log_id: log.id,
+      activityId,
+      activity_id: activityId,
+      projectName: log.projectName || projectLabel,
+      project_name: log.projectName || projectLabel,
+      projectNumber: log.projectNumber || log.project_number || String(defaultProjectId || ""),
+      project_number: log.projectNumber || log.project_number || String(defaultProjectId || ""),
+      date: log.date || new Date().toISOString().slice(0, 10),
       client: log.client || "",
       testRecords: [],
       createdAt: new Date().toISOString(),
