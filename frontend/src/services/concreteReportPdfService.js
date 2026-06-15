@@ -94,11 +94,7 @@ export function generateConcreteReportPdfBlob(log, activity, report) {
   doc.setTextColor(15, 23, 42);
   doc.text("Concrete Report", 36, y);
   y += 22;
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(10);
-  doc.setTextColor(71, 85, 105);
-  doc.text(pdfValue(report.reportNumber), 36, y);
-  y += 30;
+  y += 8;
 
   y = addSectionTitle(doc, "Project Information", y);
   y = addRows(doc, [

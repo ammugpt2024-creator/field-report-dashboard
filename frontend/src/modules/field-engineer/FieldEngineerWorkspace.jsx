@@ -31,7 +31,7 @@ import {
   saveDailyLog,
   syncDailyLogsFromSupabase
 } from "../../services/dailyLogService";
-import { openDailyLogPdf, regenerateDailyLogPdf } from "../../services/dailyLogPdfService";
+import { openDailyLogPdf, regenerateDailyLogPdf, generateProctorStandalonePdf } from "../../services/dailyLogPdfService";
 import { generateAndUploadConcreteReportPdf, openConcreteReportPdf } from "../../services/concreteReportPdfService";
 import { openTimeCardPdf } from "../../services/timeCardPdfService";
 import {
@@ -756,8 +756,6 @@ function ConcreteReportPage({ log, activityId, reportId, onChange, onBack }) {
   const strengthComplete = strengthMissingFields.length === 0;
   const attachmentCount = (report?.attachments || []).filter((attachment) => attachment.attachmentType !== "photo").length;
   const photoCount = (report?.attachments || []).filter((attachment) => attachment.attachmentType === "photo").length;
-  const reportYear = new Date(log.date || report?.createdAt || Date.now()).getFullYear();
-  const reportNumber = report?.reportNumber || `CR-${reportYear}-${String(report?.id || "000124").replace(/\D/g, "").slice(-6).padStart(6, "0")}`;
   const stepComplete = [
     !requiredSpecMissing,
     testRecordsComplete,
@@ -936,7 +934,7 @@ function ConcreteReportPage({ log, activityId, reportId, onChange, onBack }) {
     const completedAt = new Date().toISOString();
     let pdfPatch;
     try {
-      pdfPatch = await generateAndUploadConcreteReportPdf(log, activity, { ...report, reportNumber, status: "completed", completedAt });
+      pdfPatch = await generateAndUploadConcreteReportPdf(log, activity, { ...report, status: "completed", completedAt });
     } catch (error) {
       pdfPatch = {
         pdfGenerationStatus: "failed",
@@ -945,7 +943,7 @@ function ConcreteReportPage({ log, activityId, reportId, onChange, onBack }) {
         pdf_generation_failure_reason: error.message || "PDF storage configuration issue. Please contact administrator."
       };
     }
-    updateReport({ status: "completed", completedAt, reportNumber, ...pdfPatch });
+    updateReport({ status: "completed", completedAt, ...pdfPatch });
     onBack();
   }
 
@@ -1074,7 +1072,7 @@ function ConcreteReportPage({ log, activityId, reportId, onChange, onBack }) {
     try {
       await openConcreteReportPdf(report, {
         download,
-        fileName: `${reportNumber}.pdf`
+        fileName: `${report.dfrNumber || report.dfr_number || "Concrete-Report"}.pdf`
       });
     } catch (error) {
       window.alert(error.message || "PDF is still being generated. Please try again in a few seconds.");
@@ -1176,7 +1174,6 @@ function ConcreteReportPage({ log, activityId, reportId, onChange, onBack }) {
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <h2 className="text-2xl font-bold text-slate-950">Concrete Report</h2>
-            <p className="mt-1 text-base font-bold text-slate-700">{reportNumber}</p>
             <p className="mt-1 text-sm font-semibold text-slate-600">{log.projectName} • {activity.title || "Activity"}</p>
           </div>
           <div className="flex flex-col gap-2 sm:items-end">
@@ -1540,6 +1537,16 @@ function calculateAsphaltTestRecord(record = {}, group = {}) {
   };
 }
 
+function calculateInfiltrationRate(record = {}) {
+  const weight = toFiniteNumber(record.weightInfiltratedWater);
+  const diameter = toFiniteNumber(record.insideDiameter);
+  const time = toFiniteNumber(record.timeInfiltration);
+  const rate = (weight !== null && diameter !== null && diameter > 0 && time !== null && time > 0)
+    ? (126870 * weight) / (diameter * diameter * time)
+    : null;
+  return { ...record, infiltrationRate: rate === null ? "" : rate.toFixed(2) };
+}
+
 function getCompactionRecordMoistureRange(record = {}, materialType = "") {
   const correctedOptimum = toFiniteNumber(record.correctedOptimumMoisture ?? record.corrected_optimum_moisture);
   if (correctedOptimum === null || correctedOptimum <= 0) return null;
@@ -1777,7 +1784,7 @@ function CompactionReportPage({ log, activityId, reportId, onChange, onBack }) {
           <div>
             <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-400">Nuclear Density Report</p>
             <h1 className="mt-2 text-2xl font-bold text-slate-950">Compaction Report</h1>
-            <p className="mt-1 text-sm font-semibold text-slate-600">{report.reportNumber} · {report.projectName}</p>
+            <p className="mt-1 text-sm font-semibold text-slate-600">{report.projectName}</p>
           </div>
           <span className="w-fit rounded-full border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-bold uppercase tracking-[0.12em] text-slate-700">{report.status || "Draft"}</span>
         </div>
@@ -1787,7 +1794,6 @@ function CompactionReportPage({ log, activityId, reportId, onChange, onBack }) {
         <h2 className="text-lg font-bold text-slate-950">Report Header</h2>
         <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
           {[
-            ["Report Number", report.reportNumber],
             ["Project Name", report.projectName],
             ["Project Number", report.projectNumber],
             ["Section", report.section],
@@ -2125,7 +2131,7 @@ function AsphaltCompactionReportPage({ log, activityId, reportId, onChange, onBa
           <div>
             <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-400">Asphalt Compaction Report</p>
             <h1 className="mt-2 text-2xl font-bold text-slate-950">Compaction Report</h1>
-            <p className="mt-1 text-sm font-semibold text-slate-600">{report.reportNumber} · {report.projectName}</p>
+            <p className="mt-1 text-sm font-semibold text-slate-600">{report.projectName}</p>
           </div>
           <span className="w-fit rounded-full border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-bold uppercase tracking-[0.12em] text-slate-700">{report.status || "Draft"}</span>
         </div>
@@ -2273,6 +2279,648 @@ function AsphaltCompactionReportPage({ log, activityId, reportId, onChange, onBa
 
       <div className="sticky bottom-0 z-20 -mx-4 flex flex-col gap-2 border-t border-slate-200 bg-white/95 p-4 backdrop-blur sm:mx-0 sm:flex-row sm:justify-end sm:rounded-2xl sm:border">
         <button type="button" onClick={onBack} className="min-h-11 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-800">Back</button>
+        {!isReadOnly && <button type="button" onClick={() => saveReport(report)} className="min-h-11 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-800">Save Draft</button>}
+        {!isReadOnly && <button type="button" onClick={completeReport} disabled={!canComplete} className="min-h-11 rounded-2xl bg-emerald-700 px-4 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-600">Finish Report</button>}
+      </div>
+    </div>
+  );
+}
+
+function SurfaceInfiltrationReportPage({ log, activityId, reportId, onChange, onBack }) {
+  const activity = (log.activities || []).find((item) => item.id === activityId);
+  const persistedReport = (activity?.reports || []).find((item) => item.id === reportId);
+  const [localReport, setLocalReport] = useState(persistedReport || null);
+  const report = localReport || persistedReport;
+  const isReadOnly = [DAILY_LOG_STATUS.SUBMITTED, DAILY_LOG_STATUS.APPROVED].includes(log.status);
+
+  const testRecords = report?.testRecords || [];
+  const canComplete = report && testRecords.length > 0;
+
+  if (!activity || !report) {
+    return (
+      <section className={cardClass()}>
+        <h1 className="text-xl font-bold text-slate-950">Surface Infiltration Report Not Found</h1>
+        <button type="button" onClick={onBack} className="mt-4 min-h-10 rounded-xl border border-slate-200 px-4 text-sm font-bold">Back</button>
+      </section>
+    );
+  }
+
+  function saveReport(nextReport) {
+    const normalized = { ...nextReport, updatedAt: new Date().toISOString() };
+    setLocalReport(normalized);
+    const nextLog = saveDailyLog({
+      ...log,
+      activities: (log.activities || []).map((item) => (
+        item.id === activityId
+          ? { ...item, reports: (item.reports || []).map((r) => (r.id === normalized.id ? normalized : r)), updatedAt: new Date().toISOString() }
+          : item
+      )),
+      updatedAt: new Date().toISOString()
+    });
+    onChange(nextLog);
+  }
+
+  function updateReport(patch) {
+    if (isReadOnly) return;
+    saveReport({ ...report, ...patch, status: "draft" });
+  }
+
+  function addTestRecord() {
+    const nextNo = testRecords.length + 1;
+    const newRecord = calculateInfiltrationRate({
+      id: crypto.randomUUID(), testNo: nextNo,
+      identificationNumber: "", location: "", dateOfTest: log.date || "",
+      ageOfPavingUnit: "", typeOfPavingUnit: "", thicknessOfPavingUnit: "",
+      timePrewetting: "", rainLastEvent: "", weightInfiltratedWater: "",
+      insideDiameter: "", timeInfiltration: "", infiltrationRate: ""
+    });
+    updateReport({ testRecords: [...testRecords, newRecord] });
+  }
+
+  function updateTestRecord(recordId, patch) {
+    updateReport({
+      testRecords: testRecords.map((r) => {
+        if (r.id !== recordId) return r;
+        const updated = { ...r, ...patch };
+        if ("weightInfiltratedWater" in patch || "insideDiameter" in patch || "timeInfiltration" in patch) {
+          return calculateInfiltrationRate(updated);
+        }
+        return updated;
+      })
+    });
+  }
+
+  function deleteTestRecord(recordId) {
+    updateReport({ testRecords: testRecords.filter((r) => r.id !== recordId) });
+  }
+
+  function completeReport() {
+    saveReport({ ...report, status: "completed", completedAt: new Date().toISOString() });
+    onBack();
+  }
+
+  return (
+    <div className="space-y-4">
+      <section className={cardClass()}>
+        <div>
+          <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-400">ASTM C1781</p>
+          <h1 className="mt-2 text-2xl font-bold text-slate-950">Surface Infiltration Rate Report</h1>
+          <p className="mt-1 text-sm font-semibold text-slate-600">{report.projectName}</p>
+        </div>
+      </section>
+
+      <section className={cardClass()}>
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-bold text-slate-950">Test Records</h2>
+          <span className="text-xs font-semibold text-slate-500">{testRecords.length} record{testRecords.length !== 1 ? "s" : ""}</span>
+        </div>
+        <p className="mt-1 text-xs font-semibold text-slate-400">Formula: IR = (126870 × W) ÷ (D² × T)</p>
+
+        <div className="mt-4 space-y-6">
+          {testRecords.map((record, index) => (
+            <div key={record.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-bold text-slate-700">Test {index + 1}</p>
+                {!isReadOnly && (
+                  <button type="button" onClick={() => deleteTestRecord(record.id)} className="min-h-8 rounded-xl border border-rose-200 bg-white px-3 text-xs font-bold text-rose-700">Remove</button>
+                )}
+              </div>
+              <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
+                <Field label="Identification Number">
+                  <input value={record.identificationNumber || ""} disabled={isReadOnly} onChange={(e) => updateTestRecord(record.id, { identificationNumber: e.target.value })} className={inputClass()} placeholder="e.g. 1C" />
+                </Field>
+                <Field label="Location" extraClass="md:col-span-2">
+                  <input value={record.location || ""} disabled={isReadOnly} onChange={(e) => updateTestRecord(record.id, { location: e.target.value })} className={inputClass()} placeholder="e.g. Rock Creek Trail STA 403+30" />
+                </Field>
+                <Field label="Date of Test">
+                  <input type="date" value={record.dateOfTest || ""} disabled={isReadOnly} onChange={(e) => updateTestRecord(record.id, { dateOfTest: e.target.value })} className={inputClass()} />
+                </Field>
+                <Field label="Age of Paving Unit (Days)">
+                  <input type="number" value={record.ageOfPavingUnit || ""} disabled={isReadOnly} onChange={(e) => updateTestRecord(record.id, { ageOfPavingUnit: e.target.value })} className={inputClass()} placeholder="e.g. 1" />
+                </Field>
+                <Field label="Type of Paving Unit">
+                  <input value={record.typeOfPavingUnit || ""} disabled={isReadOnly} onChange={(e) => updateTestRecord(record.id, { typeOfPavingUnit: e.target.value })} className={inputClass()} placeholder="e.g. Porous Asphalt" />
+                </Field>
+                <Field label="Thickness of Paving Unit (in)">
+                  <input type="number" value={record.thicknessOfPavingUnit || ""} disabled={isReadOnly} onChange={(e) => updateTestRecord(record.id, { thicknessOfPavingUnit: e.target.value })} className={inputClass()} placeholder="e.g. 4.50" />
+                </Field>
+                <Field label="Time Elapsed During Prewetting (sec)">
+                  <input type="number" value={record.timePrewetting || ""} disabled={isReadOnly} onChange={(e) => updateTestRecord(record.id, { timePrewetting: e.target.value })} className={inputClass()} placeholder="e.g. 10" />
+                </Field>
+                <Field label="Amount of Rain During Last Event (in)">
+                  <input value={record.rainLastEvent || ""} disabled={isReadOnly} onChange={(e) => updateTestRecord(record.id, { rainLastEvent: e.target.value })} className={inputClass()} placeholder="N/A or e.g. 0.5" />
+                </Field>
+              </div>
+
+              <div className="mt-3 grid grid-cols-1 gap-3 rounded-2xl border border-blue-100 bg-blue-50 p-3 md:grid-cols-3">
+                <p className="text-xs font-bold uppercase tracking-[0.14em] text-blue-700 md:col-span-3">Calculation Inputs</p>
+                <Field label="Weight of Infiltrated Water (lb) — W">
+                  <input type="number" value={record.weightInfiltratedWater || ""} disabled={isReadOnly} onChange={(e) => updateTestRecord(record.id, { weightInfiltratedWater: e.target.value })} className={inputClass()} placeholder="e.g. 40" />
+                </Field>
+                <Field label="Inside Diameter of Infiltration Ring (in) — D">
+                  <input type="number" value={record.insideDiameter || ""} disabled={isReadOnly} onChange={(e) => updateTestRecord(record.id, { insideDiameter: e.target.value })} className={inputClass()} placeholder="e.g. 11.75" />
+                </Field>
+                <Field label="Time Elapsed During Infiltration Test (sec) — T">
+                  <input type="number" value={record.timeInfiltration || ""} disabled={isReadOnly} onChange={(e) => updateTestRecord(record.id, { timeInfiltration: e.target.value })} className={inputClass()} placeholder="e.g. 71" />
+                </Field>
+              </div>
+
+              <div className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs font-bold uppercase tracking-[0.14em] text-emerald-700">Infiltration Rate (in/h)</p>
+                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em] text-emerald-700">
+                    Calculated
+                  </span>
+                </div>
+                <p className="mt-2 text-2xl font-bold text-emerald-900">{record.infiltrationRate ? `${record.infiltrationRate} in/h` : "—"}</p>
+                <p className="mt-1 text-xs font-semibold text-emerald-600">(126870 × W) ÷ (D² × T)</p>
+              </div>
+            </div>
+          ))}
+
+          {!isReadOnly && (
+            <button type="button" onClick={addTestRecord} className="w-full min-h-11 rounded-2xl border-2 border-dashed border-slate-300 bg-white text-sm font-bold text-slate-700 hover:border-blue-400 hover:text-blue-700 transition-colors">
+              + Add Test Record
+            </button>
+          )}
+          {!testRecords.length && (
+            <p className="text-center text-sm font-semibold text-slate-500">No test records yet. Click &quot;+ Add Test Record&quot; to begin.</p>
+          )}
+        </div>
+      </section>
+
+      <div className="sticky bottom-0 z-20 -mx-4 flex flex-col gap-2 border-t border-slate-200 bg-white/95 p-4 backdrop-blur sm:mx-0 sm:flex-row sm:justify-end sm:rounded-2xl sm:border">
+        <button type="button" onClick={onBack} className="min-h-11 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-800">Back</button>
+        {!isReadOnly && <button type="button" onClick={() => saveReport(report)} className="min-h-11 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-800">Save Draft</button>}
+        {!isReadOnly && <button type="button" onClick={completeReport} disabled={!canComplete} className="min-h-11 rounded-2xl bg-emerald-700 px-4 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-600">Finish Report</button>}
+      </div>
+    </div>
+  );
+}
+
+const VTM12_CURVES = {
+  A: { maxDryDensity: 141.8, optimumMoisture: 6.1 },
+  B: { maxDryDensity: 139.1, optimumMoisture: 6.7 },
+  C: { maxDryDensity: 136.3, optimumMoisture: 7.4 },
+  D: { maxDryDensity: 134.1, optimumMoisture: 8.0 },
+  E: { maxDryDensity: 132.0, optimumMoisture: 8.5 },
+  F: { maxDryDensity: 129.3, optimumMoisture: 9.2 },
+  G: { maxDryDensity: 126.6, optimumMoisture: 10.0 },
+  H: { maxDryDensity: 124.2, optimumMoisture: 10.7 },
+  I: { maxDryDensity: 121.7, optimumMoisture: 11.4 },
+  J: { maxDryDensity: 119.3, optimumMoisture: 12.2 },
+  K: { maxDryDensity: 117.0, optimumMoisture: 13.0 },
+  L: { maxDryDensity: 114.6, optimumMoisture: 14.1 },
+  M: { maxDryDensity: 112.0, optimumMoisture: 15.2 },
+  N: { maxDryDensity: 109.6, optimumMoisture: 16.4 },
+  O: { maxDryDensity: 107.1, optimumMoisture: 17.6 },
+  P: { maxDryDensity: 104.7, optimumMoisture: 19.2 },
+  Q: { maxDryDensity: 102.4, optimumMoisture: 20.3 },
+  R: { maxDryDensity: 99.9,  optimumMoisture: 21.5 },
+  S: { maxDryDensity: 97.4,  optimumMoisture: 22.7 },
+  T: { maxDryDensity: 94.6,  optimumMoisture: 24.4 },
+  U: { maxDryDensity: 92.1,  optimumMoisture: 25.8 },
+  V: { maxDryDensity: 89.9,  optimumMoisture: 27.4 },
+  W: { maxDryDensity: 87.5,  optimumMoisture: 29.5 },
+  X: { maxDryDensity: 85.0,  optimumMoisture: 30.5 },
+  Y: { maxDryDensity: 83.0,  optimumMoisture: 31.5 },
+  Z: { maxDryDensity: 81.1,  optimumMoisture: 32.5 }
+};
+
+// SVG chart of VTM-12 Set "C" moisture-density curves (Figure 1).
+// All 26 curves are rendered as solid black lines; the selected curve is heavier.
+// If field moisture and density are provided, the test point is plotted as an ×.
+function ProctorCurvesChart({ selectedCurve, moistureContent, fieldDryDensity }) {
+  const W = 560, H = 420;
+  const ml = 46, mr = 10, mt = 12, mb = 44;
+  const gw = W - ml - mr, gh = H - mt - mb;
+  const moistMin = 2, moistMax = 36;
+  const densMin = 78, densMax = 146;
+
+  function toX(w) { return ml + (w - moistMin) / (moistMax - moistMin) * gw; }
+  function toY(d) { return mt + gh - (d - densMin) / (densMax - densMin) * gh; }
+
+  const K_FACTOR = 0.0048;
+  const HALF_SPAN = 7;
+  const PTS = 60;
+
+  function curvePath(mdd, omc) {
+    const k = K_FACTOR * mdd;
+    let path = "";
+    let first = true;
+    for (let i = 0; i <= PTS; i++) {
+      const w = (omc - HALF_SPAN) + HALF_SPAN * 2 * i / PTS;
+      const d = mdd - k * (w - omc) * (w - omc);
+      if (w < moistMin || w > moistMax || d < densMin || d > densMax) { first = true; continue; }
+      path += `${first ? "M" : "L"} ${toX(w).toFixed(1)} ${toY(d).toFixed(1)} `;
+      first = false;
+    }
+    return path.trim();
+  }
+
+  const mc = parseFloat(moistureContent);
+  const fd = parseFloat(fieldDryDensity);
+  const hasPoint = !isNaN(mc) && !isNaN(fd) &&
+    mc >= moistMin && mc <= moistMax && fd >= densMin && fd <= densMax;
+
+  const xTicks = [], yTicks = [];
+  for (let m = 4; m <= 34; m += 2) xTicks.push(m);
+  for (let d = 80; d <= 144; d += 4) yTicks.push(d);
+
+  return (
+    <div className="mt-2 md:col-span-3 overflow-x-auto">
+      <p className="mb-1 text-[10px] font-bold uppercase tracking-[0.14em] text-blue-600">
+        Fig. 1 — Typical Moisture-Density Curves, Set &quot;C&quot; (VTM-12)
+        {selectedCurve ? <span className="ml-2 text-blue-900">· Curve {selectedCurve} selected</span> : null}
+      </p>
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full min-w-[300px]"
+        style={{ border: "1px solid #bfdbfe", borderRadius: "12px", background: "white" }}>
+        {/* Grid */}
+        {xTicks.map((m) => (
+          <line key={m} x1={toX(m)} y1={mt} x2={toX(m)} y2={mt + gh} stroke="#e2e8f0" strokeWidth="0.5" />
+        ))}
+        {yTicks.map((d) => (
+          <line key={d} x1={ml} y1={toY(d)} x2={ml + gw} y2={toY(d)} stroke="#e2e8f0" strokeWidth="0.5" />
+        ))}
+
+        {/* All non-selected curves — thin solid black */}
+        {Object.entries(VTM12_CURVES).filter(([l]) => l !== selectedCurve).map(([letter, { maxDryDensity: mdd, optimumMoisture: omc }]) => {
+          const d = curvePath(mdd, omc);
+          return d ? (
+            <g key={letter}>
+              <path d={d} fill="none" stroke="#000" strokeWidth="0.75" />
+              {omc >= moistMin && omc <= moistMax && mdd >= densMin && mdd <= densMax && (
+                <text x={toX(omc)} y={toY(mdd) - 2} textAnchor="middle" fontSize="6" fontWeight="bold" fill="#000">{letter}</text>
+              )}
+            </g>
+          ) : null;
+        })}
+
+        {/* Selected curve — heavy solid black */}
+        {selectedCurve && VTM12_CURVES[selectedCurve] && (() => {
+          const { maxDryDensity: mdd, optimumMoisture: omc } = VTM12_CURVES[selectedCurve];
+          const d = curvePath(mdd, omc);
+          return d ? (
+            <g>
+              <path d={d} fill="none" stroke="#000" strokeWidth="3" />
+              <text x={toX(omc)} y={toY(mdd) - 7} textAnchor="middle" fontSize="11" fontWeight="bold" fill="#000">{selectedCurve}</text>
+            </g>
+          ) : null;
+        })()}
+
+        {/* Field test point — × marker */}
+        {hasPoint && (() => {
+          const px = toX(mc), py = toY(fd), s = 5;
+          return (
+            <g>
+              <line x1={px - s} y1={py - s} x2={px + s} y2={py + s} stroke="#000" strokeWidth="2.5" />
+              <line x1={px + s} y1={py - s} x2={px - s} y2={py + s} stroke="#000" strokeWidth="2.5" />
+              <text x={px + s + 3} y={py + 3} fontSize="8" fontWeight="bold" fill="#000">Field Pt.</text>
+            </g>
+          );
+        })()}
+
+        {/* Graph border */}
+        <rect x={ml} y={mt} width={gw} height={gh} fill="none" stroke="#000" strokeWidth="1" />
+
+        {/* X-axis tick labels */}
+        {xTicks.map((m) => (
+          <text key={m} x={toX(m)} y={mt + gh + 14} textAnchor="middle" fontSize="8" fill="#475569">{m}</text>
+        ))}
+
+        {/* Y-axis tick labels */}
+        {yTicks.map((d) => (
+          <text key={d} x={ml - 3} y={toY(d) + 3} textAnchor="end" fontSize="8" fill="#475569">{d}</text>
+        ))}
+
+        {/* Axis titles */}
+        <text x={ml + gw / 2} y={H - 4} textAnchor="middle" fontSize="9" fontWeight="bold" fill="#0f172a">
+          MOISTURE CONTENT (%)
+        </text>
+        <text
+          x={10} y={mt + gh / 2}
+          textAnchor="middle" fontSize="9" fontWeight="bold" fill="#0f172a"
+          transform={`rotate(-90, 10, ${mt + gh / 2})`}
+        >
+          DRY DENSITY (lb/ft³)
+        </text>
+      </svg>
+    </div>
+  );
+}
+
+function calculateProctorRecord(record = {}) {
+  // A. mold+soil weight, B. mold weight → C = A−B → D = C×30 (wet density)
+  const moldAndSoil = parseFloat(record.moldAndSoilWeight);
+  const mold = parseFloat(record.moldWeight);
+  let wetSoilWeight = null;
+  let wetDensity = null;
+  if (!isNaN(moldAndSoil) && !isNaN(mold) && moldAndSoil > mold) {
+    wetSoilWeight = moldAndSoil - mold;
+    wetDensity = wetSoilWeight * 30;
+  }
+
+  const curve = record.selectedCurve ? VTM12_CURVES[record.selectedCurve] : null;
+  const maxDryDensityFromCurve = curve ? curve.maxDryDensity : null;
+  const optimumMoistureFromCurve = curve ? curve.optimumMoisture : null;
+
+  let correctedMaxDryDensity = null;
+  let correctedOptimumMoisture = null;
+
+  if (record.hasOversizedCorrection && maxDryDensityFromCurve !== null) {
+    const Pc = parseFloat(record.percentPlusNo4) / 100;
+    const Pf = 1 - Pc;
+    const sg = parseFloat(record.bulkSpecificGravity);
+    const Wc = parseFloat(record.moistureContentPlusNo4) / 100;
+    const Wf = optimumMoistureFromCurve !== null ? optimumMoistureFromCurve / 100 : null;
+
+    if (!isNaN(Pc) && !isNaN(sg) && Pc >= 0.1 && sg > 0) {
+      const Df = maxDryDensityFromCurve;
+      const Dc = 62.4 * sg;
+      const denom = Pc * Df + Pf * Dc;
+      if (denom > 0) correctedMaxDryDensity = (Df * Dc) / denom;
+    }
+    if (!isNaN(Pc) && !isNaN(Wc) && Wf !== null) {
+      correctedOptimumMoisture = (Pc * Wc + (1 - Pc) * Wf) * 100;
+    }
+  }
+
+  const effectiveMDD = correctedMaxDryDensity ?? maxDryDensityFromCurve;
+  const fieldDD = parseFloat(record.fieldDryDensity);
+  const pctCompaction = effectiveMDD && !isNaN(fieldDD) && fieldDD > 0
+    ? (fieldDD / effectiveMDD) * 100 : null;
+  const required = parseFloat(record.requiredCompaction);
+  const compactionResult = pctCompaction !== null && !isNaN(required)
+    ? (pctCompaction >= required ? "PASS" : "FAIL") : "";
+
+  return {
+    ...record,
+    wetSoilWeight: wetSoilWeight !== null ? wetSoilWeight.toFixed(2) : (record.wetSoilWeight || ""),
+    wetDensity: wetDensity !== null ? wetDensity.toFixed(1) : (record.wetDensity || ""),
+    maxDryDensityFromCurve: maxDryDensityFromCurve !== null ? String(maxDryDensityFromCurve) : "",
+    optimumMoistureFromCurve: optimumMoistureFromCurve !== null ? String(optimumMoistureFromCurve) : "",
+    correctedMaxDryDensity: correctedMaxDryDensity !== null ? correctedMaxDryDensity.toFixed(1) : "",
+    correctedOptimumMoisture: correctedOptimumMoisture !== null ? correctedOptimumMoisture.toFixed(1) : "",
+    percentCompaction: pctCompaction !== null ? pctCompaction.toFixed(1) : "",
+    compactionResult
+  };
+}
+
+function ProctorReportPage({ log, activityId, reportId, onChange, onBack }) {
+  const activity = (log.activities || []).find((item) => item.id === activityId);
+  const persistedReport = (activity?.reports || []).find((item) => item.id === reportId);
+  const [localReport, setLocalReport] = useState(persistedReport || null);
+  const [pdfGenerating, setPdfGenerating] = useState(false);
+  const report = localReport || persistedReport;
+  const isReadOnly = [DAILY_LOG_STATUS.SUBMITTED, DAILY_LOG_STATUS.APPROVED].includes(log.status);
+  const testRecords = report?.testRecords || [];
+  const canComplete = testRecords.length > 0;
+
+  async function downloadReportPdf() {
+    if (!report) return;
+    setPdfGenerating(true);
+    try {
+      await generateProctorStandalonePdf(report, { download: true });
+    } catch (err) {
+      window.alert("Could not generate PDF: " + (err.message || "Unknown error"));
+    } finally {
+      setPdfGenerating(false);
+    }
+  }
+
+  if (!activity || !report) {
+    return (
+      <section className={cardClass()}>
+        <h1 className="text-xl font-bold text-slate-950">One-Point Proctor Report Not Found</h1>
+        <button type="button" onClick={onBack} className="mt-4 min-h-10 rounded-xl border border-slate-200 px-4 text-sm font-bold">Back</button>
+      </section>
+    );
+  }
+
+  function saveReport(nextReport) {
+    const normalized = { ...nextReport, updatedAt: new Date().toISOString() };
+    setLocalReport(normalized);
+    const nextLog = saveDailyLog({
+      ...log,
+      activities: (log.activities || []).map((item) =>
+        item.id === activityId
+          ? { ...item, reports: (item.reports || []).map((r) => (r.id === normalized.id ? normalized : r)), updatedAt: new Date().toISOString() }
+          : item
+      ),
+      updatedAt: new Date().toISOString()
+    });
+    onChange(nextLog);
+  }
+
+  function updateReport(patch) {
+    if (isReadOnly) return;
+    saveReport({ ...report, ...patch });
+  }
+
+  function addTestRecord() {
+    const nextNo = testRecords.length + 1;
+    const blank = calculateProctorRecord({
+      id: crypto.randomUUID(), testNo: nextNo,
+      location: "", materialDescription: "", moistureMethod: "Speedy (AASHTO T 217)",
+      moldAndSoilWeight: "", moldWeight: "", wetSoilWeight: "", wetDensity: "",
+      speedyDialReading: "", moistureContent: "",
+      selectedCurve: "", withinFamilyCurves: "yes",
+      hasOversizedCorrection: false,
+      percentPlusNo4: "", bulkSpecificGravity: "", moistureContentPlusNo4: "",
+      fieldDryDensity: "", requiredCompaction: ""
+    });
+    updateReport({ testRecords: [...testRecords, blank] });
+  }
+
+  function updateTestRecord(recordId, patch) {
+    updateReport({
+      testRecords: testRecords.map((r) => {
+        if (r.id !== recordId) return r;
+        return calculateProctorRecord({ ...r, ...patch });
+      })
+    });
+  }
+
+  function deleteTestRecord(recordId) {
+    updateReport({ testRecords: testRecords.filter((r) => r.id !== recordId) });
+  }
+
+  function completeReport() {
+    saveReport({ ...report, completedAt: new Date().toISOString() });
+    onBack();
+  }
+
+  return (
+    <div className="space-y-4">
+      <section className={cardClass()}>
+        <div>
+          <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-400">VTM-12 · AASHTO T 272</p>
+          <h1 className="mt-2 text-2xl font-bold text-slate-950">One-Point Proctor Report</h1>
+          <p className="mt-1 text-sm font-semibold text-slate-600">{report.projectName}</p>
+        </div>
+      </section>
+
+      <section className={cardClass()}>
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-bold text-slate-950">Test Records</h2>
+          <span className="text-xs font-semibold text-slate-500">{testRecords.length} record{testRecords.length !== 1 ? "s" : ""}</span>
+        </div>
+        <p className="mt-1 text-xs font-semibold text-slate-400">% Compaction = (Field Dry Density ÷ Max Dry Density) × 100</p>
+
+        <div className="mt-4 space-y-6">
+          {testRecords.map((record, index) => (
+            <div key={record.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-bold text-slate-700">Test {index + 1}</p>
+                {!isReadOnly && (
+                  <button type="button" onClick={() => deleteTestRecord(record.id)} className="min-h-8 rounded-xl border border-rose-200 bg-white px-3 text-xs font-bold text-rose-700">Remove</button>
+                )}
+              </div>
+
+              <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
+                <Field label="Location / Station" extraClass="md:col-span-2">
+                  <input value={record.location || ""} disabled={isReadOnly} onChange={(e) => updateTestRecord(record.id, { location: e.target.value })} className={inputClass()} placeholder="e.g. STA 12+50 RT" />
+                </Field>
+                <Field label="Material Description">
+                  <input value={record.materialDescription || ""} disabled={isReadOnly} onChange={(e) => updateTestRecord(record.id, { materialDescription: e.target.value })} className={inputClass()} placeholder="e.g. Class I Subgrade" />
+                </Field>
+              </div>
+
+              <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-4">
+                <Field label="A. Weight of Mold + Wet Soil (lb)">
+                  <input type="number" step="0.01" value={record.moldAndSoilWeight || ""} disabled={isReadOnly} onChange={(e) => updateTestRecord(record.id, { moldAndSoilWeight: e.target.value })} className={inputClass()} placeholder="e.g. 13.62" />
+                </Field>
+                <Field label="B. Weight of Mold (lb)">
+                  <input type="number" step="0.01" value={record.moldWeight || ""} disabled={isReadOnly} onChange={(e) => updateTestRecord(record.id, { moldWeight: e.target.value })} className={inputClass()} placeholder="e.g. 9.14" />
+                </Field>
+                <Field label="C. Wet Soil Weight = A−B (lb)">
+                  <input readOnly value={record.wetSoilWeight || "—"} className={`${inputClass()} bg-slate-100 font-bold text-slate-600`} />
+                </Field>
+                <Field label="D. Wet Density = C×30 (lb/ft³)">
+                  <input readOnly value={record.wetDensity || "—"} className={`${inputClass()} bg-slate-100 font-bold text-slate-700`} />
+                </Field>
+              </div>
+              <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
+                <Field label='E. "Speedy" Dial Reading'>
+                  <input type="number" value={record.speedyDialReading || ""} disabled={isReadOnly} onChange={(e) => updateTestRecord(record.id, { speedyDialReading: e.target.value })} className={inputClass()} placeholder="e.g. 11" />
+                </Field>
+                <Field label='F. Moisture Content % (from "Speedy" chart)'>
+                  <input type="number" value={record.moistureContent || ""} disabled={isReadOnly} onChange={(e) => updateTestRecord(record.id, { moistureContent: e.target.value })} className={inputClass()} placeholder="e.g. 11.0" />
+                </Field>
+                <Field label="Moisture Method">
+                  <select value={record.moistureMethod || "Speedy (AASHTO T 217)"} disabled={isReadOnly} onChange={(e) => updateTestRecord(record.id, { moistureMethod: e.target.value })} className={inputClass()}>
+                    <option value="Speedy (AASHTO T 217)">Speedy (AASHTO T 217)</option>
+                    <option value="Hot Plate / Burner (ASTM D4959)">Hot Plate / Burner (ASTM D4959)</option>
+                    <option value="Drying Oven (ASTM D4959)">Drying Oven (ASTM D4959)</option>
+                  </select>
+                </Field>
+              </div>
+
+              <div className="mt-3 grid grid-cols-1 gap-3 rounded-2xl border border-blue-100 bg-blue-50 p-3 md:grid-cols-3">
+                <p className="text-xs font-bold uppercase tracking-[0.14em] text-blue-700 md:col-span-3">Curve Selection — Typical Moisture Density Curves Set &quot;C&quot; (Fig. 1)</p>
+                <Field label="Select Curve (A–Z)" extraClass="md:col-span-3 lg:col-span-1">
+                  <select value={record.selectedCurve || ""} disabled={isReadOnly} onChange={(e) => updateTestRecord(record.id, { selectedCurve: e.target.value })} className={inputClass()}>
+                    <option value="">— Select Curve —</option>
+                    {"ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("").map((c) => (
+                      <option key={c} value={c}>{c} — MDD {VTM12_CURVES[c]?.maxDryDensity} lb/ft³, OMC {VTM12_CURVES[c]?.optimumMoisture}%</option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="G. Max Dry Density from Fig. 1 (lb/ft³)">
+                  <input readOnly value={record.maxDryDensityFromCurve || "—"} className={`${inputClass()} bg-blue-100 text-blue-900 font-bold`} />
+                </Field>
+                <Field label="H. Optimum Moisture Content, % from Fig. 1">
+                  <input readOnly value={record.optimumMoistureFromCurve || "—"} className={`${inputClass()} bg-blue-100 text-blue-900 font-bold`} />
+                </Field>
+                <Field label="Point Falls Within Family of Curves?">
+                  <select value={record.withinFamilyCurves || "yes"} disabled={isReadOnly} onChange={(e) => updateTestRecord(record.id, { withinFamilyCurves: e.target.value })} className={inputClass()}>
+                    <option value="yes">Yes</option>
+                    <option value="no">No — Full Proctor Required</option>
+                  </select>
+                </Field>
+                <ProctorCurvesChart
+                  selectedCurve={record.selectedCurve}
+                  moistureContent={record.moistureContent}
+                  fieldDryDensity={record.fieldDryDensity}
+                />
+              </div>
+
+              <div className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-3">
+                <p className="text-xs font-bold uppercase tracking-[0.14em] text-emerald-700">I. Field Density (from TL-125 / Nuclear Gauge)</p>
+                <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                  <Field label="I. Field Density lb/ft³ (from TL-125)">
+                    <input type="number" step="0.1" value={record.fieldDryDensity || ""} disabled={isReadOnly} onChange={(e) => updateTestRecord(record.id, { fieldDryDensity: e.target.value })} className={inputClass()} placeholder="e.g. 120.4" />
+                  </Field>
+                  <Field label="Required Compaction (%)">
+                    <input type="number" value={record.requiredCompaction || ""} disabled={isReadOnly} onChange={(e) => updateTestRecord(record.id, { requiredCompaction: e.target.value })} className={inputClass()} placeholder="e.g. 95" />
+                  </Field>
+                </div>
+              </div>
+
+              <div className="mt-3 rounded-2xl border border-amber-100 bg-amber-50 p-3">
+                <div className="flex items-center gap-3">
+                  <input type="checkbox" id={`oversized-${record.id}`} checked={!!record.hasOversizedCorrection} disabled={isReadOnly} onChange={(e) => updateTestRecord(record.id, { hasOversizedCorrection: e.target.checked })} className="h-4 w-4 rounded" />
+                  <label htmlFor={`oversized-${record.id}`} className="text-xs font-bold uppercase tracking-[0.14em] text-amber-700">J. Oversized Particle Correction (≥10% retained on No. 4 / 4.75 mm sieve)</label>
+                </div>
+                {record.hasOversizedCorrection && (
+                  <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
+                    <Field label="J. No.4 (+4.75mm) Material, %">
+                      <input type="number" value={record.percentPlusNo4 || ""} disabled={isReadOnly} onChange={(e) => updateTestRecord(record.id, { percentPlusNo4: e.target.value })} className={inputClass()} placeholder="e.g. 36.9" />
+                    </Field>
+                    <Field label="Bulk Specific Gravity of +No. 4 Material">
+                      <input type="number" step="0.01" value={record.bulkSpecificGravity || ""} disabled={isReadOnly} onChange={(e) => updateTestRecord(record.id, { bulkSpecificGravity: e.target.value })} className={inputClass()} placeholder="e.g. 2.65" />
+                    </Field>
+                    <Field label="OM Content of +No. 4 Material, Wc (%)">
+                      <input type="number" step="0.1" value={record.moistureContentPlusNo4 || ""} disabled={isReadOnly} onChange={(e) => updateTestRecord(record.id, { moistureContentPlusNo4: e.target.value })} className={inputClass()} placeholder="e.g. 2.0" />
+                    </Field>
+                    <Field label="K. Corrected Max Density (lb/ft³)">
+                      <input readOnly value={record.correctedMaxDryDensity || "—"} className={`${inputClass()} bg-amber-100 text-amber-900 font-bold`} />
+                    </Field>
+                    <Field label="Corrected Optimum Moisture (%)">
+                      <input readOnly value={record.correctedOptimumMoisture || "—"} className={`${inputClass()} bg-amber-100 text-amber-900 font-bold`} />
+                    </Field>
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-3 rounded-2xl border border-emerald-300 bg-emerald-100 p-3">
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                  <Field label="L. % Compaction (Calculated)">
+                    <input readOnly value={record.percentCompaction ? `${record.percentCompaction}%` : "—"} className={`${inputClass()} font-bold ${record.compactionResult === "PASS" ? "bg-emerald-200 text-emerald-900" : record.compactionResult === "FAIL" ? "bg-rose-100 text-rose-800" : "bg-white text-slate-500"}`} />
+                  </Field>
+                  {record.compactionResult && (
+                    <div className={`flex items-center rounded-xl px-4 py-2 text-sm font-bold ${record.compactionResult === "PASS" ? "bg-emerald-200 text-emerald-900" : "bg-rose-100 text-rose-900"}`}>
+                      Result: {record.compactionResult}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+
+          {!isReadOnly && (
+            <button type="button" onClick={addTestRecord} className="w-full min-h-11 rounded-2xl border-2 border-dashed border-slate-300 bg-white text-sm font-bold text-slate-700 hover:border-blue-400 hover:text-blue-700 transition-colors">
+              + Add Test Record
+            </button>
+          )}
+          {!testRecords.length && (
+            <p className="text-center text-sm font-semibold text-slate-500">No test records yet. Click &quot;+ Add Test Record&quot; to begin.</p>
+          )}
+        </div>
+      </section>
+
+      <div className="sticky bottom-0 z-20 -mx-4 flex flex-col gap-2 border-t border-slate-200 bg-white/95 p-4 backdrop-blur sm:mx-0 sm:flex-row sm:justify-end sm:rounded-2xl sm:border">
+        <button type="button" onClick={onBack} className="min-h-11 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-800">Back</button>
+        {canComplete && (
+          <button
+            type="button"
+            onClick={downloadReportPdf}
+            disabled={pdfGenerating}
+            className="min-h-11 rounded-2xl border border-slate-300 bg-white px-4 text-sm font-bold text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {pdfGenerating ? "Generating…" : "Download PDF"}
+          </button>
+        )}
         {!isReadOnly && <button type="button" onClick={() => saveReport(report)} className="min-h-11 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-800">Save Draft</button>}
         {!isReadOnly && <button type="button" onClick={completeReport} disabled={!canComplete} className="min-h-11 rounded-2xl bg-emerald-700 px-4 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-600">Finish Report</button>}
       </div>
@@ -2648,6 +3296,8 @@ export default function FieldEngineerWorkspace({
     "concrete-report",
     "compaction-report",
     "asphalt-report",
+    "infiltration-report",
+    "proctor-report",
     "daily-logs",
     "create-daily-log",
     "draft-logs",
@@ -3054,12 +3704,11 @@ export default function FieldEngineerWorkspace({
     return `/technician/daily-log/${log.id}/activity/${activityId}/asphalt-report/${report?.id || "new"}?returnTo=${encodeURIComponent(`/technician/daily-log/${log.id}`)}`;
   }
 
+  function getInfiltrationReportRoute(log, activityId, report) {
+    return `/technician/daily-log/${log.id}/activity/${activityId}/infiltration-report/${report?.id || "new"}?returnTo=${encodeURIComponent(`/technician/daily-log/${log.id}`)}`;
+  }
+
   function openReportRoute(reportUrl) {
-    const isDesktop = window.matchMedia("(min-width: 1024px)").matches;
-    if (isDesktop) {
-      window.open(reportUrl, "_blank", "noopener,noreferrer");
-      return;
-    }
     navigate(reportUrl);
   }
 
@@ -3111,8 +3760,6 @@ export default function FieldEngineerWorkspace({
       openReportRoute(getConcreteReportRoute(log, activityId, existingDraftReport));
       return existingDraftReport;
     }
-    const reportYear = new Date(log.date || Date.now()).getFullYear();
-    const nextSequence = String((activity.concreteReports || []).length + 1).padStart(6, "0");
     const report = createConcreteReport({
       dailyLogId: log.id,
       daily_log_id: log.id,
@@ -3124,7 +3771,6 @@ export default function FieldEngineerWorkspace({
       technician_id: log.technicianId || log.userId || userId || "",
       technicianName: log.technicianName || profile?.full_name || "",
       status: "draft",
-      reportNumber: `CR-${reportYear}-${nextSequence}`,
       placementLocation: activity.location || "",
       dateSampled: log.date || "",
       weatherCondition: log.weatherCondition || log.weather || "",
@@ -3166,16 +3812,12 @@ export default function FieldEngineerWorkspace({
       }
       return existingActivityReport;
     }
-    const reportYear = new Date(log.date || Date.now()).getFullYear();
-    const nextSequence = String((activity.reports || []).length + 1).padStart(6, "0");
     const report = {
       id: crypto.randomUUID(),
       type: "Compaction Report",
       reportType: "Compaction Report",
       report_type: "Compaction Report",
       status: "draft",
-      reportNumber: `CDR-${reportYear}-${nextSequence}`,
-      report_number: `CDR-${reportYear}-${nextSequence}`,
       dailyLogId: log.id,
       daily_log_id: log.id,
       activityId,
@@ -3286,16 +3928,12 @@ export default function FieldEngineerWorkspace({
       }
       return existingActivityReport;
     }
-    const reportYear = new Date(log.date || Date.now()).getFullYear();
-    const nextSequence = String((activity.reports || []).length + 1).padStart(6, "0");
     const report = {
       id: crypto.randomUUID(),
       type: "Asphalt Compaction Report",
       reportType: "Asphalt Compaction Report",
       report_type: "Asphalt Compaction Report",
       status: "draft",
-      reportNumber: `ACR-${reportYear}-${nextSequence}`,
-      report_number: `ACR-${reportYear}-${nextSequence}`,
       dailyLogId: log.id,
       daily_log_id: log.id,
       activityId,
@@ -3339,6 +3977,109 @@ export default function FieldEngineerWorkspace({
     const activity = (log.activities || []).find((item) => item.id === activityId);
     const report = (activity?.reports || []).find((item) => item.id === reportId);
     openReportRoute(getAsphaltReportRoute(log, activityId, report || { id: reportId }));
+  }
+
+  function createInfiltrationReportForActivity(log, activityId) {
+    const activity = (log.activities || []).find((item) => item.id === activityId);
+    if (!activity) return null;
+    const existing = [...(activity.concreteReports || []), ...(activity.reports || [])][0];
+    if (existing) {
+      const type = String(existing.type || existing.reportType || "").toLowerCase();
+      if (type.includes("infiltration")) {
+        openReportRoute(getInfiltrationReportRoute(log, activityId, existing));
+      } else {
+        window.alert("Only one report can be attached to each activity.");
+      }
+      return existing;
+    }
+    const report = {
+      id: crypto.randomUUID(),
+      type: "Surface Infiltration Report",
+      reportType: "Surface Infiltration Report",
+      report_type: "Surface Infiltration Report",
+      status: "draft",
+      dailyLogId: log.id,
+      daily_log_id: log.id,
+      activityId,
+      activity_id: activityId,
+      projectName: log.projectName || projectLabel,
+      project_name: log.projectName || projectLabel,
+      projectNumber: log.projectNumber || log.project_number || String(defaultProjectId || ""),
+      project_number: log.projectNumber || log.project_number || String(defaultProjectId || ""),
+      date: log.date || new Date().toISOString().slice(0, 10),
+      testRecords: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    const nextLog = saveDailyLog({
+      ...log,
+      activities: log.activities.map((item) => (
+        item.id === activityId
+          ? { ...item, reports: [...(item.reports || []), report], updatedAt: new Date().toISOString() }
+          : item
+      )),
+      updatedAt: new Date().toISOString()
+    });
+    refreshLogs(nextLog);
+    openReportRoute(getInfiltrationReportRoute(nextLog, activityId, report));
+    return report;
+  }
+
+  function openInfiltrationReport(log, activityId, reportId) {
+    if (!log?.id || !activityId || !reportId) return;
+    const activity = (log.activities || []).find((item) => item.id === activityId);
+    const report = (activity?.reports || []).find((item) => item.id === reportId);
+    openReportRoute(getInfiltrationReportRoute(log, activityId, report || { id: reportId }));
+  }
+
+  function getProctorReportRoute(log, activityId, report) {
+    return `/technician/daily-log/${log.id}/activity/${activityId}/proctor-report/${report?.id || "new"}?returnTo=${encodeURIComponent(`/technician/daily-log/${log.id}`)}`;
+  }
+
+  function createProctorReportForActivity(log, activityId) {
+    const activity = (log.activities || []).find((item) => item.id === activityId);
+    if (!activity) return null;
+    const existing = [...(activity.concreteReports || []), ...(activity.reports || [])][0];
+    if (existing) {
+      const type = String(existing.type || existing.reportType || "").toLowerCase();
+      if (type.includes("proctor")) {
+        navigate(getProctorReportRoute(log, activityId, existing));
+      } else {
+        window.alert("Only one report can be attached to each activity.");
+      }
+      return existing;
+    }
+    const report = {
+      id: crypto.randomUUID(),
+      type: "One-Point Proctor Report",
+      reportType: "One-Point Proctor Report",
+      projectName: log.projectName || "",
+      projectNumber: log.projectNumber || "",
+      date: log.date || "",
+      client: log.client || "",
+      testRecords: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    const nextLog = saveDailyLog({
+      ...log,
+      activities: (log.activities || []).map((item) =>
+        item.id === activityId
+          ? { ...item, reports: [...(item.reports || []), report], updatedAt: new Date().toISOString() }
+          : item
+      ),
+      updatedAt: new Date().toISOString()
+    });
+    refreshLogs(nextLog);
+    navigate(getProctorReportRoute(nextLog, activityId, report));
+    return report;
+  }
+
+  function openProctorReport(log, activityId, reportId) {
+    if (!log?.id || !activityId || !reportId) return;
+    const activity = (log.activities || []).find((item) => item.id === activityId);
+    const report = (activity?.reports || []).find((item) => item.id === reportId);
+    navigate(getProctorReportRoute(log, activityId, report || { id: reportId }));
   }
 
   function backToDailyLog(logId = selectedDailyLog?.id) {
@@ -3399,7 +4140,7 @@ export default function FieldEngineerWorkspace({
   const isTimeCardReadOnly = selectedTimeCard && [TIME_CARD_STATUS.SUBMITTED, TIME_CARD_STATUS.PENDING_REVIEW, TIME_CARD_STATUS.APPROVED, TIME_CARD_STATUS.COMPLETED].includes(selectedTimeCard.status);
 
   return (
-    <div className="w-full max-w-full overflow-x-hidden bg-slate-100 px-4 py-5 sm:px-6 lg:p-8">
+    <div className="w-full max-w-full bg-slate-100 px-4 py-5 sm:px-6 lg:p-8" style={{ overflowX: "clip" }}>
       <div className="mx-auto w-full max-w-[1500px] space-y-4 sm:space-y-5">
         {loading && <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4 text-sm font-bold text-blue-900">Loading Field Operations Workspace...</div>}
         {error && <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm font-bold text-rose-800">{error}</div>}
@@ -3442,6 +4183,10 @@ export default function FieldEngineerWorkspace({
               onOpenCompactionReport={openCompactionReport}
               onCreateAsphaltReport={createAsphaltReportForActivity}
               onOpenAsphaltReport={openAsphaltReport}
+              onCreateInfiltrationReport={createInfiltrationReportForActivity}
+              onOpenInfiltrationReport={openInfiltrationReport}
+              onCreateProctorReport={createProctorReportForActivity}
+              onOpenProctorReport={openProctorReport}
             />
           )
         )}
@@ -3468,6 +4213,26 @@ export default function FieldEngineerWorkspace({
 
         {currentView === "asphalt-report" && selectedDailyLog && (
           <AsphaltCompactionReportPage
+            log={selectedDailyLog}
+            activityId={activeActivityId}
+            reportId={activeReportId}
+            onChange={refreshLogs}
+            onBack={() => backToDailyLog(selectedDailyLog.id)}
+          />
+        )}
+
+        {currentView === "infiltration-report" && selectedDailyLog && (
+          <SurfaceInfiltrationReportPage
+            log={selectedDailyLog}
+            activityId={activeActivityId}
+            reportId={activeReportId}
+            onChange={refreshLogs}
+            onBack={() => backToDailyLog(selectedDailyLog.id)}
+          />
+        )}
+
+        {currentView === "proctor-report" && selectedDailyLog && (
+          <ProctorReportPage
             log={selectedDailyLog}
             activityId={activeActivityId}
             reportId={activeReportId}

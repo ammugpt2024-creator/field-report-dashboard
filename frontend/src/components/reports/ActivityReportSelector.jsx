@@ -1,12 +1,13 @@
 import { FileText, Plus } from "lucide-react";
 
-export default function ActivityReportSelector({ onAddConcreteReport, onAddCompactionReport, onAddAsphaltReport, disabled = false }) {
+export default function ActivityReportSelector({ onAddConcreteReport, onAddCompactionReport, onAddAsphaltReport, onAddInfiltrationReport, onAddProctorReport, disabled = false }) {
   const reportTypes = [
     { label: "Concrete Report", description: "Create concrete testing documentation.", available: true, onClick: onAddConcreteReport },
-    { label: "Inspection Report", description: "Coming soon", available: false },
     { label: "Density Report", description: "Create nuclear density compaction documentation.", available: true, onClick: onAddCompactionReport },
-    { label: "Nuclear Gauge Report", description: "Coming soon", available: false },
     { label: "Asphalt Compaction Report", description: "Material mix, Marshall value, compaction %, PASS/FAIL, cores.", available: true, onClick: onAddAsphaltReport },
+    { label: "Surface Infiltration Rate Report", description: "ASTM C1781 — infiltration rate from weight, diameter, and time.", available: true, onClick: onAddInfiltrationReport },
+    { label: "One-Point Proctor Report", description: "VTM-12 — one-point proctor density with curve selection and compaction check.", available: true, onClick: onAddProctorReport },
+    { label: "Inspection Report", description: "Coming soon", available: false },
     { label: "Other", description: "Coming soon", available: false }
   ];
 

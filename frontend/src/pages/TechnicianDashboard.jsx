@@ -116,6 +116,10 @@ function TechnicianDashboard() {
       ? "asphalt-report"
     : location.pathname.includes("/compaction-report/")
       ? "compaction-report"
+    : location.pathname.includes("/infiltration-report/")
+      ? "infiltration-report"
+    : location.pathname.includes("/proctor-report/")
+      ? "proctor-report"
     : location.pathname.includes("/concrete-report/")
       ? "concrete-report"
       : null;

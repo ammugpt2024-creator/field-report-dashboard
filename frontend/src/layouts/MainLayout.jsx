@@ -9,11 +9,11 @@ function MainLayout({ children }) {
   }, []);
 
   return (
-    <div className="flex min-h-screen w-full max-w-full flex-col overflow-x-hidden bg-slate-100">
+    <div className="flex h-screen w-full flex-col bg-slate-100" style={{ overflowX: "clip" }}>
       <Navbar />
-      <div className="flex w-full max-w-full flex-1 overflow-x-hidden">
+      <div className="flex min-h-0 flex-1" style={{ overflowX: "clip" }}>
         <Sidebar />
-        <main className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto p-0">
+        <main className="min-w-0 flex-1 overflow-y-auto p-0">
           {children}
         </main>
       </div>

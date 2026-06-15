@@ -4,6 +4,8 @@ import ActivityReportSelector from "../reports/ActivityReportSelector";
 import ConcreteReportInlineContent from "../reports/ConcreteReportInlineContent";
 import CompactionReportInlineContent from "../reports/CompactionReportInlineContent";
 import AsphaltCompactionReportInlineContent from "../reports/AsphaltCompactionReportInlineContent";
+import SurfaceInfiltrationReportInlineContent from "../reports/SurfaceInfiltrationReportInlineContent";
+import ProctorReportInlineContent from "../reports/ProctorReportInlineContent";
 import BottomActionBar from "../mobile/BottomActionBar";
 import SignatureModal from "../SignatureModal";
 import PhotosAttachmentsSection, { isAllowedDailyLogAttachment } from "./PhotosAttachmentsSection";
@@ -222,15 +224,36 @@ function isConcreteReportSubmitReady(report = {}) {
   return ["completed", "submitted", "approved", "finalized"].includes(reportStatus) || hasConcreteReportContent(report);
 }
 
+function getReportNumberPrefix(report = {}) {
+  return String(report.reportNumber || report.report_number || report.dfrNumber || report.dfr_number || "").trim();
+}
+
 function isAsphaltReport(report = {}) {
   const type = String(report.type || report.reportType || report.report_type || "").toLowerCase();
-  return type.includes("asphalt");
+  if (type.includes("asphalt")) return true;
+  return getReportNumberPrefix(report).startsWith("ACR-");
 }
 
 function isCompactionReport(report = {}) {
   const type = String(report.type || report.reportType || report.report_type || "").toLowerCase();
-  if (type.includes("asphalt")) return false;
-  return type.includes("compaction") || type.includes("density") || type.includes("nuclear");
+  if (type.includes("asphalt") || getReportNumberPrefix(report).startsWith("ACR-")) return false;
+  if (type.includes("compaction") || type.includes("density") || type.includes("nuclear")) return true;
+  return getReportNumberPrefix(report).startsWith("CDR-");
+}
+
+function isInfiltrationReport(report = {}) {
+  const type = String(report.type || report.reportType || report.report_type || "").toLowerCase();
+  if (type.includes("infiltration")) return true;
+  return getReportNumberPrefix(report).startsWith("SIR-");
+}
+
+function hasInfiltrationReportContent(report = {}) {
+  const records = Array.isArray(report.testRecords) ? report.testRecords : [];
+  return Boolean(
+    records.length ||
+    String(report.reportNumber || report.report_number || "").trim() ||
+    String(report.status || "").trim()
+  );
 }
 
 function hasAsphaltReportContent(report = {}) {
@@ -277,9 +300,37 @@ function hasCompactionReportContent(report = {}) {
   );
 }
 
+function isInfiltrationReportSubmitReady(report = {}) {
+  const reportStatus = String(report.status || "").toLowerCase();
+  if (["completed", "submitted", "approved", "finalized"].includes(reportStatus)) return true;
+  const records = Array.isArray(report.testRecords) ? report.testRecords : [];
+  return records.some(r => String(r.infiltrationRate || "").trim() !== "");
+}
+
+function isProctorReport(report = {}) {
+  const type = String(report.type || report.reportType || report.report_type || "").toLowerCase();
+  if (type.includes("proctor")) return true;
+  return getReportNumberPrefix(report).startsWith("OPP-");
+}
+
+function hasProctorReportContent(report = {}) {
+  const records = Array.isArray(report.testRecords) ? report.testRecords : [];
+  return Boolean(records.length || String(report.reportNumber || report.report_number || "").trim());
+}
+
+function isProctorReportSubmitReady(report = {}) {
+  const reportStatus = String(report.status || "").toLowerCase();
+  if (["completed", "submitted", "approved", "finalized"].includes(reportStatus)) return true;
+  const records = Array.isArray(report.testRecords) ? report.testRecords : [];
+  return records.some(r => String(r.percentCompaction || "").trim() !== "");
+}
+
 function isAttachedReportSubmitReady(report = {}) {
   if (isAsphaltReport(report)) return isAsphaltReportSubmitReady(report);
-  return isCompactionReport(report) ? isCompactionReportSubmitReady(report) : isConcreteReportSubmitReady(report);
+  if (isCompactionReport(report)) return isCompactionReportSubmitReady(report);
+  if (isInfiltrationReport(report)) return isInfiltrationReportSubmitReady(report);
+  if (isProctorReport(report)) return isProctorReportSubmitReady(report);
+  return isConcreteReportSubmitReady(report);
 }
 
 function createAttachmentRecord(file, attachmentType, context) {
@@ -410,7 +461,7 @@ async function createUploadReadyAttachment(file, attachmentType, context) {
   };
 }
 
-export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateConcreteReport, onOpenConcreteReport, onCreateCompactionReport, onOpenCompactionReport, onCreateAsphaltReport, onOpenAsphaltReport }) {
+export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateConcreteReport, onOpenConcreteReport, onCreateCompactionReport, onOpenCompactionReport, onCreateAsphaltReport, onOpenAsphaltReport, onCreateInfiltrationReport, onOpenInfiltrationReport, onCreateProctorReport, onOpenProctorReport }) {
   const [lastAutosavedAt, setLastAutosavedAt] = useState("");
   const [reportPickerActivityId, setReportPickerActivityId] = useState("");
   const [reportSectionError, setReportSectionError] = useState("");
@@ -599,6 +650,48 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
       setReportPickerActivityId("");
     } catch (error) {
       console.error("Asphalt report section failed", error);
+      setReportSectionError("Unable to load report section. Please try again.");
+    }
+  }
+
+  function addInfiltrationReport(activityId) {
+    try {
+      setReportSectionError("");
+      const activity = (log.activities || []).find((item) => item.id === activityId);
+      if (getActivityAttachedReports(activity).length >= 1) {
+        setReportSectionError("Only one report can be attached to each activity.");
+        setReportPickerActivityId("");
+        return;
+      }
+      const createdReport = onCreateInfiltrationReport?.(log, activityId);
+      if (!createdReport) {
+        setReportSectionError("Unable to load report section. Please try again.");
+        return;
+      }
+      setReportPickerActivityId("");
+    } catch (error) {
+      console.error("Infiltration report section failed", error);
+      setReportSectionError("Unable to load report section. Please try again.");
+    }
+  }
+
+  function addProctorReport(activityId) {
+    try {
+      setReportSectionError("");
+      const activity = (log.activities || []).find((item) => item.id === activityId);
+      if (getActivityAttachedReports(activity).length >= 1) {
+        setReportSectionError("Only one report can be attached to each activity.");
+        setReportPickerActivityId("");
+        return;
+      }
+      const createdReport = onCreateProctorReport?.(log, activityId);
+      if (!createdReport) {
+        setReportSectionError("Unable to load report section. Please try again.");
+        return;
+      }
+      setReportPickerActivityId("");
+    } catch (error) {
+      console.error("Proctor report section failed", error);
       setReportSectionError("Unable to load report section. Please try again.");
     }
   }
@@ -960,13 +1053,26 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
     async function fetchDbConcreteReports() {
       if (!log.id || !log.projectId || !(log.activities || []).length) return;
 
-      const attachedReports = (log.activities || []).flatMap((activity) => activity.concreteReports || activity.reports || []);
+      const attachedReports = (log.activities || []).flatMap((activity) => [
+        ...(activity.concreteReports || []),
+        ...(activity.reports || [])
+      ]);
       const attachedLinkedIds = new Set(attachedReports.flatMap((report) => (
         [report.linkedReportId, report.linked_report_id].filter(Boolean).map(String)
       )));
       const attachedDfrNumbers = new Set(attachedReports.map((report) => (
         String(report.dfrNumber || report.dfr_number || report.reportNumber || "").trim()
       )).filter(Boolean));
+
+      // Build deleted-report blocklists from every activity so re-deleted records never come back.
+      const deletedLinkedIds = new Set(
+        (log.activities || []).flatMap((a) => (a._deletedConcreteReportIds || []).map(String))
+      );
+      const deletedDfrNumbers = new Set(
+        (log.activities || []).flatMap((a) =>
+          (a._deletedConcreteReportDfrNumbers || []).map((s) => String(s).trim())
+        )
+      );
 
       let response = await supabase
         .from("concrete_test_logs")
@@ -991,7 +1097,9 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
           const dfrNumber = String(report.dfr_number || "").trim();
           return ["generated", "completed"].includes(status) &&
             !attachedLinkedIds.has(String(report.id)) &&
-            !attachedDfrNumbers.has(dfrNumber);
+            !attachedDfrNumbers.has(dfrNumber) &&
+            !deletedLinkedIds.has(String(report.id)) &&
+            !deletedDfrNumbers.has(dfrNumber);
         })
         .map((report) => ({
           id: report.source_report_id || `concrete-report-${report.id}`,
@@ -1020,21 +1128,42 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
           updatedAt: report.updated_at || report.created_at || new Date().toISOString()
         }));
 
-      if (!dbReports.length) return;
+      // Read the freshest persisted activities to avoid overwriting reports added
+      // after this effect's closure was captured (e.g. a proctor report just saved).
+      const freshLog = getDailyLogById(log.id) || log;
 
-      updateLog({
-        activities: (log.activities || []).map((activity, index) => {
-          const reportsForActivity = dbReports.filter((report) => (
-            report.activityId ? String(report.activityId) === String(activity.id) : index === 0
-          ));
-          if (!reportsForActivity.length) return activity;
-          return {
-            ...activity,
-            concreteReports: dedupeReports([...(activity.concreteReports || []), ...reportsForActivity]),
-            updatedAt: new Date().toISOString()
-          };
-        })
+      let needsUpdate = false;
+      const nextActivities = (freshLog.activities || []).map((activity, index) => {
+        // If this activity already has a non-concrete report (proctor, compaction, asphalt,
+        // infiltration) stored in activity.reports, never inject a concrete stub.
+        // Also evict any previously-injected empty stubs (no DFR, no specs, no records)
+        // so they don't ghost alongside the real report.  Real concrete reports — which
+        // always have at least a dfrNumber — are left untouched.
+        if ((activity.reports || []).length > 0) {
+          // Non-concrete activities (proctor, compaction, asphalt, infiltration) store
+          // their report in activity.reports. activity.concreteReports must be empty for
+          // these activities — anything there is a stale concrete stub from a prior DB
+          // sync. Wipe it unconditionally so it can never ghost in the UI.
+          if ((activity.concreteReports || []).length > 0) {
+            needsUpdate = true;
+            return { ...activity, concreteReports: [], updatedAt: new Date().toISOString() };
+          }
+          return activity;
+        }
+
+        const reportsForActivity = dbReports.filter((report) => (
+          report.activityId ? String(report.activityId) === String(activity.id) : index === 0
+        ));
+        if (!reportsForActivity.length) return activity;
+        needsUpdate = true;
+        return {
+          ...activity,
+          concreteReports: dedupeReports([...(activity.concreteReports || []), ...reportsForActivity]),
+          updatedAt: new Date().toISOString()
+        };
       });
+
+      if (needsUpdate) updateLog({ activities: nextActivities });
     }
 
     fetchDbConcreteReports().catch((error) => {
@@ -1050,38 +1179,41 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
 
   return (
     <div className="pb-24 lg:pb-0">
-      <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
-        <div className="bg-gradient-to-r from-slate-950 via-slate-900 to-blue-950 px-4 py-5 sm:px-6">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <div className="min-w-0">
-              <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">Field Operations</p>
-              <h1 className="mt-1 break-words text-2xl font-bold text-white sm:text-3xl">Daily Field Log</h1>
-              <p className="mt-1 text-xs font-semibold text-slate-400">
-                Autosave every 30 seconds {lastAutosavedAt ? `• last saved ${lastAutosavedAt}` : ""}
-              </p>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="inline-flex items-center rounded-full border border-amber-400/40 bg-amber-400/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-amber-300">
-                {String(log.status || "draft").replace(/_/g, " ")}
-              </span>
-              <div className="hidden gap-2 lg:flex">
-                <button type="button" onClick={saveDraft} className="inline-flex min-h-11 items-center gap-2 rounded-2xl border border-slate-700 bg-transparent px-4 text-sm font-bold text-white hover:bg-slate-900">
-                  <Save className="h-4 w-4" /> Save Draft
-                </button>
-                <button
-                  type="button"
-                  onClick={submitLog}
-                  disabled={!canSubmit}
-                  title={canSubmit ? "" : "Add at least one completed activity to submit."}
-                  className="inline-flex min-h-11 items-center gap-2 rounded-2xl bg-blue-600 px-4 text-sm font-bold text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"
-                >
-                  <Send className="h-4 w-4" /> Submit Daily Log
-                </button>
-              </div>
-            </div>
+      {/* Sticky header — stays pinned while activities scroll */}
+      <div className="sticky top-0 z-20 overflow-hidden rounded-3xl border border-slate-700 bg-gradient-to-r from-slate-950 via-slate-900 to-blue-950 px-4 py-3 shadow-lg sm:px-6">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">Field Operations</p>
+            <h1 className="mt-0.5 truncate text-xl font-bold text-white sm:text-2xl">
+              Daily Field Log
+              {log.projectName ? <span className="ml-2 text-base font-semibold text-slate-300">· {log.projectName}</span> : null}
+            </h1>
+            <p className="mt-0.5 text-[11px] font-semibold text-slate-400">
+              {log.date || "No date"} · {String(log.shift || "Day Shift")}
+              {lastAutosavedAt ? ` · saved ${lastAutosavedAt}` : ""}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <span className="inline-flex items-center rounded-full border border-amber-400/40 bg-amber-400/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-amber-300">
+              {String(log.status || "draft").replace(/_/g, " ")}
+            </span>
+            <button type="button" onClick={saveDraft} className="inline-flex min-h-9 items-center gap-1.5 rounded-xl border border-slate-700 bg-transparent px-3 text-xs font-bold text-white hover:bg-slate-800">
+              <Save className="h-3.5 w-3.5" /> Save Draft
+            </button>
+            <button
+              type="button"
+              onClick={submitLog}
+              disabled={!canSubmit}
+              title={canSubmit ? "" : "Add at least one completed activity to submit."}
+              className="inline-flex min-h-9 items-center gap-1.5 rounded-xl bg-blue-600 px-3 text-xs font-bold text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"
+            >
+              <Send className="h-3.5 w-3.5" /> Submit
+            </button>
           </div>
         </div>
+      </div>
 
+      <section className="mt-2 overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
         <div className="p-4 sm:p-5">
           <div className="mb-3 flex items-center justify-between gap-3">
             <div className="flex items-center gap-2.5">
@@ -1183,8 +1315,14 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
             </div>
           )}
           {log.activities.map((activity, activityIndex) => {
-            const concreteReports = getActivityAttachedReports(activity);
-            const reportCount = getActivityAttachedReports(activity).length;
+            // Non-concrete activities store their report in activity.reports. Using
+            // getActivityAttachedReports would merge in any stale concrete stubs that
+            // haven't been cleaned from activity.concreteReports yet, causing them to
+            // render as "Concrete Report" alongside the real report.
+            const concreteReports = (activity.reports || []).length > 0
+              ? [...(activity.reports || [])]
+              : getActivityAttachedReports(activity);
+            const reportCount = concreteReports.length;
             const titleMissing = attemptedSubmit && !String(activity.title || "").trim();
             const locationMissing = attemptedSubmit && !String(activity.location || "").trim();
             const descriptionMissing = attemptedSubmit && !String(activity.description || "").trim();
@@ -1256,10 +1394,28 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
                 {concreteReports.map((report) => {
                   const asphalt = isAsphaltReport(report);
                   const compaction = !asphalt && isCompactionReport(report);
-                  const shouldShowReportContent = asphalt ? hasAsphaltReportContent(report) : compaction ? hasCompactionReportContent(report) : isAttachedReportSubmitReady(report);
+                  const infiltration = !asphalt && !compaction && isInfiltrationReport(report);
+                  const proctor = !asphalt && !compaction && !infiltration && isProctorReport(report);
+                  const shouldShowReportContent = asphalt
+                    ? hasAsphaltReportContent(report)
+                    : compaction
+                      ? hasCompactionReportContent(report)
+                      : infiltration
+                        ? hasInfiltrationReportContent(report)
+                        : proctor
+                          ? hasProctorReportContent(report)
+                          : isAttachedReportSubmitReady(report);
                   visibleReportOrdinal += 1;
                   const reportLabel = `Report ${visibleReportOrdinal}`;
-                  const displayReportType = asphalt ? "Asphalt Compaction Report" : compaction ? "Compaction Report" : "Concrete Report";
+                  const displayReportType = asphalt
+                    ? "Asphalt Compaction Report"
+                    : compaction
+                      ? "Compaction Report"
+                      : infiltration
+                        ? "Surface Infiltration Rate Report"
+                        : proctor
+                          ? "One-Point Proctor Report"
+                          : "Concrete Report";
 
                   return (
                     <div key={report.id} className="mt-3 rounded-2xl border border-slate-200 bg-white p-4">
@@ -1270,7 +1426,6 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
                           <p className="mt-1 text-sm font-semibold text-slate-600">
                             {report.status || "Draft"} • Updated {report.updatedAt ? new Date(report.updatedAt).toLocaleString() : "-"}
                           </p>
-                          {report.reportNumber && <p className="mt-1 text-xs font-bold uppercase tracking-[0.14em] text-slate-400">{report.reportNumber}</p>}
                           {attemptedSubmit && !isAttachedReportSubmitReady(report) && (
                             <p className="mt-2 text-sm font-bold text-rose-700">{displayReportType} must be completed before Daily Log submission.</p>
                           )}
@@ -1283,7 +1438,11 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
                                 ? onOpenAsphaltReport?.(log, activity.id, report.id, { mode: "edit" })
                                 : compaction
                                   ? onOpenCompactionReport?.(log, activity.id, report.id, { mode: "edit" })
-                                  : onOpenConcreteReport?.(log, activity.id, report.id, { mode: "edit" })
+                                  : infiltration
+                                    ? onOpenInfiltrationReport?.(log, activity.id, report.id, { mode: "edit" })
+                                    : proctor
+                                      ? onOpenProctorReport?.(log, activity.id, report.id, { mode: "edit" })
+                                      : onOpenConcreteReport?.(log, activity.id, report.id, { mode: "edit" })
                             )}
                             className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-slate-950 px-3 text-xs font-bold text-white"
                           >
@@ -1298,7 +1457,11 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
                           ? <AsphaltCompactionReportInlineContent report={report} reportLabel={reportLabel} />
                           : compaction
                             ? <CompactionReportInlineContent report={report} reportLabel={reportLabel} />
-                            : <ConcreteReportInlineContent report={report} reportLabel={reportLabel} />
+                            : infiltration
+                              ? <SurfaceInfiltrationReportInlineContent report={report} reportLabel={reportLabel} />
+                              : proctor
+                                ? <ProctorReportInlineContent report={report} reportLabel={reportLabel} />
+                                : <ConcreteReportInlineContent report={report} reportLabel={reportLabel} />
                       )}
                     </div>
                   );
@@ -1332,6 +1495,8 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
                       onAddConcreteReport={() => addConcreteReport(activity.id)}
                       onAddCompactionReport={() => addCompactionReport(activity.id)}
                       onAddAsphaltReport={() => addAsphaltReport(activity.id)}
+                      onAddInfiltrationReport={() => addInfiltrationReport(activity.id)}
+                      onAddProctorReport={() => addProctorReport(activity.id)}
                     />
                   </div>
                 )}

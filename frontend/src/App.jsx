@@ -129,6 +129,16 @@ function App() {
         />
 
         <Route
+          path="/technician/daily-log/:logId/activity/:activityId/infiltration-report/:reportId"
+          element={<TechnicianDashboard />}
+        />
+
+        <Route
+          path="/technician/daily-log/:logId/activity/:activityId/proctor-report/:reportId"
+          element={<TechnicianDashboard />}
+        />
+
+        <Route
           path="/profile"
           element={<ProfileRoute />}
         />

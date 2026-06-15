@@ -71,7 +71,7 @@ function Sidebar() {
   const navItems = navByRole[getNavKey(role)] || navByRole.client;
 
   return (
-    <aside className="sticky top-[73px] hidden h-[calc(100vh-73px)] w-64 shrink-0 overflow-y-auto border-r border-slate-200 bg-white px-3 py-4 lg:block">
+    <aside className="hidden h-full w-64 shrink-0 overflow-y-auto border-r border-slate-200 bg-white px-3 py-4 lg:block">
       <nav className="space-y-1">
         {navItems.map(({ label, path, icon: Icon, nested, section }) => {
           if (section) {
