@@ -3337,7 +3337,6 @@ function ConcreteTestLog() {
                 {renderSpecificationInput('mix_number', 'Mix No.')}
                 {renderSpecificationInput('j_ring_in', 'J-Ring (in)')}
                 {renderSpecificationInput('speed_of_stress_psi', 'Specified Strength (PSI)')}
-                {renderDfrBadge()}
                 {specificationCommentsField && (
                   <label className="block min-w-0 md:col-span-3">
                     <span className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-slate-500">Comments</span>

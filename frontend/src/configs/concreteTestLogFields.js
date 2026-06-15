@@ -206,6 +206,7 @@ export const deliveryRecordFields = [
   { key: 'set_number', dbColumn: 'set_number', label: 'Set Number', type: 'text', valueType: 'text', readOnly: true, required: false, section: 'cylinder_tracking', defaultValue: '' },
   { key: 'lab_cylinders', dbColumn: 'lab_cylinders', label: 'Lab Samples', type: 'text', valueType: 'text', required: false, section: 'cylinder_tracking', defaultValue: '', validation: null },
   { key: 'field_cylinders', dbColumn: 'field_cylinders', label: 'Field Samples', type: 'text', valueType: 'text', required: false, section: 'cylinder_tracking', defaultValue: '', validation: null },
+  { key: 'break_pattern', dbColumn: 'break_pattern', label: 'Break Pattern (e.g. 7x1, 28x2)', type: 'text', valueType: 'text', required: false, section: 'cylinder_tracking', defaultValue: '', validation: null },
   { key: 'row_status', dbColumn: 'row_status', label: 'Record Result', type: 'select', valueType: 'text', required: true, section: 'strength_result', defaultValue: '' },
   { key: 'comments', dbColumn: 'comments', label: 'Inspector Notes', type: 'textarea', valueType: 'text', required: false, section: 'strength_result', defaultValue: '' }
 ];
