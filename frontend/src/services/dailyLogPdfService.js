@@ -2184,26 +2184,6 @@ async function renderReferenceActivityDetails(doc, log, y) {
   return y;
 }
 
-function renderReferenceQaqcSummary(doc, log, y) {
-  const reports = getConcreteReports(log).map(({ report }) => report);
-  const records = reports.flatMap(getReportRecords);
-  const totalCy = records.reduce((sum, record) => sum + (Number(getRecordField(record, ["cubic_yards", "cubicYards"])) || 0), 0);
-  const totalCylinders = records.reduce((sum, record) => (
-    sum + (Number(getRecordField(record, ["lab_cylinders", "lab_samples", "labSamples"])) || 0) + (Number(getRecordField(record, ["field_cylinders", "field_samples", "fieldSamples"])) || 0)
-  ), 0);
-  const passed = records.filter((record) => formatStatus(getRecordField(record, ["record_result", "row_status", "recordResult", "status"])).toLowerCase().includes("pass")).length;
-  const failed = records.filter((record) => formatStatus(getRecordField(record, ["record_result", "row_status", "recordResult", "status"])).toLowerCase().includes("fail")).length;
-  y = renderReferenceSection(doc, "QA/QC Summary", [
-    { label: "Total Records", value: records.length },
-    { label: "Total Cubic Yards", value: totalCy.toFixed(1) },
-    { label: "Total Cylinders", value: totalCylinders },
-    { label: "Passed Tests", value: passed },
-    { label: "Failed Tests", value: failed },
-    { label: "Pending Review", value: Math.max(records.length - passed - failed, 0) }
-  ], y, { columns: 3, minSpace: 86 });
-  return y;
-}
-
 async function renderReferenceSignatures(doc, log, y) {
   y = ensurePage(doc, y, 130);
   y += 6;
@@ -2248,7 +2228,6 @@ export async function generateDailyLogPdfBlob(log) {
     { label: "Weather", value: getWeatherText(log) },
     { label: "Shift", value: log.shift || log.shift_name || "Not recorded" }
   ], y, { columns: 2, cardHeight: 38, minSpace: 128 });
-  y = renderReferenceQaqcSummary(doc, log, y);
   y = await renderReferenceSignatures(doc, log, y);
   await renderReferenceActivityDetails(doc, log, y);
   PdfFooter(doc, log);
