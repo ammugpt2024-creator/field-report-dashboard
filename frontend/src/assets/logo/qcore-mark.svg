@@ -1,0 +1,5 @@
+<svg width="100" height="100" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="QCore mark">
+  <circle cx="50" cy="50" r="31" fill="none" stroke="#1c2f4a" stroke-width="11" stroke-linecap="round" stroke-dasharray="122 73" stroke-dashoffset="-156"/>
+  <circle cx="50" cy="50" r="11" fill="#bd5d3a"/>
+  <path d="M54 62 L65 74 L90 42" fill="none" stroke="#bd5d3a" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
