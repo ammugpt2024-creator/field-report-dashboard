@@ -3457,7 +3457,7 @@ const LAB_REPORT_SECTIONS = [
     icon: Layers3,
     tone: "slate",
     reports: [
-      { label: "Bulk Specific Gravity", description: "Bulk specific gravity of compacted asphalt mixtures." }
+      { label: "Bulk Specific Gravity", description: "Bulk specific gravity & density of compacted asphalt (AASHTO T-166 / ASTM D2726).", route: "/technician/lab/asphalt-bsg" }
     ]
   },
   {
