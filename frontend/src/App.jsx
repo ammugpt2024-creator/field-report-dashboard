@@ -20,6 +20,8 @@ import GroutCubeBreakReport from "./pages/GroutCubeBreakReport";
 import GroutCubeBreakList from "./pages/GroutCubeBreakList";
 import CoreBreakReport from "./pages/CoreBreakReport";
 import CoreBreakList from "./pages/CoreBreakList";
+import AsphaltGravityReport from "./pages/AsphaltGravityReport";
+import AsphaltGravityList from "./pages/AsphaltGravityList";
 import TimesheetsPage from "./pages/TimesheetsPage";
 import ProjectWorkspace from "./pages/ProjectWorkspace";
 import FieldReports from "./pages/FieldReports";
@@ -137,6 +139,16 @@ function App() {
         <Route
           path="/technician/lab/core-break/:reportId"
           element={<CoreBreakReport />}
+        />
+
+        <Route
+          path="/technician/lab/asphalt-bsg"
+          element={<AsphaltGravityList />}
+        />
+
+        <Route
+          path="/technician/lab/asphalt-bsg/:reportId"
+          element={<AsphaltGravityReport />}
         />
 
         <Route
