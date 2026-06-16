@@ -3470,6 +3470,15 @@ const LAB_REPORT_SECTIONS = [
       { label: "Cube Break", description: "Compressive strength of concrete cubes." },
       { label: "Core Break", description: "Compressive strength of drilled cores." }
     ]
+  },
+  {
+    key: "grout",
+    title: "Grout",
+    icon: HardHat,
+    tone: "blue",
+    reports: [
+      { label: "Cube Break", description: "Grout compressive strength of 2\"×2\" cubes (ASTM C109/C1107).", route: "/technician/lab/grout-cube-break" }
+    ]
   }
 ];
 
