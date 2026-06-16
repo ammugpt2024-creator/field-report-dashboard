@@ -156,7 +156,7 @@ function GroutCubeBreakReport() {
             </div>
             <button type="button" onClick={addSpecimen} className="inline-flex min-h-9 items-center gap-1.5 rounded-xl bg-slate-950 px-4 text-xs font-bold text-white hover:bg-slate-800"><Plus className="h-4 w-4" /> Add Specimen</button>
           </div>
-          <p className="mt-1 text-xs font-semibold text-slate-400">Compressive Strength = Load ÷ Area · Area = π × Radius² · Percent of Design = Strength ÷ Specified Min × 100</p>
+          <p className="mt-1 text-xs font-semibold text-slate-400">Compressive Strength = Load ÷ Area · Area = Length × Width · Percent of Design = Strength ÷ Specified Min × 100</p>
 
           <div className="mt-4 space-y-3">
             {(report.specimens || []).map((row, index) => (
@@ -169,12 +169,9 @@ function GroutCubeBreakReport() {
                   <LabelInput label="Specimen No." value={row.specimenNumber || ""} onChange={(e) => updateSpecimen(row.id, { specimenNumber: e.target.value })} />
                   <LabelInput label="Test Date" type="date" value={row.testDate || ""} onChange={(e) => updateSpecimen(row.id, { testDate: e.target.value })} />
                   <LabelInput label="Age (Days)" type="number" value={row.ageDays || ""} onChange={(e) => updateSpecimen(row.id, { ageDays: e.target.value })} />
-                  <LabelInput label="Diameter (in.)" type="number" step="0.01" value={row.diameter || ""} onChange={(e) => updateSpecimen(row.id, { diameter: e.target.value })} />
+                  <LabelInput label="Length (in.)" type="number" step="0.01" value={row.length || ""} onChange={(e) => updateSpecimen(row.id, { length: e.target.value })} />
+                  <LabelInput label="Width (in.)" type="number" step="0.01" value={row.width || ""} onChange={(e) => updateSpecimen(row.id, { width: e.target.value })} />
                   <LabelInput label="Load (lbs.)" type="number" value={row.load || ""} onChange={(e) => updateSpecimen(row.id, { load: e.target.value })} />
-                  <div className="rounded-xl border border-slate-200 bg-white px-3 py-2">
-                    <span className="text-[10px] font-bold uppercase tracking-[0.1em] text-slate-400">Radius (in.)</span>
-                    <p className="mt-1 text-sm font-bold text-slate-900">{row.radius || "-"}</p>
-                  </div>
                   <div className="rounded-xl border border-slate-200 bg-white px-3 py-2">
                     <span className="text-[10px] font-bold uppercase tracking-[0.1em] text-slate-400">Area (sq. in.)</span>
                     <p className="mt-1 text-sm font-bold text-slate-900">{row.area || "-"}</p>

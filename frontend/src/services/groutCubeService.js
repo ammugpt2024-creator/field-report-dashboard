@@ -28,16 +28,15 @@ export function parsePsi(value) {
 }
 
 // Compute the derived columns for one specimen row:
-//   radius   = diameter / 2 (when a diameter is entered)
-//   area     = π · radius²        (circular bearing area, per the source form)
+//   area     = length × width     (square bearing area of the cube face)
 //   strength = load / area        (rounded to the nearest 10 psi, per ASTM C109)
 //   percent  = strength / specified minimum strength × 100
 export function computeGroutSpecimen(row, { specifiedStrengthPsi } = {}) {
-  const diameter = Number(row.diameter);
-  const radius = Number.isFinite(diameter) && diameter > 0
-    ? diameter / 2
-    : Number(row.radius);
-  const area = Number.isFinite(radius) && radius > 0 ? Math.PI * radius * radius : null;
+  const length = Number(row.length);
+  const width = Number(row.width);
+  const area = Number.isFinite(length) && length > 0 && Number.isFinite(width) && width > 0
+    ? length * width
+    : null;
   const load = Number(row.load);
   const strength = area && Number.isFinite(load) && load > 0 ? load / area : null;
   const required = Number(specifiedStrengthPsi);
@@ -46,7 +45,6 @@ export function computeGroutSpecimen(row, { specifiedStrengthPsi } = {}) {
     : null;
   return {
     ...row,
-    radius: Number.isFinite(radius) && radius > 0 ? radius.toFixed(2) : "",
     area: area === null ? "" : area.toFixed(2),
     compressiveStrength: strength === null ? "" : String(Math.round(strength / 10) * 10),
     percentDesignStrength: percent === null ? "" : String(Math.round(percent))
@@ -54,13 +52,14 @@ export function computeGroutSpecimen(row, { specifiedStrengthPsi } = {}) {
 }
 
 export function createGroutSpecimenRow(seed = {}) {
+  // Default to the ASTM C109 standard 2"×2" cube; the technician can override.
   return computeGroutSpecimen({
     id: crypto.randomUUID(),
     specimenNumber: seed.specimenNumber || "",
     testDate: seed.testDate || "",
     ageDays: seed.ageDays || "",
-    diameter: seed.diameter || "",
-    radius: "",
+    length: seed.length || "2",
+    width: seed.width || "2",
     load: "",
     area: "",
     compressiveStrength: "",

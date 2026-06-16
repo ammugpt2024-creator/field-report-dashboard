@@ -147,15 +147,15 @@ export function generateGroutCubePdfBlob(report) {
   autoTable(doc, {
     startY: y,
     head: [[
-      "Specimen\nNumber", "Test\nDate", "Age\n(Days)", "Diameter\n(in.)", "Radius\n( in.)",
+      "Specimen\nNumber", "Test\nDate", "Age\n(Days)", "Length\n(in.)", "Width\n(in.)",
       "Load\n(lbs.)", "Area\n(sq. in.)", "Compressive\nStrength (psi)", "Percent of\nDesign Strength (%)"
     ]],
     body: specimens.length ? specimens.map((row, index) => [
       pdfValue(row.specimenNumber) || index + 1,
       pdfValue(row.testDate),
       pdfValue(row.ageDays),
-      pdfValue(row.diameter),
-      pdfValue(row.radius),
+      pdfValue(row.length),
+      pdfValue(row.width),
       pdfValue(row.load),
       pdfValue(row.area),
       pdfValue(row.compressiveStrength),
