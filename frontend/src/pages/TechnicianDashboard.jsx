@@ -120,6 +120,8 @@ function TechnicianDashboard() {
       ? "infiltration-report"
     : location.pathname.includes("/proctor-report/")
       ? "proctor-report"
+    : location.pathname.includes("/samples-report/")
+      ? "samples-report"
     : location.pathname.includes("/concrete-report/")
       ? "concrete-report"
       : null;

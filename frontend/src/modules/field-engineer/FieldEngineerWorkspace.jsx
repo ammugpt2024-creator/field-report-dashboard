@@ -34,7 +34,7 @@ import {
   saveDailyLog,
   syncDailyLogsFromSupabase
 } from "../../services/dailyLogService";
-import { openDailyLogPdf, regenerateDailyLogPdf, generateProctorStandalonePdf } from "../../services/dailyLogPdfService";
+import { openDailyLogPdf, regenerateDailyLogPdf, generateProctorStandalonePdf, generateSamplesStandalonePdf } from "../../services/dailyLogPdfService";
 import { generateAndUploadConcreteReportPdf, openConcreteReportPdf } from "../../services/concreteReportPdfService";
 import { openTimeCardPdf } from "../../services/timeCardPdfService";
 import {
@@ -3225,6 +3225,135 @@ function ProctorReportPage({ log, activityId, reportId, onChange, onBack }) {
   );
 }
 
+const SAMPLE_TYPE_OPTIONS = [
+  "Soil",
+  "Concrete cylinders",
+  "Grout cubes",
+  "Asphalt cores or plugs"
+];
+
+function SamplesCollectionReportPage({ log, activityId, reportId, onChange, onBack }) {
+  const activity = (log.activities || []).find((item) => item.id === activityId);
+  const persistedReport = (activity?.reports || []).find((item) => item.id === reportId);
+  const [localReport, setLocalReport] = useState(persistedReport || null);
+  const [pdfGenerating, setPdfGenerating] = useState(false);
+  const report = localReport || persistedReport;
+  const isReadOnly = [DAILY_LOG_STATUS.SUBMITTED, DAILY_LOG_STATUS.APPROVED].includes(log.status);
+  const canComplete = Boolean(
+    String(report?.sampleType || "").trim() &&
+    String(report?.castDate || "").trim() &&
+    String(report?.specimenCount || "").trim()
+  );
+
+  async function downloadReportPdf() {
+    if (!report) return;
+    setPdfGenerating(true);
+    try {
+      await generateSamplesStandalonePdf(report, { download: true });
+    } catch (err) {
+      window.alert("Could not generate PDF: " + (err.message || "Unknown error"));
+    } finally {
+      setPdfGenerating(false);
+    }
+  }
+
+  if (!activity || !report) {
+    return (
+      <section className={cardClass()}>
+        <h1 className="text-xl font-bold text-slate-950">Samples Collection Report Not Found</h1>
+        <button type="button" onClick={onBack} className="mt-4 min-h-10 rounded-xl border border-slate-200 px-4 text-sm font-bold">Back</button>
+      </section>
+    );
+  }
+
+  function saveReport(nextReport) {
+    const normalized = { ...nextReport, updatedAt: new Date().toISOString() };
+    setLocalReport(normalized);
+    const nextLog = saveDailyLog({
+      ...log,
+      activities: (log.activities || []).map((item) =>
+        item.id === activityId
+          ? { ...item, reports: (item.reports || []).map((r) => (r.id === normalized.id ? normalized : r)), updatedAt: new Date().toISOString() }
+          : item
+      ),
+      updatedAt: new Date().toISOString()
+    });
+    onChange(nextLog);
+  }
+
+  function updateReport(patch) {
+    if (isReadOnly) return;
+    saveReport({ ...report, ...patch });
+  }
+
+  function completeReport() {
+    saveReport({ ...report, status: "completed", completedAt: new Date().toISOString() });
+    onBack();
+  }
+
+  return (
+    <div className="space-y-4">
+      <section className={cardClass()}>
+        <div>
+          <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-400">Field Sampling Record</p>
+          <h1 className="mt-2 text-2xl font-bold text-slate-950">Samples Collection Report</h1>
+          <p className="mt-1 text-sm font-semibold text-slate-600">{report.projectName}</p>
+        </div>
+      </section>
+
+      <section className={cardClass()}>
+        <h2 className="text-lg font-bold text-slate-950">Collection Details</h2>
+        <p className="mt-1 text-xs font-semibold text-slate-400">Project name is carried over from the daily log.</p>
+
+        <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+          <Field label="Project Name">
+            <input readOnly value={report.projectName || "—"} className={`${inputClass()} bg-slate-100 font-bold text-slate-600`} />
+          </Field>
+          <Field label="Project Number">
+            <input readOnly value={report.projectNumber || report.project_number || "—"} className={`${inputClass()} bg-slate-100 font-bold text-slate-600`} />
+          </Field>
+          <Field label="Sample Type *">
+            <select value={report.sampleType || ""} disabled={isReadOnly} onChange={(e) => updateReport({ sampleType: e.target.value })} className={inputClass()}>
+              <option value="">— Select sample type —</option>
+              {SAMPLE_TYPE_OPTIONS.map((option) => (
+                <option key={option} value={option}>{option}</option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Cast Date *">
+            <input type="date" value={report.castDate || ""} disabled={isReadOnly} onChange={(e) => updateReport({ castDate: e.target.value })} className={inputClass()} />
+          </Field>
+          <Field label="Samples / Specimens Count *">
+            <input type="number" min="0" step="1" value={report.specimenCount || ""} disabled={isReadOnly} onChange={(e) => updateReport({ specimenCount: e.target.value })} className={inputClass()} placeholder="e.g. 4" />
+          </Field>
+          <Field label="Date Collected">
+            <input type="date" value={report.date || ""} disabled={isReadOnly} onChange={(e) => updateReport({ date: e.target.value })} className={inputClass()} />
+          </Field>
+          <Field label="Comments" extraClass="md:col-span-2">
+            <textarea value={report.comments || ""} disabled={isReadOnly} onChange={(e) => updateReport({ comments: e.target.value })} rows={4} className={`${inputClass()} min-h-28 max-w-full resize-y py-3 leading-6`} placeholder="Sample IDs, cure conditions, pickup notes, lab destination, etc." />
+          </Field>
+        </div>
+      </section>
+
+      <div className="sticky bottom-0 z-20 -mx-4 flex flex-col gap-2 border-t border-slate-200 bg-white/95 p-4 backdrop-blur sm:mx-0 sm:flex-row sm:justify-end sm:rounded-2xl sm:border">
+        <button type="button" onClick={onBack} className="min-h-11 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-800">Back</button>
+        {canComplete && (
+          <button
+            type="button"
+            onClick={downloadReportPdf}
+            disabled={pdfGenerating}
+            className="min-h-11 rounded-2xl border border-slate-300 bg-white px-4 text-sm font-bold text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {pdfGenerating ? "Generating…" : "Download PDF"}
+          </button>
+        )}
+        {!isReadOnly && <button type="button" onClick={() => saveReport(report)} className="min-h-11 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-800">Save Draft</button>}
+        {!isReadOnly && <button type="button" onClick={completeReport} disabled={!canComplete} className="min-h-11 rounded-2xl bg-emerald-700 px-4 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-600">Finish Report</button>}
+      </div>
+    </div>
+  );
+}
+
 const DAILY_LOG_TABS = [
   { id: "draft", label: "Draft" },
   { id: "submitted", label: "Submitted" },
@@ -3769,6 +3898,7 @@ export default function FieldEngineerWorkspace({
     "asphalt-report",
     "infiltration-report",
     "proctor-report",
+    "samples-report",
     "reports-home",
     "lab-reports",
     "daily-logs",
@@ -4563,6 +4693,67 @@ export default function FieldEngineerWorkspace({
     navigate(getProctorReportRoute(log, activityId, report || { id: reportId }));
   }
 
+  function getSamplesReportRoute(log, activityId, report) {
+    return `/technician/daily-log/${log.id}/activity/${activityId}/samples-report/${report?.id || "new"}?returnTo=${encodeURIComponent(`/technician/daily-log/${log.id}`)}`;
+  }
+
+  function createSamplesReportForActivity(log, activityId) {
+    const activity = (log.activities || []).find((item) => item.id === activityId);
+    if (!activity) return null;
+    const existing = [...(activity.concreteReports || []), ...(activity.reports || [])][0];
+    if (existing) {
+      const type = String(existing.type || existing.reportType || "").toLowerCase();
+      if (type.includes("sample")) {
+        navigate(getSamplesReportRoute(log, activityId, existing));
+      } else {
+        window.alert("Only one report can be attached to each activity.");
+      }
+      return existing;
+    }
+    const report = {
+      id: crypto.randomUUID(),
+      type: "Samples Collection Report",
+      reportType: "Samples Collection Report",
+      report_type: "Samples Collection Report",
+      status: "draft",
+      dailyLogId: log.id,
+      daily_log_id: log.id,
+      activityId,
+      activity_id: activityId,
+      projectName: log.projectName || projectLabel,
+      project_name: log.projectName || projectLabel,
+      projectNumber: log.projectNumber || log.project_number || String(defaultProjectId || ""),
+      project_number: log.projectNumber || log.project_number || String(defaultProjectId || ""),
+      date: log.date || new Date().toISOString().slice(0, 10),
+      client: log.client || "",
+      sampleType: "",
+      castDate: "",
+      specimenCount: "",
+      comments: "",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    const nextLog = saveDailyLog({
+      ...log,
+      activities: (log.activities || []).map((item) =>
+        item.id === activityId
+          ? { ...item, reports: [...(item.reports || []), report], updatedAt: new Date().toISOString() }
+          : item
+      ),
+      updatedAt: new Date().toISOString()
+    });
+    refreshLogs(nextLog);
+    navigate(getSamplesReportRoute(nextLog, activityId, report));
+    return report;
+  }
+
+  function openSamplesReport(log, activityId, reportId) {
+    if (!log?.id || !activityId || !reportId) return;
+    const activity = (log.activities || []).find((item) => item.id === activityId);
+    const report = (activity?.reports || []).find((item) => item.id === reportId);
+    navigate(getSamplesReportRoute(log, activityId, report || { id: reportId }));
+  }
+
   function backToDailyLog(logId = selectedDailyLog?.id) {
     if (!logId) return;
     navigate(`/technician/daily-log/${logId}`);
@@ -4668,6 +4859,8 @@ export default function FieldEngineerWorkspace({
               onOpenInfiltrationReport={openInfiltrationReport}
               onCreateProctorReport={createProctorReportForActivity}
               onOpenProctorReport={openProctorReport}
+              onCreateSamplesReport={createSamplesReportForActivity}
+              onOpenSamplesReport={openSamplesReport}
             />
           )
         )}
@@ -4714,6 +4907,16 @@ export default function FieldEngineerWorkspace({
 
         {currentView === "proctor-report" && selectedDailyLog && (
           <ProctorReportPage
+            log={selectedDailyLog}
+            activityId={activeActivityId}
+            reportId={activeReportId}
+            onChange={refreshLogs}
+            onBack={() => backToDailyLog(selectedDailyLog.id)}
+          />
+        )}
+
+        {currentView === "samples-report" && selectedDailyLog && (
+          <SamplesCollectionReportPage
             log={selectedDailyLog}
             activityId={activeActivityId}
             reportId={activeReportId}

@@ -6,6 +6,7 @@ import CompactionReportInlineContent from "../reports/CompactionReportInlineCont
 import AsphaltCompactionReportInlineContent from "../reports/AsphaltCompactionReportInlineContent";
 import SurfaceInfiltrationReportInlineContent from "../reports/SurfaceInfiltrationReportInlineContent";
 import ProctorReportInlineContent from "../reports/ProctorReportInlineContent";
+import SamplesCollectionReportInlineContent from "../reports/SamplesCollectionReportInlineContent";
 import BottomActionBar from "../mobile/BottomActionBar";
 import SignatureModal from "../SignatureModal";
 import PhotosAttachmentsSection, { isAllowedDailyLogAttachment } from "./PhotosAttachmentsSection";
@@ -325,11 +326,36 @@ function isProctorReportSubmitReady(report = {}) {
   return records.some(r => String(r.percentCompaction || "").trim() !== "");
 }
 
+function isSamplesReport(report = {}) {
+  const type = String(report.type || report.reportType || report.report_type || "").toLowerCase();
+  return type.includes("sample");
+}
+
+function hasSamplesReportContent(report = {}) {
+  return Boolean(
+    String(report.sampleType || "").trim() ||
+    String(report.castDate || report.cast_date || "").trim() ||
+    String(report.specimenCount || report.specimen_count || "").trim() ||
+    String(report.comments || "").trim()
+  );
+}
+
+function isSamplesReportSubmitReady(report = {}) {
+  const reportStatus = String(report.status || "").toLowerCase();
+  if (["completed", "submitted", "approved", "finalized"].includes(reportStatus)) return true;
+  return Boolean(
+    String(report.sampleType || "").trim() &&
+    String(report.castDate || report.cast_date || "").trim() &&
+    String(report.specimenCount || report.specimen_count || "").trim()
+  );
+}
+
 function isAttachedReportSubmitReady(report = {}) {
   if (isAsphaltReport(report)) return isAsphaltReportSubmitReady(report);
   if (isCompactionReport(report)) return isCompactionReportSubmitReady(report);
   if (isInfiltrationReport(report)) return isInfiltrationReportSubmitReady(report);
   if (isProctorReport(report)) return isProctorReportSubmitReady(report);
+  if (isSamplesReport(report)) return isSamplesReportSubmitReady(report);
   return isConcreteReportSubmitReady(report);
 }
 
@@ -461,7 +487,7 @@ async function createUploadReadyAttachment(file, attachmentType, context) {
   };
 }
 
-export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateConcreteReport, onOpenConcreteReport, onCreateCompactionReport, onOpenCompactionReport, onCreateAsphaltReport, onOpenAsphaltReport, onCreateInfiltrationReport, onOpenInfiltrationReport, onCreateProctorReport, onOpenProctorReport }) {
+export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateConcreteReport, onOpenConcreteReport, onCreateCompactionReport, onOpenCompactionReport, onCreateAsphaltReport, onOpenAsphaltReport, onCreateInfiltrationReport, onOpenInfiltrationReport, onCreateProctorReport, onOpenProctorReport, onCreateSamplesReport, onOpenSamplesReport }) {
   const [lastAutosavedAt, setLastAutosavedAt] = useState("");
   const [reportPickerActivityId, setReportPickerActivityId] = useState("");
   const [reportSectionError, setReportSectionError] = useState("");
@@ -692,6 +718,27 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
       setReportPickerActivityId("");
     } catch (error) {
       console.error("Proctor report section failed", error);
+      setReportSectionError("Unable to load report section. Please try again.");
+    }
+  }
+
+  function addSamplesReport(activityId) {
+    try {
+      setReportSectionError("");
+      const activity = (log.activities || []).find((item) => item.id === activityId);
+      if (getActivityAttachedReports(activity).length >= 1) {
+        setReportSectionError("Only one report can be attached to each activity.");
+        setReportPickerActivityId("");
+        return;
+      }
+      const createdReport = onCreateSamplesReport?.(log, activityId);
+      if (!createdReport) {
+        setReportSectionError("Unable to load report section. Please try again.");
+        return;
+      }
+      setReportPickerActivityId("");
+    } catch (error) {
+      console.error("Samples collection report section failed", error);
       setReportSectionError("Unable to load report section. Please try again.");
     }
   }
@@ -1396,6 +1443,7 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
                   const compaction = !asphalt && isCompactionReport(report);
                   const infiltration = !asphalt && !compaction && isInfiltrationReport(report);
                   const proctor = !asphalt && !compaction && !infiltration && isProctorReport(report);
+                  const samples = !asphalt && !compaction && !infiltration && !proctor && isSamplesReport(report);
                   const shouldShowReportContent = asphalt
                     ? hasAsphaltReportContent(report)
                     : compaction
@@ -1404,7 +1452,9 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
                         ? hasInfiltrationReportContent(report)
                         : proctor
                           ? hasProctorReportContent(report)
-                          : isAttachedReportSubmitReady(report);
+                          : samples
+                            ? hasSamplesReportContent(report)
+                            : isAttachedReportSubmitReady(report);
                   visibleReportOrdinal += 1;
                   const reportLabel = `Report ${visibleReportOrdinal}`;
                   const displayReportType = asphalt
@@ -1415,7 +1465,9 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
                         ? "Surface Infiltration Rate Report"
                         : proctor
                           ? "One-Point Proctor Report"
-                          : "Concrete Report";
+                          : samples
+                            ? "Samples Collection Report"
+                            : "Concrete Report";
 
                   return (
                     <div key={report.id} className="mt-3 rounded-2xl border border-slate-200 bg-white p-4">
@@ -1442,7 +1494,9 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
                                     ? onOpenInfiltrationReport?.(log, activity.id, report.id, { mode: "edit" })
                                     : proctor
                                       ? onOpenProctorReport?.(log, activity.id, report.id, { mode: "edit" })
-                                      : onOpenConcreteReport?.(log, activity.id, report.id, { mode: "edit" })
+                                      : samples
+                                        ? onOpenSamplesReport?.(log, activity.id, report.id, { mode: "edit" })
+                                        : onOpenConcreteReport?.(log, activity.id, report.id, { mode: "edit" })
                             )}
                             className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-slate-950 px-3 text-xs font-bold text-white"
                           >
@@ -1461,7 +1515,9 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
                               ? <SurfaceInfiltrationReportInlineContent report={report} reportLabel={reportLabel} />
                               : proctor
                                 ? <ProctorReportInlineContent report={report} reportLabel={reportLabel} />
-                                : <ConcreteReportInlineContent report={report} reportLabel={reportLabel} />
+                                : samples
+                                  ? <SamplesCollectionReportInlineContent report={report} reportLabel={reportLabel} />
+                                  : <ConcreteReportInlineContent report={report} reportLabel={reportLabel} />
                       )}
                     </div>
                   );
@@ -1497,6 +1553,7 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
                       onAddAsphaltReport={() => addAsphaltReport(activity.id)}
                       onAddInfiltrationReport={() => addInfiltrationReport(activity.id)}
                       onAddProctorReport={() => addProctorReport(activity.id)}
+                      onAddSamplesReport={() => addSamplesReport(activity.id)}
                     />
                   </div>
                 )}
