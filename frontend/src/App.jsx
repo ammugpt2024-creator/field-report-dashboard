@@ -18,6 +18,8 @@ import CylinderBreakReport from "./pages/CylinderBreakReport";
 import CylinderBreakList from "./pages/CylinderBreakList";
 import GroutCubeBreakReport from "./pages/GroutCubeBreakReport";
 import GroutCubeBreakList from "./pages/GroutCubeBreakList";
+import CoreBreakReport from "./pages/CoreBreakReport";
+import CoreBreakList from "./pages/CoreBreakList";
 import TimesheetsPage from "./pages/TimesheetsPage";
 import ProjectWorkspace from "./pages/ProjectWorkspace";
 import FieldReports from "./pages/FieldReports";
@@ -125,6 +127,16 @@ function App() {
         <Route
           path="/technician/lab/grout-cube-break/:reportId"
           element={<GroutCubeBreakReport />}
+        />
+
+        <Route
+          path="/technician/lab/core-break"
+          element={<CoreBreakList />}
+        />
+
+        <Route
+          path="/technician/lab/core-break/:reportId"
+          element={<CoreBreakReport />}
         />
 
         <Route

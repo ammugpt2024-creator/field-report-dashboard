@@ -3468,7 +3468,7 @@ const LAB_REPORT_SECTIONS = [
     reports: [
       { label: "Cylinder Break", description: "Compressive strength of concrete cylinders.", route: "/technician/lab/cylinder-break" },
       { label: "Cube Break", description: "Compressive strength of concrete cubes." },
-      { label: "Core Break", description: "Compressive strength of drilled cores." }
+      { label: "Core Break", description: "Compressive strength of drilled cores (ASTM C42).", route: "/technician/lab/core-break" }
     ]
   },
   {
