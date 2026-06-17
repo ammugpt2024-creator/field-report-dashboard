@@ -1227,10 +1227,10 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
   return (
     <div className="pb-24 lg:pb-0">
       {/* Sticky header — stays pinned while activities scroll */}
-      <div className="sticky top-0 z-20 overflow-hidden rounded-3xl border border-slate-700 border-b-4 border-accent-500 bg-gradient-to-br from-navy-800 via-navy-900 to-navy-950 px-4 py-3 shadow-lg sm:px-6">
+      <div className="sticky top-0 z-20 overflow-hidden rounded-3xl border-b-4 border-accent-500 bg-gradient-to-br from-navy-800 via-navy-900 to-navy-950 px-4 py-3 shadow-lg sm:px-6">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
-            <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">Field Operations</p>
+            <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-300">Field Operations</p>
             <h1 className="mt-0.5 truncate text-xl font-bold text-white sm:text-2xl">
               Daily Field Log
               {log.projectName ? <span className="ml-2 text-base font-semibold text-slate-300">· {log.projectName}</span> : null}
@@ -1244,7 +1244,7 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
             <span className="inline-flex items-center rounded-full border border-amber-400/40 bg-amber-400/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-amber-300">
               {String(log.status || "draft").replace(/_/g, " ")}
             </span>
-            <button type="button" onClick={saveDraft} className="inline-flex min-h-9 items-center gap-1.5 rounded-xl border border-slate-700 bg-transparent px-3 text-xs font-bold text-white hover:bg-slate-800">
+            <button type="button" onClick={saveDraft} className="inline-flex min-h-9 items-center gap-1.5 rounded-xl border border-white/25 bg-white/10 px-3 text-xs font-bold text-white transition hover:bg-white/20">
               <Save className="h-3.5 w-3.5" /> Save Draft
             </button>
             <button
@@ -1252,7 +1252,7 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
               onClick={submitLog}
               disabled={!canSubmit}
               title={canSubmit ? "" : "Add at least one completed activity to submit."}
-              className="inline-flex min-h-9 items-center gap-1.5 rounded-xl bg-blue-600 px-3 text-xs font-bold text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"
+              className="inline-flex min-h-9 items-center gap-1.5 rounded-xl bg-accent-500 px-3 text-xs font-bold text-white shadow-lg shadow-accent-950/30 transition hover:bg-accent-600 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"
             >
               <Send className="h-3.5 w-3.5" /> Submit
             </button>
