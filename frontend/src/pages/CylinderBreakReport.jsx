@@ -200,7 +200,7 @@ function CylinderBreakReport() {
     <div className="w-full max-w-full overflow-x-hidden bg-slate-100 px-4 py-5 sm:px-6 lg:p-8">
       <div className="mx-auto w-full max-w-[1200px] space-y-4">
         <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
-          <div className="bg-gradient-to-r from-slate-950 via-slate-900 to-blue-950 px-5 py-5 sm:px-7">
+          <div className="bg-gradient-to-r from-navy-950 via-navy-900 to-navy-800 px-5 py-5 sm:px-7">
             <button type="button" onClick={() => navigate("/technician/lab/cylinder-break")} className="inline-flex items-center gap-1 text-xs font-bold text-slate-400 hover:text-white">
               <ArrowLeft className="h-3.5 w-3.5" /> Cylinder Break Reports
             </button>
