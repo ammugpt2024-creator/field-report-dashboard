@@ -65,7 +65,7 @@ function Login() {
 
         <button
           onClick={handleLogin}
-          className="min-h-11 w-full rounded-lg bg-blue-600 p-3 font-semibold text-white transition hover:bg-blue-700"
+          className="min-h-11 w-full rounded-lg bg-gradient-to-r from-accent-500 to-accent-600 p-3 font-semibold text-white shadow-sm shadow-accent-600/20 transition hover:from-accent-600 hover:to-accent-700"
         >
           Login
         </button>

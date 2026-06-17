@@ -89,7 +89,7 @@ function Sidebar() {
               to={path}
               className={`flex min-h-11 items-center gap-3 rounded-2xl px-3 py-2 text-sm font-bold transition ${
                 active
-                  ? "bg-blue-50 text-blue-800"
+                  ? "bg-accent-50 text-accent-800 ring-1 ring-accent-100"
                   : "text-slate-600 hover:bg-slate-100 hover:text-slate-950"
               } ${nested ? "ml-4 min-h-10 border-l border-slate-200 pl-4 text-xs" : ""}`}
             >

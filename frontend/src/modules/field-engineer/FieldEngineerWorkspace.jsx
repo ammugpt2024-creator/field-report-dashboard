@@ -1899,7 +1899,7 @@ function CompactionReportPage({ log, activityId, reportId, onChange, onBack }) {
   return (
     <div className="space-y-4 pb-24 lg:pb-4">
       <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
-        <div className="bg-gradient-to-r from-slate-950 via-slate-900 to-blue-950 px-5 py-5 sm:px-7">
+        <div className="bg-gradient-to-r from-navy-950 via-navy-900 to-navy-800 px-5 py-5 sm:px-7">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div className="min-w-0">
               <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">Nuclear Density Report</p>
@@ -3391,7 +3391,7 @@ function ReportsHome({ logCollections, navigate }) {
 
   return (
     <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
-      <div className="bg-gradient-to-r from-slate-950 via-slate-900 to-blue-950 px-5 py-5 sm:px-7">
+      <div className="bg-gradient-to-r from-navy-950 via-navy-900 to-navy-800 px-5 py-5 sm:px-7">
         <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">Field Operations</p>
         <h1 className="mt-1 text-2xl font-bold text-white sm:text-3xl">Reports</h1>
         <p className="mt-1 text-xs font-semibold text-slate-400">Choose a reporting category to continue.</p>
@@ -3491,7 +3491,7 @@ const LAB_SECTION_TONE = {
 function LabReportsPage({ navigate }) {
   return (
     <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
-      <div className="bg-gradient-to-r from-slate-950 via-slate-900 to-blue-950 px-5 py-5 sm:px-7">
+      <div className="bg-gradient-to-r from-navy-950 via-navy-900 to-navy-800 px-5 py-5 sm:px-7">
         <button type="button" onClick={() => navigate("/technician/dashboard?view=reports-home")} className="text-xs font-bold text-slate-400 hover:text-white">&larr; Reports</button>
         <h1 className="mt-1 text-2xl font-bold text-white sm:text-3xl">Lab Reports</h1>
         <p className="mt-1 text-xs font-semibold text-slate-400">Laboratory testing records by material.</p>
