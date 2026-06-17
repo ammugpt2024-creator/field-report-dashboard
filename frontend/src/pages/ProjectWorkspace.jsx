@@ -295,7 +295,7 @@ function ProjectWorkspace() {
 
       {/* HEADER */}
 
-      <div className="bg-white border-b border-slate-200 shadow-sm">
+      <div className="bg-white border-b-4 border-accent-500 shadow-sm">
 
         <div className="max-w-7xl mx-auto px-6 py-10">
 

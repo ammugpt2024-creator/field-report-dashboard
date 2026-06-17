@@ -342,24 +342,24 @@ function QCReviewDashboard() {
   return (
     <div className="w-full max-w-full overflow-x-hidden bg-slate-100 px-4 py-5 sm:px-6 lg:p-8">
       <div className="mx-auto w-full max-w-[1500px] space-y-5 sm:space-y-6">
-        <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-8">
+        <section className="overflow-hidden rounded-3xl border-b-4 border-accent-500 bg-gradient-to-br from-navy-800 via-navy-900 to-navy-950 p-5 shadow-sm sm:p-8">
           <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
             <div className="min-w-0">
-              <p className="text-xs font-bold uppercase tracking-[0.32em] text-slate-400">{MODULE_NAMES.validationCenter}</p>
-              <h1 className="mt-3 break-words text-3xl font-semibold text-slate-950 sm:text-4xl">Validation Inbox</h1>
-              <p className="mt-2 max-w-3xl text-sm text-slate-600 sm:text-base">
+              <p className="text-xs font-bold uppercase tracking-[0.32em] text-slate-300">{MODULE_NAMES.validationCenter}</p>
+              <h1 className="mt-3 break-words text-3xl font-semibold tracking-tight text-white sm:text-4xl">Validation Inbox</h1>
+              <p className="mt-2 max-w-3xl text-sm text-slate-300 sm:text-base">
                 Field operations records assigned to {profile?.full_name || profile?.email || 'the validation team'}, sorted by SLA risk and oldest submissions first.
               </p>
             </div>
             <div className="grid w-full grid-cols-1 gap-3 sm:grid-cols-2 xl:w-auto">
-              <div className="inline-flex min-h-11 w-full items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm text-slate-700 xl:w-80">
-                <Search className="h-4 w-4 shrink-0" />
+              <div className="inline-flex min-h-11 w-full items-center gap-2 rounded-2xl border border-white/20 bg-white/10 px-4 py-2 text-sm text-white xl:w-80">
+                <Search className="h-4 w-4 shrink-0 text-slate-300" />
                 <input
                   type="search"
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
                   placeholder="Search DFR, project, field engineer"
-                  className="min-w-0 flex-1 bg-transparent outline-none"
+                  className="min-w-0 flex-1 bg-transparent text-white outline-none placeholder:text-slate-400"
                 />
               </div>
               <button
@@ -372,7 +372,7 @@ function QCReviewDashboard() {
                   setDateFrom('');
                   setDateTo('');
                 }}
-                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-white/25 bg-white/10 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/20"
               >
                 <Filter className="h-4 w-4" />
                 Reset Filters
@@ -380,14 +380,14 @@ function QCReviewDashboard() {
               <button
                 type="button"
                 onClick={() => navigate(`/project/${defaultProjectId}`)}
-                className="inline-flex min-h-11 items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+                className="inline-flex min-h-11 items-center justify-center rounded-2xl border border-white/25 bg-white/10 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/20"
               >
                 {MODULE_NAMES.projectHub}
               </button>
               <button
                 type="button"
                 onClick={() => navigate(`/project/${defaultProjectId}/field-reports/concrete-test-log/create`)}
-                className="inline-flex min-h-11 items-center justify-center rounded-2xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-slate-800"
+                className="inline-flex min-h-11 items-center justify-center rounded-2xl bg-accent-500 px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-accent-950/30 transition hover:bg-accent-600"
               >
                 Create Field Operations Record
               </button>

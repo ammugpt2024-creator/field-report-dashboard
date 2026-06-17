@@ -466,7 +466,7 @@ function DashboardOverview({ profile, logCollections, timeCardCollections, onOpe
             <button
               type="button"
               onClick={onCreateLog}
-              className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-blue-600 px-3 text-sm font-semibold text-white hover:bg-blue-700"
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-accent-500 px-3 text-sm font-semibold text-white hover:bg-accent-600"
             >
               <Plus className="h-4 w-4" /> Start Daily Log
             </button>
@@ -2324,14 +2324,14 @@ function AsphaltCompactionReportPage({ log, activityId, reportId, onChange, onBa
 
   return (
     <div className="space-y-4">
-      <section className={cardClass()}>
+      <section className="overflow-hidden rounded-2xl border-b-4 border-accent-500 bg-gradient-to-br from-navy-800 via-navy-900 to-navy-950 p-4 shadow-sm sm:p-5">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
-            <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-400">Asphalt Compaction Report</p>
-            <h1 className="mt-2 text-2xl font-bold text-slate-950">Compaction Report</h1>
-            <p className="mt-1 text-sm font-semibold text-slate-600">{report.projectName}</p>
+            <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-300">Asphalt Compaction Report</p>
+            <h1 className="mt-2 text-2xl font-bold tracking-tight text-white">Compaction Report</h1>
+            <p className="mt-1 text-sm font-semibold text-slate-300">{report.projectName}</p>
           </div>
-          <span className="w-fit rounded-full border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-bold uppercase tracking-[0.12em] text-slate-700">{report.status || "Draft"}</span>
+          <span className="w-fit rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs font-bold uppercase tracking-[0.12em] text-white">{report.status || "Draft"}</span>
         </div>
       </section>
 
@@ -2559,11 +2559,11 @@ function SurfaceInfiltrationReportPage({ log, activityId, reportId, onChange, on
 
   return (
     <div className="space-y-4">
-      <section className={cardClass()}>
+      <section className="overflow-hidden rounded-2xl border-b-4 border-accent-500 bg-gradient-to-br from-navy-800 via-navy-900 to-navy-950 p-4 shadow-sm sm:p-5">
         <div>
-          <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-400">ASTM C1781</p>
-          <h1 className="mt-2 text-2xl font-bold text-slate-950">Surface Infiltration Rate Report</h1>
-          <p className="mt-1 text-sm font-semibold text-slate-600">{report.projectName}</p>
+          <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-300">ASTM C1781</p>
+          <h1 className="mt-2 text-2xl font-bold tracking-tight text-white">Surface Infiltration Rate Report</h1>
+          <p className="mt-1 text-sm font-semibold text-slate-300">{report.projectName}</p>
         </div>
       </section>
 
@@ -3046,11 +3046,11 @@ function ProctorReportPage({ log, activityId, reportId, onChange, onBack }) {
 
   return (
     <div className="space-y-4">
-      <section className={cardClass()}>
+      <section className="overflow-hidden rounded-2xl border-b-4 border-accent-500 bg-gradient-to-br from-navy-800 via-navy-900 to-navy-950 p-4 shadow-sm sm:p-5">
         <div>
-          <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-400">VTM-12 · AASHTO T 272</p>
-          <h1 className="mt-2 text-2xl font-bold text-slate-950">One-Point Proctor Report</h1>
-          <p className="mt-1 text-sm font-semibold text-slate-600">{report.projectName}</p>
+          <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-300">VTM-12 · AASHTO T 272</p>
+          <h1 className="mt-2 text-2xl font-bold tracking-tight text-white">One-Point Proctor Report</h1>
+          <p className="mt-1 text-sm font-semibold text-slate-300">{report.projectName}</p>
         </div>
       </section>
 
@@ -3293,11 +3293,11 @@ function SamplesCollectionReportPage({ log, activityId, reportId, onChange, onBa
 
   return (
     <div className="space-y-4">
-      <section className={cardClass()}>
+      <section className="overflow-hidden rounded-2xl border-b-4 border-accent-500 bg-gradient-to-br from-navy-800 via-navy-900 to-navy-950 p-4 shadow-sm sm:p-5">
         <div>
-          <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-400">Field Sampling Record</p>
-          <h1 className="mt-2 text-2xl font-bold text-slate-950">Samples Collection Report</h1>
-          <p className="mt-1 text-sm font-semibold text-slate-600">{report.projectName}</p>
+          <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-300">Field Sampling Record</p>
+          <h1 className="mt-2 text-2xl font-bold tracking-tight text-white">Samples Collection Report</h1>
+          <p className="mt-1 text-sm font-semibold text-slate-300">{report.projectName}</p>
         </div>
       </section>
 

@@ -170,7 +170,7 @@ export default function DailyLogReview() {
   return (
     <div className="w-full max-w-full overflow-x-hidden bg-slate-100 px-4 py-5 sm:px-6 lg:p-8">
       <div className="mx-auto w-full max-w-[1400px] space-y-5">
-        <section className="rounded-3xl bg-slate-950 p-5 text-white shadow-sm sm:p-7">
+        <section className="overflow-hidden rounded-3xl border-b-4 border-accent-500 bg-gradient-to-br from-navy-800 via-navy-900 to-navy-950 p-5 text-white shadow-sm sm:p-7">
           <button type="button" onClick={() => navigate(-1)} className="inline-flex min-h-10 items-center gap-2 rounded-2xl bg-white/10 px-4 text-sm font-bold text-white">
             <ArrowLeft className="h-4 w-4" />
             Back

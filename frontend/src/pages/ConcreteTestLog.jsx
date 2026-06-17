@@ -3190,19 +3190,19 @@ function ConcreteTestLog() {
 
   return (
     <div className="w-full max-w-full overflow-x-hidden bg-slate-100">
-      <div className="sticky top-0 z-20 border-b border-slate-200 bg-white/95 backdrop-blur-sm">
+      <div className="sticky top-0 z-20 border-b-4 border-accent-500 bg-gradient-to-br from-navy-800 via-navy-900 to-navy-950 shadow-sm">
         <div className="mx-auto flex w-full max-w-6xl flex-col gap-3 px-4 py-3 sm:px-6 lg:flex-row lg:items-center lg:justify-between">
           <div className="min-w-0">
-            <p className="text-[11px] uppercase tracking-[0.3em] text-slate-500">{MODULE_NAMES.materialAssurance}</p>
-            <h1 className="mt-2 break-words text-xl font-semibold text-slate-950 sm:text-2xl">
+            <p className="text-[11px] uppercase tracking-[0.3em] text-slate-300">{MODULE_NAMES.materialAssurance}</p>
+            <h1 className="mt-2 break-words text-xl font-semibold text-white sm:text-2xl">
               {projectInfo.project_name || 'Field Operations Record'}
             </h1>
           </div>
-          <div className="flex flex-wrap items-center gap-2 text-sm text-slate-600 sm:gap-3">
+          <div className="flex flex-wrap items-center gap-2 text-sm text-slate-300 sm:gap-3">
             <button
               type="button"
               onClick={() => navigate(isDailyLogReportContext ? dailyLogContext.returnTo : `/project/${projectId}`)}
-              className="inline-flex min-h-11 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-800 shadow-sm hover:bg-slate-50"
+              className="inline-flex min-h-11 items-center gap-2 rounded-2xl border border-white/25 bg-white/10 px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-white/20"
             >
               <FolderKanban className="h-4 w-4" />
               {isDailyLogReportContext ? 'Back To Daily Log' : MODULE_NAMES.projectHub}
