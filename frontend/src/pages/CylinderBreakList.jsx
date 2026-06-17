@@ -54,7 +54,7 @@ function CylinderBreakList() {
     <div className="w-full max-w-full overflow-x-hidden bg-slate-100 px-4 py-5 sm:px-6 lg:p-8">
       <div className="mx-auto w-full max-w-[1100px] space-y-4">
         <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
-          <div className="bg-gradient-to-r from-navy-950 via-navy-900 to-navy-800 px-5 py-5 sm:px-7">
+          <div className="border-b-4 border-accent-500 bg-gradient-to-br from-navy-800 via-navy-900 to-navy-950 px-5 py-5 sm:px-7">
             <button type="button" onClick={() => navigate("/technician/dashboard?view=lab-reports")} className="inline-flex items-center gap-1 text-xs font-bold text-slate-400 hover:text-white">
               <ArrowLeft className="h-3.5 w-3.5" /> Lab Reports
             </button>
@@ -63,7 +63,7 @@ function CylinderBreakList() {
                 <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">Concrete · Laboratory</p>
                 <h1 className="mt-1 text-2xl font-bold text-white sm:text-3xl">Cylinder Break Reports</h1>
               </div>
-              <button type="button" onClick={() => navigate("/technician/lab/cylinder-break/new")} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl bg-blue-600 px-5 text-sm font-bold text-white hover:bg-blue-500">
+              <button type="button" onClick={() => navigate("/technician/lab/cylinder-break/new")} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl bg-accent-500 px-5 text-sm font-bold text-white hover:bg-accent-600">
                 <Plus className="h-4 w-4" /> New Report
               </button>
             </div>

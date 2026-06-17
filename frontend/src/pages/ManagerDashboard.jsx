@@ -782,7 +782,7 @@ function ManagerDashboard() {
     <div className="w-full max-w-full overflow-x-hidden bg-slate-100 px-4 py-5 sm:px-6 lg:p-8">
       <div className="mx-auto w-full max-w-[1500px] space-y-5">
         <section className="overflow-hidden rounded-3xl border border-slate-200 shadow-sm">
-          <div className="bg-gradient-to-r from-navy-950 via-navy-900 to-navy-800 px-5 py-6 sm:px-8">
+          <div className="border-b-4 border-accent-500 bg-gradient-to-br from-navy-800 via-navy-900 to-navy-950 px-5 py-6 sm:px-8">
             <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
               <div className="min-w-0">
                 <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">Project Operations Overview</p>
