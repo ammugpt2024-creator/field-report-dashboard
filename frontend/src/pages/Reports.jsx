@@ -241,7 +241,7 @@ function Reports() {
   return (
     <div className="w-full max-w-full overflow-x-hidden bg-slate-100 px-4 py-5 sm:px-6 lg:p-8">
       <div className="mx-auto w-full max-w-[1400px] space-y-5 sm:space-y-8">
-        <div className="rounded-3xl bg-white p-5 shadow-sm border border-slate-200 sm:p-8">
+        <div className="rounded-3xl bg-white p-5 shadow-sm border border-slate-200 border-b-4 border-b-accent-500 sm:p-8">
           <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
             <div className="min-w-0">
               <p className="text-sm uppercase tracking-[0.32em] text-slate-400">{BRAND.name}</p>
