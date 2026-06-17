@@ -22,6 +22,8 @@ import CoreBreakReport from "./pages/CoreBreakReport";
 import CoreBreakList from "./pages/CoreBreakList";
 import AsphaltGravityReport from "./pages/AsphaltGravityReport";
 import AsphaltGravityList from "./pages/AsphaltGravityList";
+import GradationReport from "./pages/GradationReport";
+import GradationList from "./pages/GradationList";
 import TimesheetsPage from "./pages/TimesheetsPage";
 import ProjectWorkspace from "./pages/ProjectWorkspace";
 import FieldReports from "./pages/FieldReports";
@@ -149,6 +151,16 @@ function App() {
         <Route
           path="/technician/lab/asphalt-bsg/:reportId"
           element={<AsphaltGravityReport />}
+        />
+
+        <Route
+          path="/technician/lab/gradation"
+          element={<GradationList />}
+        />
+
+        <Route
+          path="/technician/lab/gradation/:reportId"
+          element={<GradationReport />}
         />
 
         <Route

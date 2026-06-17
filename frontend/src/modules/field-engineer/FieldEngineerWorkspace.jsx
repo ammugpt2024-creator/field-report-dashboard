@@ -3445,7 +3445,7 @@ const LAB_REPORT_SECTIONS = [
     reports: [
       { label: "Proctor — Standard", description: "Standard Proctor moisture-density (ASTM D698)." },
       { label: "Proctor — Modified", description: "Modified Proctor moisture-density (ASTM D1557)." },
-      { label: "Sieve Analysis", description: "Particle size distribution / gradation." },
+      { label: "Sieve Analysis", description: "Washed particle size distribution / gradation (ASTM D422).", route: "/technician/lab/gradation" },
       { label: "Atterberg Limits", description: "Liquid limit, plastic limit, plasticity index." },
       { label: "Hydrometer Analysis", description: "Fine-grained particle size by sedimentation." },
       { label: "CBR (California Bearing Ratio)", description: "Subgrade strength / bearing ratio." }
