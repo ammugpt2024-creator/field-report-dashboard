@@ -82,7 +82,7 @@ function GroutCubeBreakReport() {
     <div className="w-full max-w-full overflow-x-hidden bg-slate-100 px-4 py-5 sm:px-6 lg:p-8">
       <div className="mx-auto w-full max-w-[1200px] space-y-4">
         <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
-          <div className="bg-gradient-to-r from-navy-950 via-navy-900 to-navy-800 px-5 py-5 sm:px-7">
+          <div className="border-b-4 border-accent-500 bg-gradient-to-br from-navy-800 via-navy-900 to-navy-950 px-5 py-5 sm:px-7">
             <button type="button" onClick={() => navigate("/technician/lab/grout-cube-break")} className="inline-flex items-center gap-1 text-xs font-bold text-slate-400 hover:text-white">
               <ArrowLeft className="h-3.5 w-3.5" /> Grout Cube Break Reports
             </button>
@@ -98,7 +98,7 @@ function GroutCubeBreakReport() {
                 </span>
                 <button type="button" onClick={() => persist(report)} className="inline-flex min-h-10 items-center gap-2 rounded-2xl border border-slate-700 px-4 text-sm font-bold text-white hover:bg-slate-900"><Save className="h-4 w-4" /> Save</button>
                 <button type="button" onClick={() => openGroutCubePdf(report)} className="inline-flex min-h-10 items-center gap-2 rounded-2xl border border-slate-700 px-4 text-sm font-bold text-white hover:bg-slate-900"><Download className="h-4 w-4" /> PDF</button>
-                <button type="button" onClick={submitReport} disabled={!canSubmit} className="inline-flex min-h-10 items-center gap-2 rounded-2xl bg-blue-600 px-4 text-sm font-bold text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"><Send className="h-4 w-4" /> Submit</button>
+                <button type="button" onClick={submitReport} disabled={!canSubmit} className="inline-flex min-h-10 items-center gap-2 rounded-2xl bg-accent-500 px-4 text-sm font-bold text-white hover:bg-accent-600 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"><Send className="h-4 w-4" /> Submit</button>
               </div>
             </div>
           </div>

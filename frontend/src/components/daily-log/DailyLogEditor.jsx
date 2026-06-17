@@ -1227,7 +1227,7 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
   return (
     <div className="pb-24 lg:pb-0">
       {/* Sticky header — stays pinned while activities scroll */}
-      <div className="sticky top-0 z-20 overflow-hidden rounded-3xl border border-slate-700 bg-gradient-to-r from-navy-950 via-navy-900 to-navy-800 px-4 py-3 shadow-lg sm:px-6">
+      <div className="sticky top-0 z-20 overflow-hidden rounded-3xl border border-slate-700 border-b-4 border-accent-500 bg-gradient-to-br from-navy-800 via-navy-900 to-navy-950 px-4 py-3 shadow-lg sm:px-6">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
             <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">Field Operations</p>
