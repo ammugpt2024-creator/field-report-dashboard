@@ -6,7 +6,8 @@ import {
 } from "lucide-react";
 import {
   getCompanyById, getCompanyUsage,
-  requestSupportAccess, listSupportSessions, endSupportSession, getSupportDailyLog
+  requestSupportAccess, listSupportSessions, endSupportSession, getSupportRecord,
+  SUPPORT_SCOPES, supportScopeLabel
 } from "../services/tenantService";
 import { fetchAuditLogs } from "../services/auditLogService";
 import { planLimits, formatLimit, usageTone, utilization } from "../config/planLimits";
@@ -99,6 +100,7 @@ export default function CompanyDetail() {
   // Support access state.
   const [sessions, setSessions] = useState([]);
   const [reason, setReason] = useState("");
+  const [scope, setScope] = useState(SUPPORT_SCOPES[0].value);
   const [requesting, setRequesting] = useState(false);
   const [viewer, setViewer] = useState(null); // { label, data } | { loading } | { error }
 
@@ -110,7 +112,7 @@ export default function CompanyDetail() {
     if (!reason.trim()) { window.alert("Add a short reason (e.g. the customer's ticket reference)."); return; }
     setRequesting(true);
     try {
-      await requestSupportAccess(companyId, "daily_log", reason.trim());
+      await requestSupportAccess(companyId, scope, reason.trim());
       setReason("");
       await refreshSessions();
     } catch (err) { window.alert(err.message); }
@@ -126,7 +128,7 @@ export default function CompanyDetail() {
   async function openReport(session, resource) {
     setViewer({ loading: true, label: resource.label });
     try {
-      const data = await getSupportDailyLog(session.id, Number(resource.id));
+      const data = await getSupportRecord(session.id, resource.id);
       setViewer({ label: resource.label, data });
     } catch (err) {
       setViewer({ label: resource.label, error: err.message });
@@ -287,22 +289,37 @@ export default function CompanyDetail() {
               </h2>
               <div className="space-y-3 px-5 py-4">
                 <p className="text-[13px] font-medium text-slate-500">
-                  Request read-only access to this company's <span className="font-semibold text-slate-700">Daily Logs</span> to investigate an issue. The company admin must approve and choose exactly which reports to share; sensitive data stays masked.
+                  Request read-only access to a report type to investigate an issue. The company admin is emailed and must approve and choose exactly which reports to share; sensitive data stays masked.
                 </p>
-                <textarea
-                  value={reason}
-                  onChange={(e) => setReason(e.target.value)}
-                  rows={2}
-                  placeholder="Reason (e.g. customer ticket #1234 — daily log won't open)"
-                  className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm font-medium text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                />
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-[200px_1fr]">
+                  <label className="block">
+                    <span className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Report type</span>
+                    <select
+                      value={scope}
+                      onChange={(e) => setScope(e.target.value)}
+                      className="mt-1 h-10 w-full rounded-xl border border-slate-300 bg-white px-2 text-sm font-semibold text-slate-900 outline-none focus:border-blue-500"
+                    >
+                      {SUPPORT_SCOPES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+                    </select>
+                  </label>
+                  <label className="block">
+                    <span className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Reason</span>
+                    <textarea
+                      value={reason}
+                      onChange={(e) => setReason(e.target.value)}
+                      rows={2}
+                      placeholder="e.g. customer ticket #1234 — report won't open"
+                      className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm font-medium text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                    />
+                  </label>
+                </div>
                 <button
                   type="button"
                   onClick={submitRequest}
                   disabled={requesting}
                   className="inline-flex h-10 items-center gap-1.5 rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50"
                 >
-                  <ShieldCheck className="h-4 w-4" /> {requesting ? "Requesting…" : "Request Daily Log access"}
+                  <ShieldCheck className="h-4 w-4" /> {requesting ? "Requesting…" : `Request ${supportScopeLabel(scope)} access`}
                 </button>
               </div>
             </section>
@@ -320,7 +337,7 @@ export default function CompanyDetail() {
                         <span className={`inline-flex shrink-0 rounded-full px-2 py-1 text-[11px] font-bold uppercase tracking-wide ${SUPPORT_STATUS_TONES[s.status] || "bg-slate-100 text-slate-500"}`}>
                           {s.status}
                         </span>
-                        <span className="text-[13px] font-semibold text-slate-700">{s.requested_scope === "daily_log" ? "Daily Logs" : s.requested_scope}</span>
+                        <span className="text-[13px] font-semibold text-slate-700">{supportScopeLabel(s.requested_scope)}</span>
                         <span className="min-w-0 flex-1 truncate text-xs font-medium text-slate-400">{s.reason}</span>
                         {active && s.expires_at && (
                           <span className="shrink-0 text-xs font-semibold text-emerald-600">expires {new Date(s.expires_at).toLocaleString()}</span>
@@ -386,6 +403,42 @@ export default function CompanyDetail() {
 }
 
 // Read-only, masked rendering of a daily log a company approved for support.
+// Generic masked renderer for non-daily-log records (field test / lab reports).
+function SupportRecordFields({ d }) {
+  const LABELS = {
+    dfr_number: "DFR #", report_type: "Report type", status: "Status", date_sampled: "Date sampled",
+    location: "Location", weather: "Weather", batch_plant: "Batch plant", time_in: "Time in",
+    time_out: "Time out", total_quantity_placed: "Quantity placed", technician: "Technician",
+    submitted_by: "Submitted by", general_contractor: "General contractor", sub_contractor: "Subcontractor",
+    signatures_on_file: "Signatures", report_number: "Report #", sample_id: "Sample ID",
+    test_type: "Test type", specimen_date: "Specimen date", break_date: "Break date"
+  };
+  const skip = new Set(["scope", "id", "title", "specs", "result"]);
+  const scalars = Object.entries(d).filter(([k, v]) =>
+    !skip.has(k) && v != null && v !== "" && typeof v !== "object");
+  return (
+    <div className="space-y-4 pt-4">
+      <div className="grid grid-cols-2 gap-x-8 sm:grid-cols-3">
+        {scalars.map(([k, v]) => <Field key={k} label={LABELS[k] || k.replace(/_/g, " ")} value={String(v)} />)}
+      </div>
+      {d.specs && Object.values(d.specs).some(Boolean) && (
+        <div>
+          <p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-slate-400">Specifications</p>
+          <div className="grid grid-cols-2 gap-x-8 sm:grid-cols-3">
+            {Object.entries(d.specs).filter(([, v]) => v).map(([k, v]) => <Field key={k} label={k.replace(/_/g, " ")} value={String(v)} />)}
+          </div>
+        </div>
+      )}
+      {d.result && (
+        <div>
+          <p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-slate-400">Result</p>
+          <pre className="overflow-x-auto rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs font-medium text-slate-700">{JSON.stringify(d.result, null, 2)}</pre>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SupportLogViewer({ viewer, onClose }) {
   const d = viewer.data;
   return (
@@ -402,7 +455,9 @@ function SupportLogViewer({ viewer, onClose }) {
         {viewer.loading && <p className="py-8 text-center text-sm font-semibold text-slate-500">Loading…</p>}
         {viewer.error && <p className="py-8 text-center text-sm font-semibold text-rose-700">{viewer.error}</p>}
 
-        {d && (
+        {d && d.scope !== "daily_log" && <SupportRecordFields d={d} />}
+
+        {d && d.scope === "daily_log" && (
           <div className="space-y-4 pt-4">
             <div className="grid grid-cols-2 gap-x-8 sm:grid-cols-3">
               <Field label="Date" value={d.log_date} />

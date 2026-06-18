@@ -262,7 +262,8 @@ function Navbar() {
 
           <div className="hidden h-6 w-px bg-slate-200 sm:block" />
 
-          {/* Company switcher */}
+          {/* Company switcher — platform admins aren't scoped to a company */}
+          {!isPlatformAdmin && (
           <div className="relative">
             <button
               type="button"
@@ -303,6 +304,7 @@ function Navbar() {
               </>
             )}
           </div>
+          )}
 
           {/* User menu */}
           <div className="relative">

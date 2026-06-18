@@ -148,13 +148,54 @@ export async function deleteCompany(company) {
 // state transitions and data reads run through SECURITY DEFINER functions so
 // the grant and the masking are enforced server-side.
 
-// Platform admin: open a request for a report type (scope, e.g. 'daily_log').
+// Support-access report types the platform admin can request.
+export const SUPPORT_SCOPES = [
+  { value: 'daily_log', label: 'Daily Logs', table: 'daily_logs' },
+  { value: 'field_test_report', label: 'Field Test Reports', table: 'concrete_test_logs' },
+  { value: 'lab_report', label: 'Lab Reports', table: 'lab_reports' }
+];
+export function supportScopeLabel(scope) {
+  return SUPPORT_SCOPES.find((s) => s.value === scope)?.label || scope;
+}
+
+// Platform admin: open a request for a report type (scope), then email the
+// company admin(s) that an approval is waiting.
 export async function requestSupportAccess(companyId, scope, reason) {
   const { data, error } = await supabase.rpc('request_support_access', {
     p_company: companyId, p_scope: scope, p_reason: reason || ''
   });
   if (error) throw error;
+  notifySupportRequest(companyId, scope, reason).catch((e) => console.warn('Support request email failed:', e?.message));
   return data; // session id
+}
+
+// Email the company's admin(s) that a support-access request needs approval.
+async function notifySupportRequest(companyId, scope, reason) {
+  const { data: company } = await supabase.from('companies').select('company_name').eq('id', companyId).maybeSingle();
+  const { data: admins } = await supabase
+    .from('company_users')
+    .select('invited_email')
+    .eq('company_id', companyId)
+    .eq('role', 'company_admin')
+    .eq('status', 'active');
+  const to = [...new Set((admins || []).map((a) => (a.invited_email || '').trim()).filter(Boolean))];
+  if (!to.length) return;
+  const label = supportScopeLabel(scope);
+  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+  const html = `
+    <div style="font-family:system-ui,Arial,sans-serif;color:#0f172a">
+      <h2 style="margin:0 0 8px">Support access request — approval needed</h2>
+      <p style="margin:0 0 12px;color:#475569">QCore Support has requested <b>read-only</b> access to your
+      <b>${label}</b> on <b>${company?.company_name || 'your company'}</b> to investigate an issue.</p>
+      <p style="margin:0 0 4px"><b>Reason:</b> ${reason || '—'}</p>
+      <p style="margin:12px 0 16px;color:#475569">Nothing is shared until you approve and pick exactly which
+      reports to expose. Sensitive data stays masked unless you choose otherwise.</p>
+      <a href="${origin}/company-admin" style="display:inline-block;background:#2563eb;color:#fff;
+      text-decoration:none;font-weight:600;padding:10px 16px;border-radius:8px">Review &amp; approve</a>
+    </div>`;
+  await supabase.functions.invoke('send-qc-email', {
+    body: { to, subject: `QCore: approve support access to your ${label}`, html }
+  });
 }
 
 // Platform admin: all of MY support sessions for a company, newest first.
@@ -197,24 +238,56 @@ export async function endSupportSession(sessionRow) {
   if (error) throw error;
 }
 
-// Platform admin: the masked, read-only contents of one approved daily log.
-export async function getSupportDailyLog(sessionId, logId) {
-  const { data, error } = await supabase.rpc('get_support_daily_log', { p_session: sessionId, p_log_id: logId });
+// Platform admin: the masked, read-only contents of one approved record (any
+// supported scope: daily log, field test report, or lab report).
+export async function getSupportRecord(sessionId, recordId) {
+  const { data, error } = await supabase.rpc('get_support_record', { p_session: sessionId, p_record_id: String(recordId) });
   if (error) throw error;
   return data;
 }
 
-// Company admin: their own daily logs, for the approval report-picker.
-export async function listCompanyDailyLogs() {
-  const [logsRes, projectsRes] = await Promise.all([
-    supabase.from('daily_logs').select('id, log_date, status, project_id').order('log_date', { ascending: false }).limit(200),
-    supabase.from('projects').select('id, project_name')
-  ]);
-  if (logsRes.error) { console.warn('Daily logs could not be loaded.', logsRes.error.message); return []; }
+// Company admin: their own records of a given scope, for the approval picker.
+// Returns [{ id, label, sub }] — RLS keeps it to the company's own data.
+export async function listCompanyReports(scope) {
+  const projectsRes = await supabase.from('projects').select('id, project_name');
   const projectName = Object.fromEntries((projectsRes.data || []).map((p) => [p.id, p.project_name]));
-  return (logsRes.data || []).map((l) => ({
-    ...l,
-    project_name: projectName[l.project_id] || 'Project'
+
+  if (scope === 'field_test_report') {
+    const { data, error } = await supabase
+      .from('concrete_test_logs')
+      .select('id, dfr_number, status, date_sampled, project_id')
+      .order('date_sampled', { ascending: false }).limit(200);
+    if (error) { console.warn('Field test reports could not be loaded.', error.message); return []; }
+    return (data || []).map((r) => ({
+      id: r.id,
+      label: `${r.dfr_number ? `DFR ${r.dfr_number}` : `Report ${r.id}`} — ${projectName[r.project_id] || 'Project'}`,
+      sub: `${r.date_sampled || 'no date'} · ${r.status || 'draft'}`
+    }));
+  }
+
+  if (scope === 'lab_report') {
+    const { data, error } = await supabase
+      .from('lab_reports')
+      .select('id, report_number, sample_id, test_type, status, break_date')
+      .order('break_date', { ascending: false }).limit(200);
+    if (error) { console.warn('Lab reports could not be loaded.', error.message); return []; }
+    return (data || []).map((r) => ({
+      id: r.id,
+      label: `${r.report_number || r.sample_id || `Lab ${String(r.id).slice(0, 8)}`} — ${r.test_type || 'test'}`,
+      sub: `${r.break_date || 'no date'} · ${r.status || 'draft'}`
+    }));
+  }
+
+  // default: daily_log
+  const { data, error } = await supabase
+    .from('daily_logs')
+    .select('id, log_date, status, project_id')
+    .order('log_date', { ascending: false }).limit(200);
+  if (error) { console.warn('Daily logs could not be loaded.', error.message); return []; }
+  return (data || []).map((l) => ({
+    id: l.id,
+    label: `${projectName[l.project_id] || 'Project'} — ${l.log_date || 'no date'}`,
+    sub: l.status || 'draft'
   }));
 }
 

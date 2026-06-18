@@ -17,7 +17,8 @@ import {
   approveSupportRequest,
   denySupportRequest,
   endSupportSession,
-  listCompanyDailyLogs
+  listCompanyReports,
+  supportScopeLabel
 } from "../services/tenantService";
 import { companyStoragePath, preloadCompanyBranding } from "../services/brandingService";
 import KeyValueList from "../components/mobile/KeyValueList";
@@ -577,28 +578,29 @@ export default function CompanyAdminDashboard() {
 // Company admin approves a support request: pick exactly which daily logs to
 // share, for how long, and whether to also reveal names.
 function SupportApproveModal({ session, onClose, onApproved }) {
-  const [logs, setLogs] = useState(null);
+  const scopeLabel = supportScopeLabel(session.requested_scope);
+  const [records, setRecords] = useState(null);
   const [selected, setSelected] = useState({});
   const [duration, setDuration] = useState(24);
   const [unmask, setUnmask] = useState(false);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    listCompanyDailyLogs().then(setLogs);
-  }, []);
+    listCompanyReports(session.requested_scope).then(setRecords);
+  }, [session.requested_scope]);
 
-  function toggle(log) {
+  function toggle(rec) {
     setSelected((prev) => {
       const next = { ...prev };
-      if (next[log.id]) delete next[log.id];
-      else next[log.id] = `${log.project_name} — ${log.log_date || "no date"} (${log.status || "draft"})`;
+      if (next[rec.id]) delete next[rec.id];
+      else next[rec.id] = rec.label;
       return next;
     });
   }
 
   async function approve() {
     const resources = Object.entries(selected).map(([id, label]) => ({ id: String(id), label }));
-    if (!resources.length) { window.alert("Select at least one daily log to share."); return; }
+    if (!resources.length) { window.alert(`Select at least one ${scopeLabel.toLowerCase()} record to share.`); return; }
     setBusy(true);
     try {
       await approveSupportRequest(session.id, resources, Number(duration), unmask);
@@ -614,19 +616,19 @@ function SupportApproveModal({ session, onClose, onApproved }) {
           <button type="button" onClick={onClose} className="rounded-full border border-slate-200 p-2"><X className="h-4 w-4" /></button>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-          <p className="text-[13px] font-medium text-slate-500">Choose exactly which daily logs to share. Only these will be visible to support, read-only, until the access expires.</p>
+          <p className="text-[13px] font-medium text-slate-500">Choose exactly which <span className="font-semibold text-slate-700">{scopeLabel}</span> to share. Only these will be visible to support, read-only, until the access expires.</p>
           <p className="mt-1 text-xs font-semibold text-slate-400">Reason given: {session.reason || "—"}</p>
 
-          <p className="mt-4 mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">Daily logs to share</p>
+          <p className="mt-4 mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">{scopeLabel} to share</p>
           <div className="max-h-64 space-y-1.5 overflow-y-auto rounded-xl border border-slate-200 p-2">
-            {logs === null && <p className="px-2 py-3 text-sm font-semibold text-slate-400">Loading…</p>}
-            {logs && !logs.length && <p className="px-2 py-3 text-sm font-semibold text-slate-400">No daily logs found.</p>}
-            {logs && logs.map((log) => (
-              <label key={log.id} className="flex cursor-pointer items-center gap-3 rounded-lg px-2 py-2 hover:bg-slate-50">
-                <input type="checkbox" checked={!!selected[log.id]} onChange={() => toggle(log)} className="h-4 w-4 rounded border-slate-300" />
+            {records === null && <p className="px-2 py-3 text-sm font-semibold text-slate-400">Loading…</p>}
+            {records && !records.length && <p className="px-2 py-3 text-sm font-semibold text-slate-400">No {scopeLabel.toLowerCase()} found.</p>}
+            {records && records.map((rec) => (
+              <label key={rec.id} className="flex cursor-pointer items-center gap-3 rounded-lg px-2 py-2 hover:bg-slate-50">
+                <input type="checkbox" checked={!!selected[rec.id]} onChange={() => toggle(rec)} className="h-4 w-4 rounded border-slate-300" />
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-bold text-slate-800">{log.project_name}</span>
-                  <span className="block truncate text-xs font-medium text-slate-400">{log.log_date || "no date"} · {log.status || "draft"}</span>
+                  <span className="block truncate text-sm font-bold text-slate-800">{rec.label}</span>
+                  {rec.sub && <span className="block truncate text-xs font-medium text-slate-400">{rec.sub}</span>}
                 </span>
               </label>
             ))}
