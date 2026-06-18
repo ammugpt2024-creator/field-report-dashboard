@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "react-router-dom";
-import { BarChart3, Building2, ListChecks, Plus, ShieldCheck, X } from "lucide-react";
+import {
+  BarChart3, Building2, CheckCircle2, Clock, FileStack, FolderKanban,
+  HardDrive, ListChecks, PauseCircle, Plus, ShieldCheck, Trash2, Users, X
+} from "lucide-react";
 import {
   createCompany,
   deleteCompany,
@@ -29,11 +32,57 @@ const EMPTY_FORM = {
 };
 
 function StatusPill({ status }) {
+  const dotTone = {
+    trial: "bg-amber-500", active: "bg-emerald-500", suspended: "bg-rose-500", cancelled: "bg-slate-400"
+  }[status] || "bg-amber-500";
   return (
-    <span className={`inline-flex shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-bold uppercase ${STATUS_TONES[status] || STATUS_TONES.trial}`}>
+    <span className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide ${STATUS_TONES[status] || STATUS_TONES.trial}`}>
+      <span className={`h-1.5 w-1.5 rounded-full ${dotTone}`} />
       {status}
     </span>
   );
+}
+
+// KPI summary card with a tinted icon chip.
+function StatCard({ icon: Icon, label, value, tone }) {
+  const tones = {
+    slate: "bg-slate-100 text-slate-600",
+    emerald: "bg-emerald-50 text-emerald-600",
+    amber: "bg-amber-50 text-amber-600",
+    rose: "bg-rose-50 text-rose-600"
+  };
+  return (
+    <div className="flex items-center gap-3.5 px-5 py-4">
+      <span className={`inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${tones[tone] || tones.slate}`}>
+        <Icon className="h-5 w-5" />
+      </span>
+      <div className="min-w-0">
+        <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">{label}</p>
+        <p className="text-2xl font-bold leading-tight text-slate-900">{value}</p>
+      </div>
+    </div>
+  );
+}
+
+// Compact metric tile used in the company card cluster.
+function MetricTile({ icon: Icon, label, value }) {
+  return (
+    <div className="flex items-center gap-2.5 rounded-xl border border-slate-200/80 bg-slate-50 px-3 py-2.5">
+      <Icon className="h-4 w-4 shrink-0 text-slate-400" />
+      <div className="min-w-0 leading-tight">
+        <p className="text-base font-bold text-slate-900">{value}</p>
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{label}</p>
+      </div>
+    </div>
+  );
+}
+
+// Color-codes an audit action by its verb for quick scanning.
+function auditTone(action = "") {
+  if (/(deleted|suspend|removed|cancel)/i.test(action)) return "bg-rose-400";
+  if (/(created|invite|added|claimed|activ)/i.test(action)) return "bg-emerald-400";
+  if (/(support|access)/i.test(action)) return "bg-amber-400";
+  return "bg-slate-300";
 }
 
 export default function PlatformAdminDashboard() {
@@ -148,138 +197,157 @@ export default function PlatformAdminDashboard() {
   }
 
   return (
-    <div className="w-full max-w-full overflow-x-hidden bg-slate-100 px-4 py-5 sm:px-6 lg:p-8">
-      <div className="mx-auto w-full max-w-[1500px] space-y-4 sm:space-y-5">
+    <div className="w-full max-w-full overflow-x-hidden bg-slate-50 px-4 py-5 sm:px-6 lg:p-8">
+      <div className="mx-auto w-full max-w-[1500px] space-y-4 sm:space-y-6">
 
-        <section className="rounded-xl border border-slate-200 bg-white px-4 py-3 sm:px-5 sm:py-4">
-          <div className="flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <h1 className="text-lg font-semibold text-slate-900 sm:text-xl">Platform Administration</h1>
-              <p className="mt-0.5 text-[13px] font-medium text-slate-500">QCore SaaS — companies, subscriptions, and usage</p>
-            </div>
-            <button
-              type="button"
-              onClick={() => setShowCreate(true)}
-              className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl bg-blue-700 px-3 text-sm font-semibold text-white hover:bg-blue-600 sm:px-4"
-            >
-              <Plus className="h-4 w-4" />
-              <span className="sm:hidden">New Company</span>
-              <span className="hidden sm:inline">Create Company</span>
-            </button>
+        <section className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h1 className="text-xl font-bold tracking-tight text-slate-900 sm:text-2xl">Platform Administration</h1>
+            <p className="mt-1 text-[13px] font-medium text-slate-500">QCore SaaS — companies, subscriptions, and usage</p>
           </div>
+          <button
+            type="button"
+            onClick={() => setShowCreate(true)}
+            className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl bg-blue-600 px-3 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 sm:px-4"
+          >
+            <Plus className="h-4 w-4" />
+            <span className="sm:hidden">New</span>
+            <span className="hidden sm:inline">Create Company</span>
+          </button>
         </section>
 
-        <section className="overflow-hidden rounded-xl border border-slate-200 bg-white">
-          <div className="grid grid-cols-2 sm:grid-cols-4 sm:divide-x sm:divide-slate-200">
-            {[
-              ["Companies", totals.companies],
-              ["Active", totals.active],
-              ["Trial", totals.trial],
-              ["Suspended", totals.suspended]
-            ].map(([label, value]) => (
-              <div key={label} className="flex items-baseline justify-between gap-2 border-b border-slate-100 px-4 py-2.5 sm:block sm:border-b-0 sm:py-3">
-                <p className="text-xs font-medium text-slate-500">{label}</p>
-                <p className="text-xl font-semibold text-slate-900 sm:mt-1 sm:text-2xl">{value}</p>
-              </div>
-            ))}
-          </div>
+        <section className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
+          {[
+            ["Companies", totals.companies, Building2, "slate"],
+            ["Active", totals.active, CheckCircle2, "emerald"],
+            ["Trial", totals.trial, Clock, "amber"],
+            ["Suspended", totals.suspended, PauseCircle, "rose"]
+          ].map(([label, value, icon, tone]) => (
+            <div key={label} className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+              <StatCard icon={icon} label={label} value={value} tone={tone} />
+            </div>
+          ))}
         </section>
 
         {error && <p className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm font-semibold text-rose-800">{error}</p>}
 
         {(section === "companies" || section === "subscriptions" || section === "usage" || section === "support" || section === "settings") && (
-          <section className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5">
-            <h2 className="flex items-center gap-2 text-base font-bold text-slate-950 sm:text-lg">
-              <Building2 className="h-5 w-5 text-blue-700" /> Companies
-            </h2>
-            <div className="mt-3 space-y-3">
+          <section>
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-slate-500">
+                <Building2 className="h-4 w-4 text-slate-400" /> Companies
+                <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[11px] font-bold text-slate-600">{companies.length}</span>
+              </h2>
+            </div>
+            <div className="space-y-4">
               {companies.map((company) => {
                 const usage = usageById[company.id] || {};
                 const subscription = company.company_subscriptions?.[0] || {};
                 const support = activeSupportFor(company.id);
+                const brand = company.brand_color || "#1d4ed8";
+                const reports = (usage.daily_reports ?? 0) + (usage.field_test_reports ?? 0) + (usage.lab_reports ?? 0);
                 return (
-                  <article key={company.id} className="rounded-2xl border border-slate-200 bg-white p-3 sm:p-4">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="h-3 w-3 shrink-0 rounded-full" style={{ background: company.brand_color || "#1d4ed8" }} />
-                      <p className="min-w-0 flex-1 truncate text-sm font-bold text-slate-950">{company.company_name}</p>
+                  <article key={company.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:shadow-md">
+                    {/* Header: brand avatar, name, plan/billing, status */}
+                    <div className="flex flex-wrap items-center gap-3 border-b border-slate-100 px-5 py-4">
+                      <span
+                        className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-base font-bold text-white shadow-sm"
+                        style={{ background: brand }}
+                      >
+                        {(company.company_name || "?").charAt(0).toUpperCase()}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-base font-bold text-slate-900">{company.company_name}</p>
+                        <p className="mt-0.5 truncate text-[13px] font-medium text-slate-500">
+                          <span className="capitalize">{subscription.plan || "trial"}</span> plan
+                          <span className="mx-1.5 text-slate-300">·</span>
+                          Billing <span className={`font-semibold ${subscription.billing_status === "past_due" ? "text-rose-600" : "text-emerald-600"}`}>{subscription.billing_status || "current"}</span>
+                        </p>
+                      </div>
                       <StatusPill status={company.status} />
                     </div>
-                    <div className="mt-2 grid grid-cols-2 gap-x-6 gap-y-1 text-[13px] font-semibold text-slate-600 sm:grid-cols-4">
-                      <p>Users <span className="font-bold text-slate-900">{usage.users ?? "–"}</span></p>
-                      <p>Projects <span className="font-bold text-slate-900">{usage.projects ?? "–"}</span></p>
-                      <p>Reports <span className="font-bold text-slate-900">{(usage.daily_reports ?? 0) + (usage.field_test_reports ?? 0) + (usage.lab_reports ?? 0)}</span></p>
-                      <p>Files <span className="font-bold text-slate-900">{usage.storage_objects ?? "–"}</span></p>
+
+                    {/* Metric tile cluster — contained, doesn't stretch edge-to-edge */}
+                    <div className="grid grid-cols-2 gap-3 px-5 py-4 sm:grid-cols-4">
+                      <MetricTile icon={Users} label="Users" value={usage.users ?? "–"} />
+                      <MetricTile icon={FolderKanban} label="Projects" value={usage.projects ?? "–"} />
+                      <MetricTile icon={FileStack} label="Reports" value={reports} />
+                      <MetricTile icon={HardDrive} label="Files" value={usage.storage_objects ?? "–"} />
                     </div>
-                    <div className="mt-2 flex flex-wrap items-center gap-2 text-[13px] font-semibold text-slate-600">
-                      <span>Billing: <span className={`font-bold ${subscription.billing_status === "past_due" ? "text-rose-700" : "text-emerald-700"}`}>{subscription.billing_status || "—"}</span></span>
-                      <label className="ml-auto inline-flex items-center gap-1.5">
-                        Plan
-                        <select
-                          value={subscription.plan || "trial"}
-                          onChange={(event) => changePlan(company, event.target.value)}
-                          className="h-9 rounded-lg border border-slate-300 bg-white px-2 text-[13px] font-semibold text-slate-900"
-                        >
-                          {PLANS.map((p) => <option key={p} value={p}>{p}</option>)}
-                        </select>
-                      </label>
-                    </div>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      <button type="button" onClick={() => setDetailCompany(company)} className="min-h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700">
+
+                    {/* Action bar */}
+                    <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 bg-slate-50/60 px-5 py-3">
+                      <button type="button" onClick={() => setDetailCompany(company)} className="inline-flex min-h-9 items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 transition hover:bg-slate-50">
                         Details
                       </button>
                       <button
                         type="button"
                         onClick={() => toggleSupport(company)}
-                        className={`inline-flex min-h-9 items-center gap-1 rounded-lg px-3 text-xs font-bold ${support ? "bg-amber-100 text-amber-800" : "border border-slate-200 bg-white text-slate-700"}`}
+                        className={`inline-flex min-h-9 items-center gap-1.5 rounded-lg px-3 text-xs font-bold transition ${support ? "bg-amber-100 text-amber-800 hover:bg-amber-200" : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"}`}
                       >
                         <ShieldCheck className="h-3.5 w-3.5" />
-                        {support ? "End Support Access" : "Support Access"}
+                        {support ? "End Support" : "Support Access"}
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => toggleStatus(company)}
-                        className={`min-h-9 rounded-lg px-3 text-xs font-bold ${company.status === "suspended" ? "bg-emerald-700 text-white" : "border border-rose-200 bg-white text-rose-700"}`}
-                      >
-                        {company.status === "suspended" ? "Activate" : "Suspend"}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => removeCompany(company)}
-                        disabled={company.status === "active"}
-                        title={company.status === "active" ? "Suspend or cancel first, then delete" : "Permanently delete the company and ALL of its records and files"}
-                        className="min-h-9 rounded-lg bg-rose-700 px-3 text-xs font-bold text-white hover:bg-rose-600 disabled:cursor-not-allowed disabled:opacity-40"
-                      >
-                        Delete
-                      </button>
+
+                      <div className="ml-auto flex flex-wrap items-center gap-2">
+                        <label className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500">
+                          Plan
+                          <select
+                            value={subscription.plan || "trial"}
+                            onChange={(event) => changePlan(company, event.target.value)}
+                            className="h-9 rounded-lg border border-slate-300 bg-white px-2 text-[13px] font-semibold text-slate-900 capitalize outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                          >
+                            {PLANS.map((p) => <option key={p} value={p}>{p}</option>)}
+                          </select>
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => toggleStatus(company)}
+                          className={`min-h-9 rounded-lg px-3 text-xs font-bold transition ${company.status === "suspended" ? "bg-emerald-600 text-white hover:bg-emerald-700" : "border border-rose-200 bg-white text-rose-700 hover:bg-rose-50"}`}
+                        >
+                          {company.status === "suspended" ? "Activate" : "Suspend"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => removeCompany(company)}
+                          disabled={company.status === "active"}
+                          title={company.status === "active" ? "Suspend or cancel first, then delete" : "Permanently delete the company and ALL of its records and files"}
+                          className="inline-flex min-h-9 items-center gap-1 rounded-lg bg-rose-600 px-3 text-xs font-bold text-white transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:bg-rose-300"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" /> Delete
+                        </button>
+                      </div>
                     </div>
                   </article>
                 );
               })}
               {!companies.length && (
-                <p className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-6 text-center text-sm font-semibold text-slate-500">
-                  No companies yet. Create the first customer company.
-                </p>
+                <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center">
+                  <Building2 className="mx-auto h-8 w-8 text-slate-300" />
+                  <p className="mt-2 text-sm font-semibold text-slate-500">No companies yet. Create the first customer company.</p>
+                </div>
               )}
             </div>
           </section>
         )}
 
         {(section === "audit" || section === "companies") && (
-          <section className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5">
-            <h2 className="flex items-center gap-2 text-base font-bold text-slate-950 sm:text-lg">
-              <ListChecks className="h-5 w-5 text-blue-700" /> Audit Logs
+          <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+            <h2 className="flex items-center gap-2 border-b border-slate-100 px-5 py-4 text-sm font-bold uppercase tracking-wide text-slate-500">
+              <ListChecks className="h-4 w-4 text-slate-400" /> Audit Logs
             </h2>
-            <div className="mt-3 divide-y divide-slate-100">
+            <div className="divide-y divide-slate-100">
               {auditLogs.map((log) => (
-                <div key={log.id} className="flex min-w-0 items-baseline justify-between gap-3 py-2">
-                  <div className="min-w-0">
-                    <p className="truncate text-[13px] font-bold text-slate-900">{log.action}</p>
-                    <p className="truncate text-xs font-semibold text-slate-500">{log.entity_type || ""} {log.entity_id ? `· ${String(log.entity_id).slice(0, 12)}` : ""}</p>
+                <div key={log.id} className="flex min-w-0 items-center gap-3 px-5 py-3">
+                  <span className={`h-2 w-2 shrink-0 rounded-full ${auditTone(log.action)}`} />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[13px] font-bold text-slate-800">{log.action.replace(/_/g, " ")}</p>
+                    <p className="truncate text-xs font-medium text-slate-400">{log.entity_type || ""} {log.entity_id ? `· ${String(log.entity_id).slice(0, 12)}` : ""}</p>
                   </div>
                   <p className="shrink-0 whitespace-nowrap text-xs font-semibold text-slate-400">{new Date(log.created_at).toLocaleString()}</p>
                 </div>
               ))}
-              {!auditLogs.length && <p className="py-3 text-sm font-semibold text-slate-500">No audit events yet.</p>}
+              {!auditLogs.length && <p className="px-5 py-4 text-sm font-semibold text-slate-500">No audit events yet.</p>}
             </div>
           </section>
         )}
