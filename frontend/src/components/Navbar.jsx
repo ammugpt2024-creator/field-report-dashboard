@@ -4,13 +4,16 @@ import {
   BarChart3,
   Bell,
   Building2,
+  ChevronDown,
   ClipboardCheck,
   FileCheck2,
   FileClock,
   FolderKanban,
+  HelpCircle,
   Home,
   LayoutDashboard,
   Menu,
+  Search,
   ShieldCheck,
   Users,
   Workflow,
@@ -22,14 +25,14 @@ import { getRoleHomeRoute } from "../utils/navigation";
 import { isQcRole, ROLES } from "../utils/permissions";
 import { BRAND, MODULE_NAMES } from "../config/branding";
 import { FIELD_ENGINEER_NAV } from "../modules/field-engineer/fieldEngineerConfig";
-import Logo, { LogoMark } from "./Logo";
-import ClientLogo from "./ClientLogo";
+import { LogoMark } from "./Logo";
 
 function Navbar() {
 
   const navigate = useNavigate();
   const [profileOpen, setProfileOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [search, setSearch] = useState("");
   const profileButtonRef = useRef(null);
   const [profileMenuPosition, setProfileMenuPosition] = useState({ top: 76, right: 16 });
 
@@ -99,6 +102,10 @@ function Navbar() {
     setMobileMenuOpen(false);
     setProfileOpen(false);
   }
+
+  const notificationsPath = normalizedRole === ROLES.TECHNICIAN
+    ? "/technician/dashboard?view=notifications"
+    : `${getRoleHomeRoute(role)}?view=notifications`;
 
   function openProfileMenu() {
     const rect = profileButtonRef.current?.getBoundingClientRect();
@@ -172,100 +179,91 @@ function Navbar() {
 
   return (
 
-    <header className="
-      w-full
-      max-w-full
-      overflow-x-hidden
-      px-4
-      py-3
-      sm:px-6
-      sm:py-4
-      bg-white
-      border-b
-      border-slate-200
-      flex
-      items-center
-      justify-between
-      gap-4
-      sticky
-      top-0
-      z-40
-    ">
+    <header className="sticky top-0 z-40 w-full max-w-full overflow-x-hidden border-b-4 border-accent-500 bg-gradient-to-br from-navy-900 via-navy-900 to-navy-950 px-4 py-2.5 text-white sm:px-6">
+      <div className="flex items-center justify-between gap-3 sm:gap-4">
 
-      {/* LEFT SECTION */}
-
-      <div className="flex min-w-0 items-center gap-3 sm:gap-4">
-
-        {/* COMPANY / APP */}
-
-        <div className="min-w-0">
-
-          <Logo variant="lockup" />
-
+        {/* LEFT — brand + tagline */}
+        <div className="flex min-w-0 items-center gap-3 sm:gap-4">
+          <div className="flex shrink-0 items-center gap-2.5">
+            <LogoMark tone="light" className="h-8 w-8 sm:h-9 sm:w-9" />
+            <span className="text-xl font-bold tracking-tight text-white sm:text-2xl">QCore</span>
+          </div>
+          <div className="hidden h-9 w-px bg-white/15 lg:block" />
+          <div className="hidden min-w-0 lg:block">
+            <p className="truncate text-[13px] font-semibold leading-tight text-white">{BRAND.platformDescription}</p>
+            <p className="truncate text-[11px] font-medium leading-tight text-slate-400">{BRAND.tagline.replace(/\.\s*/g, ". ").trim()}</p>
+          </div>
         </div>
-      </div>
 
-      {/* RIGHT SECTION */}
+        {/* CENTER — search */}
+        <div className="hidden min-w-0 flex-1 justify-center px-2 md:flex">
+          <div className="relative w-full max-w-xl">
+            <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input
+              type="search"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search projects, logs, activities…"
+              className="h-10 w-full rounded-xl border border-white/15 bg-white/10 pl-10 pr-4 text-sm font-medium text-white outline-none transition placeholder:text-slate-400 hover:bg-white/[0.14] focus:border-accent-400 focus:bg-white/[0.14] focus:ring-2 focus:ring-accent-500/30"
+            />
+          </div>
+        </div>
 
-      <div className="relative flex shrink-0 items-center gap-2 sm:gap-3">
+        {/* RIGHT — company, alerts, help, profile */}
+        <div className="relative flex shrink-0 items-center gap-1 sm:gap-2">
 
-        <ClientLogo className="mr-1 shrink-0" />
+          <button
+            type="button"
+            className="hidden items-center gap-2 rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm font-semibold text-white transition hover:bg-white/10 lg:inline-flex"
+            title={companyName || "Dulles Engineering"}
+          >
+            <Building2 className="h-4 w-4 text-slate-300" />
+            <span className="max-w-[150px] truncate">{companyName || "Dulles Engineering"}</span>
+            <ChevronDown className="h-4 w-4 text-slate-400" />
+          </button>
 
-        <button
-          type="button"
-          onClick={() => setMobileMenuOpen(true)}
-          className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-900 shadow-sm md:hidden"
-          aria-label="Open navigation menu"
-        >
-          <Menu className="h-5 w-5" />
-        </button>
+          <button
+            type="button"
+            onClick={() => handleNavigate(notificationsPath)}
+            aria-label="Notifications"
+            className="relative inline-flex h-10 w-10 items-center justify-center rounded-xl text-slate-200 transition hover:bg-white/10"
+          >
+            <Bell className="h-5 w-5" />
+          </button>
 
-        <button
-          ref={profileButtonRef}
-          type="button"
-          onClick={openProfileMenu}
-          aria-expanded={profileOpen}
-          aria-haspopup="menu"
-          className="
-            inline-flex
-            items-center
-            gap-2
-            sm:gap-3
-            rounded-2xl
-            border
-            border-slate-200
-            bg-white
-            px-2
-            sm:px-3
-            py-2
-            text-left
-            transition
-            hover:bg-slate-50
-          "
-        >
-          <span className="
-            flex
-            h-10
-            w-10
-            items-center
-            justify-center
-            rounded-full
-            bg-blue-700
-            text-sm
-            font-bold
-            text-white
-          ">
-            {initials}
-          </span>
-          <span className="hidden sm:block">
-            <span className="block text-sm font-semibold text-slate-900">
-              {displayName}
+          <button
+            type="button"
+            aria-label="Help"
+            className="hidden h-10 w-10 items-center justify-center rounded-xl text-slate-200 transition hover:bg-white/10 sm:inline-flex"
+          >
+            <HelpCircle className="h-5 w-5" />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setMobileMenuOpen(true)}
+            className="inline-flex h-10 w-10 items-center justify-center rounded-xl text-white transition hover:bg-white/10 md:hidden"
+            aria-label="Open navigation menu"
+          >
+            <Menu className="h-5 w-5" />
+          </button>
+
+          <button
+            ref={profileButtonRef}
+            type="button"
+            onClick={openProfileMenu}
+            aria-expanded={profileOpen}
+            aria-haspopup="menu"
+            className="inline-flex items-center gap-2 rounded-xl px-1.5 py-1.5 text-left transition hover:bg-white/10 sm:px-2"
+          >
+            <span className="flex h-9 w-9 items-center justify-center rounded-full bg-white text-sm font-bold text-navy-900">
+              {initials}
             </span>
-            <span className="block text-xs font-medium text-slate-500">
-              Profile
+            <span className="hidden items-center gap-1 sm:flex">
+              <span className="block text-sm font-semibold text-white">{displayName}</span>
+              <ChevronDown className="h-4 w-4 text-slate-400" />
             </span>
-          </span>
-        </button>
+          </button>
 
         {profileOpen && (
           <div className="fixed inset-0 z-[1000]">
@@ -402,6 +400,7 @@ function Navbar() {
         </div>
       )}
 
+      </div>
     </header>
 
   );
