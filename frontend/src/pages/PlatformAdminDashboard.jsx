@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   BarChart3, Building2, CheckCircle2, ChevronDown, ChevronUp, Clock, CreditCard,
-  Eye, ListChecks, MoreVertical, PauseCircle, Plus, Search, ShieldCheck, Trash2,
+  Eye, ListChecks, PauseCircle, Plus, Search, ShieldCheck, Trash2,
   Users, X
 } from "lucide-react";
 import {
@@ -159,7 +159,6 @@ export default function PlatformAdminDashboard() {
   const [sortKey, setSortKey] = useState("company");
   const [sortDir, setSortDir] = useState("asc");
   const [page, setPage] = useState(1);
-  const [menuFor, setMenuFor] = useState(null);
 
   async function refresh() {
     try {
@@ -423,38 +422,21 @@ export default function PlatformAdminDashboard() {
                         <td className="px-4 py-3 text-right font-semibold tabular-nums text-slate-700">{files}</td>
                         <td className="px-4 py-3"><StatusPill status={company.status} /></td>
                         <td className="px-4 py-3">
-                          <div className="relative flex justify-end">
-                            <button
-                              type="button"
-                              onClick={() => setMenuFor(menuFor === company.id ? null : company.id)}
-                              className={`inline-flex h-8 w-8 items-center justify-center rounded-lg border text-slate-500 transition hover:bg-slate-50 ${support ? "border-amber-300 bg-amber-50 text-amber-700" : "border-slate-200 bg-white"}`}
-                              title="Actions"
-                            >
-                              <MoreVertical className="h-4 w-4" />
-                            </button>
-                            {menuFor === company.id && (
-                              <>
-                                <button type="button" aria-label="Close menu" onClick={() => setMenuFor(null)} className="fixed inset-0 z-30 cursor-default" />
-                                <div className="absolute right-0 top-9 z-40 w-52 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-lg">
-                                  <RowAction icon={Eye} label="View details" onClick={() => { setMenuFor(null); navigate(`/platform-admin/company/${company.id}`); }} />
-                                  <RowAction icon={ShieldCheck} label={support ? "End support access" : "Support access"} onClick={() => { setMenuFor(null); toggleSupport(company); }} />
-                                  <RowAction
-                                    icon={company.status === "suspended" ? CheckCircle2 : PauseCircle}
-                                    label={company.status === "suspended" ? "Activate" : "Suspend"}
-                                    onClick={() => { setMenuFor(null); toggleStatus(company); }}
-                                  />
-                                  <div className="my-1 border-t border-slate-100" />
-                                  <RowAction
-                                    icon={Trash2}
-                                    label="Delete company"
-                                    danger
-                                    disabled={company.status === "active"}
-                                    title={company.status === "active" ? "Suspend or cancel first" : "Full clean-sweep delete"}
-                                    onClick={() => { setMenuFor(null); removeCompany(company); }}
-                                  />
-                                </div>
-                              </>
-                            )}
+                          <div className="flex items-center justify-end gap-1">
+                            <IconBtn icon={Eye} title="View details" onClick={() => navigate(`/platform-admin/company/${company.id}`)} />
+                            <IconBtn icon={ShieldCheck} title={support ? "End support access" : "Support access"} active={support} onClick={() => toggleSupport(company)} />
+                            <IconBtn
+                              icon={company.status === "suspended" ? CheckCircle2 : PauseCircle}
+                              title={company.status === "suspended" ? "Activate company" : "Suspend company"}
+                              onClick={() => toggleStatus(company)}
+                            />
+                            <IconBtn
+                              icon={Trash2}
+                              title={company.status === "active" ? "Suspend or cancel first, then delete" : "Delete company (full clean-sweep)"}
+                              danger
+                              disabled={company.status === "active"}
+                              onClick={() => removeCompany(company)}
+                            />
                           </div>
                         </td>
                       </tr>
@@ -795,16 +777,25 @@ export default function PlatformAdminDashboard() {
   );
 }
 
-function RowAction({ icon: Icon, label, onClick, danger, disabled, title }) {
+// Always-visible row action: a square icon button with a hover tooltip.
+function IconBtn({ icon: Icon, title, onClick, danger, active, disabled }) {
+  const tone = disabled
+    ? "border-slate-200 bg-white text-slate-300 cursor-not-allowed"
+    : danger
+      ? "border-slate-200 bg-white text-slate-500 hover:border-rose-300 hover:bg-rose-50 hover:text-rose-700"
+      : active
+        ? "border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100"
+        : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50 hover:text-slate-700";
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={disabled}
       title={title}
-      className={`flex w-full items-center gap-2.5 px-3 py-2 text-left text-[13px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${danger ? "text-rose-700 hover:bg-rose-50" : "text-slate-700 hover:bg-slate-50"}`}
+      aria-label={title}
+      className={`inline-flex h-8 w-8 items-center justify-center rounded-lg border transition ${tone}`}
     >
-      <Icon className="h-4 w-4 shrink-0" /> {label}
+      <Icon className="h-4 w-4" />
     </button>
   );
 }
