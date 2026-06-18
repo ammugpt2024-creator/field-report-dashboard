@@ -415,13 +415,7 @@ export default function PlatformAdminDashboard() {
                           </button>
                         </td>
                         <td className="px-4 py-3">
-                          <select
-                            value={plan}
-                            onChange={(e) => changePlan(company, e.target.value)}
-                            className="h-8 rounded-lg border border-slate-300 bg-white px-2 text-xs font-semibold capitalize text-slate-900 outline-none focus:border-blue-500"
-                          >
-                            {PLANS.map((p) => <option key={p} value={p}>{p}</option>)}
-                          </select>
+                          <span className="inline-flex rounded-md bg-slate-100 px-2 py-1 text-xs font-bold capitalize text-slate-600">{plan}</span>
                         </td>
                         <td className="px-4 py-3 text-right font-semibold tabular-nums text-slate-700">{users}</td>
                         <td className="px-4 py-3 text-right font-semibold tabular-nums text-slate-700">{projects}</td>
@@ -503,9 +497,6 @@ export default function PlatformAdminDashboard() {
                       ))}
                     </div>
                     <div className="mt-3 flex flex-wrap gap-2">
-                      <select value={plan} onChange={(e) => changePlan(company, e.target.value)} className="h-9 flex-1 rounded-lg border border-slate-300 bg-white px-2 text-xs font-semibold capitalize text-slate-900">
-                        {PLANS.map((p) => <option key={p} value={p}>{p}</option>)}
-                      </select>
                       <button type="button" onClick={() => toggleSupport(company)} className={`inline-flex min-h-9 items-center gap-1 rounded-lg px-3 text-xs font-bold ${support ? "bg-amber-100 text-amber-800" : "border border-slate-200 bg-white text-slate-700"}`}>
                         <ShieldCheck className="h-3.5 w-3.5" />{support ? "End" : "Support"}
                       </button>
@@ -549,6 +540,18 @@ export default function PlatformAdminDashboard() {
             <h2 className="flex items-center gap-2 border-b border-slate-100 px-5 py-4 text-sm font-bold uppercase tracking-wide text-slate-500">
               <CreditCard className="h-4 w-4 text-slate-400" /> Subscriptions
             </h2>
+            {/* Plan mix */}
+            <div className="grid grid-cols-2 gap-3 border-b border-slate-100 px-5 py-4 sm:grid-cols-4">
+              {PLAN_ORDER.map((key) => {
+                const count = rows.filter((r) => r.plan === key).length;
+                return (
+                  <div key={key} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
+                    <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">{PLAN_LIMITS[key].label}</p>
+                    <p className="text-lg font-bold leading-tight text-slate-900">{count} <span className="text-xs font-semibold text-slate-400">{count === 1 ? "company" : "companies"}</span></p>
+                  </div>
+                );
+              })}
+            </div>
             <div className="hidden overflow-x-auto lg:block">
               <table className="w-full border-collapse text-sm">
                 <thead>
@@ -556,15 +559,15 @@ export default function PlatformAdminDashboard() {
                     <th className="px-4 py-3 text-left">Company</th>
                     <th className="px-4 py-3 text-left">Plan</th>
                     <th className="px-4 py-3 text-left">Billing</th>
-                    <th className="px-4 py-3 text-right">Seats</th>
-                    <th className="px-4 py-3 text-right">User Cap</th>
+                    <th className="px-4 py-3 text-right">Seats (used / total)</th>
                     <th className="px-4 py-3 text-right">Project Cap</th>
                     <th className="px-4 py-3 text-left">Renews</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map(({ company, subscription, plan }) => {
+                  {rows.map(({ company, subscription, plan, users, projects }) => {
                     const limits = planLimits(plan);
+                    const overSeats = subscription.seats != null && users > subscription.seats;
                     return (
                       <tr key={company.id} className="border-b border-slate-50 hover:bg-slate-50/70">
                         <td className="px-4 py-3 font-bold text-slate-900">{company.company_name}</td>
@@ -573,10 +576,9 @@ export default function PlatformAdminDashboard() {
                             {PLANS.map((p) => <option key={p} value={p}>{p}</option>)}
                           </select>
                         </td>
-                        <td className="px-4 py-3"><span className={`text-xs font-bold ${subscription.billing_status === "past_due" ? "text-rose-600" : "text-emerald-600"}`}>{subscription.billing_status || "current"}</span></td>
-                        <td className="px-4 py-3 text-right font-semibold tabular-nums text-slate-700">{subscription.seats ?? "—"}</td>
-                        <td className="px-4 py-3 text-right font-semibold tabular-nums text-slate-700">{formatLimit(limits.users)}</td>
-                        <td className="px-4 py-3 text-right font-semibold tabular-nums text-slate-700">{formatLimit(limits.projects)}</td>
+                        <td className="px-4 py-3"><span className={`inline-flex items-center gap-1.5 text-xs font-bold ${subscription.billing_status === "past_due" ? "text-rose-600" : "text-emerald-600"}`}><span className={`h-1.5 w-1.5 rounded-full ${subscription.billing_status === "past_due" ? "bg-rose-500" : "bg-emerald-500"}`} />{subscription.billing_status || "current"}</span></td>
+                        <td className={`px-4 py-3 text-right font-semibold tabular-nums ${overSeats ? "text-rose-600" : "text-slate-700"}`}>{users} / {subscription.seats ?? "—"}</td>
+                        <td className="px-4 py-3 text-right font-semibold tabular-nums text-slate-700">{projects} / {formatLimit(limits.projects)}</td>
                         <td className="px-4 py-3 text-xs font-medium text-slate-500">{subscription.current_period_end ? new Date(subscription.current_period_end).toLocaleDateString() : "—"}</td>
                       </tr>
                     );
