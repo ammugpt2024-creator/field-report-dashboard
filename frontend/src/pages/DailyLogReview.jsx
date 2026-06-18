@@ -14,6 +14,7 @@ import {
   updateDailyLogReviewInSupabase
 } from "../services/dailyLogService";
 import { createDailyLogPdfSignedUrl, openDailyLogPdf, regenerateDailyLogPdf } from "../services/dailyLogPdfService";
+import { logAuditEvent } from "../services/auditLogService";
 import { sendDailyLogApprovalEmail } from "../services/notificationService";
 
 function Section({ kicker, title, children }) {
@@ -64,6 +65,12 @@ export default function DailyLogReview() {
     setSavingDecision(true);
     try {
       await updateDailyLogReviewInSupabase(nextLog);
+      logAuditEvent({
+        action: "report_returned",
+        entityType: "daily_report",
+        entityId: nextLog.id,
+        newValue: { status: nextLog.status }
+      });
       navigate("/manager/dashboard");
     } catch (error) {
       window.alert(error.message || "The review decision could not be saved to the server. Please try again.");
@@ -84,6 +91,12 @@ export default function DailyLogReview() {
       const approved = approveDailyLog(log, reviewerName, signature);
       setLog(approved);
       await updateDailyLogReviewInSupabase(approved);
+      logAuditEvent({
+        action: "report_approved",
+        entityType: "daily_report",
+        entityId: approved.id,
+        newValue: { status: approved.status, approvedBy: reviewerName }
+      });
 
       // Regenerate the PDF so it carries the QC reviewer signature and the
       // approval date, replacing the stored copy at the same path.

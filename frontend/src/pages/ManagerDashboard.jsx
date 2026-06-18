@@ -21,6 +21,7 @@ import { supabase } from "../services/supabase";
 import { useAuth } from "../context/AuthContext";
 import { MODULE_NAMES } from "../config/branding";
 import { sendTimesheetDecisionEmail } from "../services/notificationService";
+import { logAuditEvent } from "../services/auditLogService";
 import { DAILY_LOG_STATUS } from "../services/dailyLogService";
 import { createDailyLogPdfSignedUrl } from "../services/dailyLogPdfService";
 import { WEEK_DAYS, approveTimeCard, formatTimeCardStatus, getRowTotal, rejectTimeCard, TIME_CARD_STATUS } from "../services/timeCardService";
@@ -676,6 +677,12 @@ function ManagerDashboard() {
   async function approveTimesheet(card) {
     const reviewerName = profile?.full_name || "Manager";
     const approved = approveTimeCard(card, reviewerName);
+    logAuditEvent({
+      action: "timesheet_approved",
+      entityType: "timesheet",
+      entityId: card.id,
+      newValue: { reviewer: reviewerName, totalHours: card.totalHours || card.total_hours }
+    });
     // Wait for the shared record before refetching so the row lands on the
     // Approved tab instead of briefly reappearing as pending.
     await syncTimesheet(approved);
@@ -704,6 +711,12 @@ function ManagerDashboard() {
     if (!comments || !comments.trim()) return;
     const reviewerName = profile?.full_name || "Manager";
     const rejected = rejectTimeCard(card, comments.trim());
+    logAuditEvent({
+      action: "timesheet_rejected",
+      entityType: "timesheet",
+      entityId: card.id,
+      newValue: { reviewer: reviewerName, comments: comments.trim() }
+    });
     await syncTimesheet(rejected);
     await refreshTimeCards();
     sendTimesheetDecisionEmail(rejected, { decision: "rejected", reviewerName, comments: comments.trim() })

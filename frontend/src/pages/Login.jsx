@@ -10,7 +10,27 @@ function Login() {
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  // A re-clicked or expired invite/recovery link lands here with an error
+  // hash; explain it instead of showing a bare login form.
+  const [notice, setNotice] = useState(() => {
+    if (sessionStorage.getItem("qcore-auth-error") === "otp_expired") {
+      sessionStorage.removeItem("qcore-auth-error");
+      return "That link has expired or was already used. Sign in with your password, or use “Forgot password?” to set a new one.";
+    }
+    return "";
+  });
   const navigate = useNavigate();
+
+  async function handleForgotPassword() {
+    if (!email) {
+      setNotice("Enter your email above first, then click “Forgot password?”.");
+      return;
+    }
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: window.location.origin
+    });
+    setNotice(error ? error.message : `Password reset email sent to ${email}. Check your inbox.`);
+  }
 
   async function handleLogin() {
 
@@ -67,11 +87,23 @@ function Login() {
           className="w-full border border-gray-300 p-3 rounded-lg mb-6"
         />
 
+        {notice && (
+          <p className="mb-4 rounded-lg bg-blue-50 px-3 py-2 text-sm font-semibold text-blue-800">{notice}</p>
+        )}
+
         <button
           onClick={handleLogin}
           className="min-h-11 w-full rounded-lg bg-gradient-to-r from-accent-500 to-accent-600 p-3 font-semibold text-white shadow-sm shadow-accent-600/20 transition hover:from-accent-600 hover:to-accent-700"
         >
           Login
+        </button>
+
+        <button
+          type="button"
+          onClick={handleForgotPassword}
+          className="mt-4 w-full text-center text-sm font-semibold text-blue-700 hover:underline"
+        >
+          Forgot password?
         </button>
 
       </div>

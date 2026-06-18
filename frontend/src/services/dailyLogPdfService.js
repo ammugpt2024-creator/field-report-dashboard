@@ -6,7 +6,11 @@ import { supabase } from "./supabase.js";
 import { saveDailyLog } from "./dailyLogService.js";
 import { getStorageConfigError, logStorageStep } from "./storageDiagnosticsService.js";
 
-const COMPANY_LOGO_URL = "https://img1.wsimg.com/isteam/ip/5d283b38-0950-4c46-838b-44766d9a75d2/DULLES%20ENGINEERING_new%20logo.png/%3A/rs%3Dh%3A78%2Ccg%3Atrue%2Cm/qt%3Dq%3A95";
+import { getCompanyBranding } from "./brandingService";
+
+// Branding resolves from the caller's company (multi-tenant); these getters
+// fall back to the historic defaults inside brandingService.
+const COMPANY_LOGO_URL = { get current() { return getCompanyBranding().logoUrl; } };
 const REPORT_FONT_FAMILY = "Inter";
 let reportFontsRegistered = false;
 const PDF_COLORS = {
@@ -1165,7 +1169,7 @@ function getRecordValue(record, keys) {
 }
 
 async function renderReferenceDailyLogHeader(doc, log, y) {
-  const logoSource = await sourceToDataUrl(log.companyLogoUrl || log.company_logo_url || COMPANY_LOGO_URL) || getDullesLogoDataUrl();
+  const logoSource = await sourceToDataUrl(log.companyLogoUrl || log.company_logo_url || COMPANY_LOGO_URL.current) || getDullesLogoDataUrl();
   const pageWidth = getPageWidth(doc);
   const headerX = PAGE_MARGIN;
   const headerWidth = getContentWidth(doc);
