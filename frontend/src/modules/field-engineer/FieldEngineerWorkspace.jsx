@@ -3448,7 +3448,7 @@ const LAB_REPORT_SECTIONS = [
       { label: "Sieve Analysis", description: "Washed particle size distribution / gradation (ASTM D422).", route: "/technician/lab/gradation" },
       { label: "Atterberg Limits", description: "Liquid limit, plastic limit, plasticity index (ASTM D4318).", route: "/technician/lab/atterberg" },
       { label: "Hydrometer Analysis", description: "Sieve + hydrometer particle size & USDA texture (ASTM D422).", route: "/technician/lab/hydrometer" },
-      { label: "CBR (California Bearing Ratio)", description: "Subgrade strength / bearing ratio." }
+      { label: "CBR (California Bearing Ratio)", description: "Subgrade bearing ratio — soaked/unsoaked, single or 3-point (ASTM D1883 / AASHTO T 193).", route: "/technician/lab/cbr" }
     ]
   },
   {

@@ -30,6 +30,8 @@ import AtterbergReportPage from "./pages/AtterbergReportPage";
 import AtterbergList from "./pages/AtterbergList";
 import HydrometerReportPage from "./pages/HydrometerReportPage";
 import HydrometerList from "./pages/HydrometerList";
+import CbrReportPage from "./pages/CbrReportPage";
+import CbrList from "./pages/CbrList";
 import TimesheetsPage from "./pages/TimesheetsPage";
 import ProjectWorkspace from "./pages/ProjectWorkspace";
 import FieldReports from "./pages/FieldReports";
@@ -197,6 +199,16 @@ function App() {
         <Route
           path="/technician/lab/hydrometer/:reportId"
           element={<HydrometerReportPage />}
+        />
+
+        <Route
+          path="/technician/lab/cbr"
+          element={<CbrList />}
+        />
+
+        <Route
+          path="/technician/lab/cbr/:reportId"
+          element={<CbrReportPage />}
         />
 
         <Route
