@@ -1180,23 +1180,26 @@ function TimeCardsPage({
   const label = TIME_CARD_TABS.find((tab) => tab.id === activeTab)?.label || "Draft";
 
   return (
-    <section className="w-full rounded-2xl border border-slate-200 bg-white p-4 sm:px-8 sm:py-6">
+    <section className="w-full overflow-hidden rounded-2xl border border-slate-200 bg-white p-4 sm:px-8 sm:py-6">
 
       {/* Header */}
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <h1 className="text-lg font-bold leading-tight tracking-tight text-slate-900 sm:text-[28px]">Timesheets</h1>
-          <p className="mt-1 hidden text-[13px] font-medium text-slate-500 sm:block">Track labor records by status.</p>
+      <div className="-mx-4 -mt-4 mb-4 border-b-4 border-accent-500 bg-gradient-to-br from-navy-800 via-navy-900 to-navy-950 px-4 py-4 sm:-mx-8 sm:-mt-6 sm:mb-5 sm:px-8 sm:py-5">
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-300">Field Operations</p>
+            <h1 className="mt-0.5 text-lg font-bold leading-tight tracking-tight text-white sm:text-[28px]">Timesheets</h1>
+            <p className="mt-1 hidden text-[13px] font-medium text-slate-300 sm:block">Track labor records by status.</p>
+          </div>
+          <button
+            type="button"
+            onClick={onCreateTimeCard}
+            className="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-xl bg-accent-500 px-3 text-sm font-semibold text-white shadow-lg shadow-accent-950/30 transition hover:bg-accent-600 sm:h-11 sm:gap-2 sm:px-5"
+          >
+            <Plus className="h-4 w-4" />
+            <span className="sm:hidden">Open Timesheet</span>
+            <span className="hidden sm:inline">Open Current Timesheet</span>
+          </button>
         </div>
-        <button
-          type="button"
-          onClick={onCreateTimeCard}
-          className="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-xl bg-blue-700 px-3 text-sm font-semibold text-white transition hover:bg-blue-600 sm:h-11 sm:gap-2 sm:px-5"
-        >
-          <Plus className="h-4 w-4" />
-          <span className="sm:hidden">Open Timesheet</span>
-          <span className="hidden sm:inline">Open Current Timesheet</span>
-        </button>
       </div>
 
       {/* Status tabs */}

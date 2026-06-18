@@ -3722,8 +3722,9 @@ function TechnicianProfilePage({ profile, companyName, projectOptions, logCollec
 
   return (
     <div className="space-y-4">
-      <section className={cardClass()}>
-        {commandCenterTitle("Profile")}
+      <section className="overflow-hidden rounded-2xl border-b-4 border-accent-500 bg-gradient-to-br from-navy-800 via-navy-900 to-navy-950 p-4 shadow-sm sm:p-5">
+        <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-300">Command Center</p>
+        <h1 className="mt-1 text-2xl font-bold tracking-tight text-white">Profile</h1>
       </section>
 
       <section className={cardClass()}>
@@ -4996,8 +4997,14 @@ export default function FieldEngineerWorkspace({
         )}
 
         {currentView === "notifications" && (
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <SimplePanel icon={Bell} kicker="Command Center" title="Notifications" description="Manager review, returned correction, upload, and approval events will appear here." />
+          <div className="space-y-4">
+            <section className="overflow-hidden rounded-2xl border-b-4 border-accent-500 bg-gradient-to-br from-navy-800 via-navy-900 to-navy-950 p-4 shadow-sm sm:p-5">
+              <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-300">Command Center</p>
+              <h1 className="mt-1 text-2xl font-bold tracking-tight text-white">Notifications</h1>
+            </section>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <SimplePanel icon={Bell} kicker="Activity" title="No notifications yet" description="Manager review, returned correction, upload, and approval events will appear here." />
+            </div>
           </div>
         )}
 
