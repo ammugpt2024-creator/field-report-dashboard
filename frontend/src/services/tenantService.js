@@ -12,6 +12,18 @@ export async function listCompanies() {
   return data || [];
 }
 
+// Single company with its subscription, for the detail drill-in (works on a
+// direct URL hit, not just navigation from the list).
+export async function getCompanyById(companyId) {
+  const { data, error } = await supabase
+    .from('companies')
+    .select('*, company_subscriptions(plan, billing_status, seats, current_period_end)')
+    .eq('id', companyId)
+    .maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
 export async function getCompanyUsage(companyId) {
   const { data, error } = await supabase.rpc('get_company_usage', { target_company: companyId });
   if (error) {

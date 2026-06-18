@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
-  BarChart3, Building2, CheckCircle2, Clock, FileStack, FolderKanban,
-  HardDrive, ListChecks, Minus, PauseCircle, Plus, ShieldCheck, Trash2, Users, X
+  BarChart3, Building2, CheckCircle2, ChevronDown, ChevronUp, Clock, CreditCard,
+  Eye, ListChecks, MoreVertical, PauseCircle, Plus, Search, ShieldCheck, Trash2,
+  Users, X
 } from "lucide-react";
 import {
   createCompany,
@@ -16,14 +17,18 @@ import {
 } from "../services/tenantService";
 import { fetchAuditLogs } from "../services/auditLogService";
 import { supabase } from "../services/supabase";
-import KeyValueList from "../components/mobile/KeyValueList";
 
 const PLANS = ["trial", "starter", "professional", "enterprise"];
+const STATUSES = ["active", "trial", "suspended", "cancelled"];
+const PAGE_SIZE = 10;
 const STATUS_TONES = {
   trial: "border-amber-200 bg-amber-50 text-amber-700",
   active: "border-emerald-200 bg-emerald-50 text-emerald-700",
   suspended: "border-rose-200 bg-rose-50 text-rose-700",
   cancelled: "border-slate-200 bg-slate-100 text-slate-600"
+};
+const STATUS_DOTS = {
+  trial: "bg-amber-500", active: "bg-emerald-500", suspended: "bg-rose-500", cancelled: "bg-slate-400"
 };
 
 const EMPTY_FORM = {
@@ -32,52 +37,38 @@ const EMPTY_FORM = {
 };
 
 function StatusPill({ status }) {
-  const dotTone = {
-    trial: "bg-amber-500", active: "bg-emerald-500", suspended: "bg-rose-500", cancelled: "bg-slate-400"
-  }[status] || "bg-amber-500";
   return (
     <span className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide ${STATUS_TONES[status] || STATUS_TONES.trial}`}>
-      <span className={`h-1.5 w-1.5 rounded-full ${dotTone}`} />
+      <span className={`h-1.5 w-1.5 rounded-full ${STATUS_DOTS[status] || STATUS_DOTS.trial}`} />
       {status}
     </span>
   );
 }
 
-// KPI summary card with a tinted icon chip.
 function StatCard({ icon: Icon, label, value, tone }) {
   const tones = {
     slate: "bg-slate-100 text-slate-600",
+    blue: "bg-blue-50 text-blue-600",
     emerald: "bg-emerald-50 text-emerald-600",
     amber: "bg-amber-50 text-amber-600",
-    rose: "bg-rose-50 text-rose-600"
+    rose: "bg-rose-50 text-rose-600",
+    violet: "bg-violet-50 text-violet-600"
   };
   return (
-    <div className="flex items-center gap-3.5 px-5 py-4">
-      <span className={`inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${tones[tone] || tones.slate}`}>
-        <Icon className="h-5 w-5" />
-      </span>
-      <div className="min-w-0">
-        <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">{label}</p>
-        <p className="text-2xl font-bold leading-tight text-slate-900">{value}</p>
+    <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <div className="flex items-center gap-3 px-4 py-3.5">
+        <span className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${tones[tone] || tones.slate}`}>
+          <Icon className="h-5 w-5" />
+        </span>
+        <div className="min-w-0">
+          <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">{label}</p>
+          <p className="text-xl font-bold leading-tight text-slate-900">{value}</p>
+        </div>
       </div>
     </div>
   );
 }
 
-// Compact metric tile used in the company card cluster.
-function MetricTile({ icon: Icon, label, value }) {
-  return (
-    <div className="flex items-center gap-2.5 rounded-xl border border-slate-200/80 bg-slate-50 px-3 py-2.5">
-      <Icon className="h-4 w-4 shrink-0 text-slate-400" />
-      <div className="min-w-0 leading-tight">
-        <p className="text-base font-bold text-slate-900">{value}</p>
-        <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{label}</p>
-      </div>
-    </div>
-  );
-}
-
-// Color-codes an audit action by its verb for quick scanning.
 function auditTone(action = "") {
   if (/(deleted|suspend|removed|cancel)/i.test(action)) return "bg-rose-400";
   if (/(created|invite|added|claimed|activ)/i.test(action)) return "bg-emerald-400";
@@ -85,8 +76,25 @@ function auditTone(action = "") {
   return "bg-slate-300";
 }
 
+// Sortable column header.
+function SortHeader({ label, sortKey, active, dir, onSort, align = "left", className = "" }) {
+  return (
+    <th className={`px-4 py-3 text-${align} ${className}`}>
+      <button
+        type="button"
+        onClick={() => onSort(sortKey)}
+        className={`inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-wide transition hover:text-slate-700 ${active ? "text-slate-700" : "text-slate-400"}`}
+      >
+        {label}
+        {active && (dir === "asc" ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />)}
+      </button>
+    </th>
+  );
+}
+
 export default function PlatformAdminDashboard() {
   const location = useLocation();
+  const navigate = useNavigate();
   const section = new URLSearchParams(location.search).get("section") || "companies";
   const [companies, setCompanies] = useState([]);
   const [usageById, setUsageById] = useState({});
@@ -96,10 +104,16 @@ export default function PlatformAdminDashboard() {
   const [form, setForm] = useState(EMPTY_FORM);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  // The audit trail is the compliance record but rarely the daily focus —
-  // collapsed by default, expand on demand via the +/- control.
   const [auditOpen, setAuditOpen] = useState(false);
-  const [detailCompany, setDetailCompany] = useState(null);
+
+  // Table controls.
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [planFilter, setPlanFilter] = useState("all");
+  const [sortKey, setSortKey] = useState("company");
+  const [sortDir, setSortDir] = useState("asc");
+  const [page, setPage] = useState(1);
+  const [menuFor, setMenuFor] = useState(null);
 
   async function refresh() {
     try {
@@ -124,28 +138,81 @@ export default function PlatformAdminDashboard() {
     refresh();
   }, []);
 
+  // Per-company enriched rows (usage merged in for sort/filter/display).
+  const rows = useMemo(() => companies.map((company) => {
+    const usage = usageById[company.id] || {};
+    const subscription = company.company_subscriptions?.[0] || {};
+    return {
+      company,
+      subscription,
+      plan: subscription.plan || "trial",
+      users: usage.users ?? 0,
+      projects: usage.projects ?? 0,
+      reports: (usage.daily_reports ?? 0) + (usage.field_test_reports ?? 0) + (usage.lab_reports ?? 0),
+      files: usage.storage_objects ?? 0
+    };
+  }), [companies, usageById]);
+
   const totals = useMemo(() => ({
     companies: companies.length,
     active: companies.filter((c) => c.status === "active").length,
     trial: companies.filter((c) => c.status === "trial").length,
-    suspended: companies.filter((c) => c.status === "suspended").length
-  }), [companies]);
+    suspended: companies.filter((c) => c.status === "suspended").length,
+    users: rows.reduce((sum, r) => sum + r.users, 0),
+    projects: rows.reduce((sum, r) => sum + r.projects, 0),
+    reports: rows.reduce((sum, r) => sum + r.reports, 0),
+    subscriptions: rows.filter((r) => r.company.status === "active" && r.plan !== "trial").length
+  }), [companies, rows]);
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    let result = rows.filter((r) => {
+      if (statusFilter !== "all" && r.company.status !== statusFilter) return false;
+      if (planFilter !== "all" && r.plan !== planFilter) return false;
+      if (q) {
+        const hay = `${r.company.company_name} ${r.company.primary_contact_email || ""}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+    const factor = sortDir === "asc" ? 1 : -1;
+    result = [...result].sort((a, b) => {
+      let av; let bv;
+      if (sortKey === "company") { av = a.company.company_name?.toLowerCase() || ""; bv = b.company.company_name?.toLowerCase() || ""; }
+      else if (sortKey === "plan" || sortKey === "status") { av = (sortKey === "plan" ? a.plan : a.company.status) || ""; bv = (sortKey === "plan" ? b.plan : b.company.status) || ""; }
+      else { av = a[sortKey]; bv = b[sortKey]; }
+      if (av < bv) return -1 * factor;
+      if (av > bv) return 1 * factor;
+      return 0;
+    });
+    return result;
+  }, [rows, search, statusFilter, planFilter, sortKey, sortDir]);
+
+  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const safePage = Math.min(page, pageCount);
+  const paged = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+
+  function onSort(key) {
+    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setSortKey(key); setSortDir(key === "company" || key === "plan" || key === "status" ? "asc" : "desc"); }
+  }
+  function resetPage(setter) {
+    return (value) => { setter(value); setPage(1); };
+  }
 
   async function submitCreate(event) {
     event.preventDefault();
     if (!form.companyName.trim()) return;
     setBusy(true);
-    setError("");
     try {
       await createCompany(form);
       setShowCreate(false);
       setForm(EMPTY_FORM);
       await refresh();
     } catch (err) {
-      setError(err.message || "Company could not be created.");
-    } finally {
-      setBusy(false);
+      setError(err.message);
     }
+    setBusy(false);
   }
 
   async function toggleStatus(company) {
@@ -219,118 +286,214 @@ export default function PlatformAdminDashboard() {
           </button>
         </section>
 
+        {/* KPI row */}
         <section className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
-          {[
-            ["Companies", totals.companies, Building2, "slate"],
-            ["Active", totals.active, CheckCircle2, "emerald"],
-            ["Trial", totals.trial, Clock, "amber"],
-            ["Suspended", totals.suspended, PauseCircle, "rose"]
-          ].map(([label, value, icon, tone]) => (
-            <div key={label} className="rounded-2xl border border-slate-200 bg-white shadow-sm">
-              <StatCard icon={icon} label={label} value={value} tone={tone} />
-            </div>
-          ))}
+          <StatCard icon={Building2} label="Companies" value={totals.companies} tone="slate" />
+          <StatCard icon={CheckCircle2} label="Active" value={totals.active} tone="emerald" />
+          <StatCard icon={Clock} label="Trial" value={totals.trial} tone="amber" />
+          <StatCard icon={PauseCircle} label="Suspended" value={totals.suspended} tone="rose" />
+          <StatCard icon={Users} label="Total Users" value={totals.users} tone="blue" />
+          <StatCard icon={ListChecks} label="Total Projects" value={totals.projects} tone="violet" />
+          <StatCard icon={BarChart3} label="Total Reports" value={totals.reports} tone="slate" />
+          <StatCard icon={CreditCard} label="Active Subscriptions" value={totals.subscriptions} tone="emerald" />
         </section>
 
         {error && <p className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm font-semibold text-rose-800">{error}</p>}
 
         {(section === "companies" || section === "subscriptions" || section === "usage" || section === "support" || section === "settings") && (
-          <section>
-            <div className="mb-3 flex items-center justify-between">
+          <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+            {/* Toolbar */}
+            <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 px-4 py-3 sm:px-5">
               <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-slate-500">
                 <Building2 className="h-4 w-4 text-slate-400" /> Companies
-                <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[11px] font-bold text-slate-600">{companies.length}</span>
+                <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[11px] font-bold normal-case tracking-normal text-slate-600">{filtered.length}</span>
               </h2>
+              <div className="ml-auto flex flex-wrap items-center gap-2">
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                  <input
+                    value={search}
+                    onChange={(e) => resetPage(setSearch)(e.target.value)}
+                    placeholder="Search company or contact…"
+                    className="h-9 w-full rounded-lg border border-slate-300 bg-white pl-8 pr-3 text-[13px] font-medium text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 sm:w-60"
+                  />
+                </div>
+                <select
+                  value={statusFilter}
+                  onChange={(e) => resetPage(setStatusFilter)(e.target.value)}
+                  className="h-9 rounded-lg border border-slate-300 bg-white px-2 text-[13px] font-semibold capitalize text-slate-700 outline-none focus:border-blue-500"
+                >
+                  <option value="all">All statuses</option>
+                  {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+                <select
+                  value={planFilter}
+                  onChange={(e) => resetPage(setPlanFilter)(e.target.value)}
+                  className="h-9 rounded-lg border border-slate-300 bg-white px-2 text-[13px] font-semibold capitalize text-slate-700 outline-none focus:border-blue-500"
+                >
+                  <option value="all">All plans</option>
+                  {PLANS.map((p) => <option key={p} value={p}>{p}</option>)}
+                </select>
+              </div>
             </div>
-            <div className="space-y-4">
-              {companies.map((company) => {
-                const usage = usageById[company.id] || {};
-                const subscription = company.company_subscriptions?.[0] || {};
-                const support = activeSupportFor(company.id);
-                const brand = company.brand_color || "#1d4ed8";
-                const reports = (usage.daily_reports ?? 0) + (usage.field_test_reports ?? 0) + (usage.lab_reports ?? 0);
-                return (
-                  <article key={company.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:shadow-md">
-                    {/* Header: brand avatar, name, plan/billing, status */}
-                    <div className="flex flex-wrap items-center gap-3 border-b border-slate-100 px-5 py-4">
-                      <span
-                        className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-base font-bold text-white shadow-sm"
-                        style={{ background: brand }}
-                      >
-                        {(company.company_name || "?").charAt(0).toUpperCase()}
-                      </span>
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-base font-bold text-slate-900">{company.company_name}</p>
-                        <p className="mt-0.5 truncate text-[13px] font-medium text-slate-500">
-                          <span className="capitalize">{subscription.plan || "trial"}</span> plan
-                          <span className="mx-1.5 text-slate-300">·</span>
-                          Billing <span className={`font-semibold ${subscription.billing_status === "past_due" ? "text-rose-600" : "text-emerald-600"}`}>{subscription.billing_status || "current"}</span>
-                        </p>
-                      </div>
-                      <StatusPill status={company.status} />
-                    </div>
 
-                    {/* Metric tile cluster — contained, doesn't stretch edge-to-edge */}
-                    <div className="grid grid-cols-2 gap-3 px-5 py-4 sm:grid-cols-4">
-                      <MetricTile icon={Users} label="Users" value={usage.users ?? "–"} />
-                      <MetricTile icon={FolderKanban} label="Projects" value={usage.projects ?? "–"} />
-                      <MetricTile icon={FileStack} label="Reports" value={reports} />
-                      <MetricTile icon={HardDrive} label="Files" value={usage.storage_objects ?? "–"} />
-                    </div>
-
-                    {/* Action bar */}
-                    <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 bg-slate-50/60 px-5 py-3">
-                      <button type="button" onClick={() => setDetailCompany(company)} className="inline-flex min-h-9 items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 transition hover:bg-slate-50">
-                        Details
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => toggleSupport(company)}
-                        className={`inline-flex min-h-9 items-center gap-1.5 rounded-lg px-3 text-xs font-bold transition ${support ? "bg-amber-100 text-amber-800 hover:bg-amber-200" : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"}`}
-                      >
-                        <ShieldCheck className="h-3.5 w-3.5" />
-                        {support ? "End Support" : "Support Access"}
-                      </button>
-
-                      <div className="ml-auto flex flex-wrap items-center gap-2">
-                        <label className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500">
-                          Plan
+            {/* Desktop table */}
+            <div className="hidden overflow-x-auto lg:block">
+              <table className="w-full border-collapse text-sm">
+                <thead>
+                  <tr className="border-b border-slate-100 bg-slate-50/60">
+                    <SortHeader label="Company" sortKey="company" active={sortKey === "company"} dir={sortDir} onSort={onSort} />
+                    <SortHeader label="Plan" sortKey="plan" active={sortKey === "plan"} dir={sortDir} onSort={onSort} />
+                    <SortHeader label="Users" sortKey="users" active={sortKey === "users"} dir={sortDir} onSort={onSort} align="right" />
+                    <SortHeader label="Projects" sortKey="projects" active={sortKey === "projects"} dir={sortDir} onSort={onSort} align="right" />
+                    <SortHeader label="Reports" sortKey="reports" active={sortKey === "reports"} dir={sortDir} onSort={onSort} align="right" />
+                    <SortHeader label="Files" sortKey="files" active={sortKey === "files"} dir={sortDir} onSort={onSort} align="right" />
+                    <SortHeader label="Status" sortKey="status" active={sortKey === "status"} dir={sortDir} onSort={onSort} />
+                    <th className="px-4 py-3 text-right text-[11px] font-bold uppercase tracking-wide text-slate-400">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {paged.map(({ company, plan, users, projects, reports, files }) => {
+                    const support = activeSupportFor(company.id);
+                    return (
+                      <tr key={company.id} className="border-b border-slate-50 transition hover:bg-slate-50/70">
+                        <td className="px-4 py-3">
+                          <button type="button" onClick={() => navigate(`/platform-admin/company/${company.id}`)} className="flex items-center gap-3 text-left">
+                            <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-sm font-bold text-white shadow-sm" style={{ background: company.brand_color || "#1d4ed8" }}>
+                              {(company.company_name || "?").charAt(0).toUpperCase()}
+                            </span>
+                            <span className="min-w-0">
+                              <span className="block truncate font-bold text-slate-900 hover:text-blue-700">{company.company_name}</span>
+                              <span className="block truncate text-xs font-medium text-slate-400">{company.primary_contact_email || "—"}</span>
+                            </span>
+                          </button>
+                        </td>
+                        <td className="px-4 py-3">
                           <select
-                            value={subscription.plan || "trial"}
-                            onChange={(event) => changePlan(company, event.target.value)}
-                            className="h-9 rounded-lg border border-slate-300 bg-white px-2 text-[13px] font-semibold text-slate-900 capitalize outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                            value={plan}
+                            onChange={(e) => changePlan(company, e.target.value)}
+                            className="h-8 rounded-lg border border-slate-300 bg-white px-2 text-xs font-semibold capitalize text-slate-900 outline-none focus:border-blue-500"
                           >
                             {PLANS.map((p) => <option key={p} value={p}>{p}</option>)}
                           </select>
-                        </label>
-                        <button
-                          type="button"
-                          onClick={() => toggleStatus(company)}
-                          className={`min-h-9 rounded-lg px-3 text-xs font-bold transition ${company.status === "suspended" ? "bg-emerald-600 text-white hover:bg-emerald-700" : "border border-rose-200 bg-white text-rose-700 hover:bg-rose-50"}`}
-                        >
-                          {company.status === "suspended" ? "Activate" : "Suspend"}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => removeCompany(company)}
-                          disabled={company.status === "active"}
-                          title={company.status === "active" ? "Suspend or cancel first, then delete" : "Permanently delete the company and ALL of its records and files"}
-                          className="inline-flex min-h-9 items-center gap-1 rounded-lg bg-rose-600 px-3 text-xs font-bold text-white transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:bg-rose-300"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" /> Delete
-                        </button>
-                      </div>
+                        </td>
+                        <td className="px-4 py-3 text-right font-semibold tabular-nums text-slate-700">{users}</td>
+                        <td className="px-4 py-3 text-right font-semibold tabular-nums text-slate-700">{projects}</td>
+                        <td className="px-4 py-3 text-right font-semibold tabular-nums text-slate-700">{reports}</td>
+                        <td className="px-4 py-3 text-right font-semibold tabular-nums text-slate-700">{files}</td>
+                        <td className="px-4 py-3"><StatusPill status={company.status} /></td>
+                        <td className="px-4 py-3">
+                          <div className="relative flex justify-end">
+                            <button
+                              type="button"
+                              onClick={() => setMenuFor(menuFor === company.id ? null : company.id)}
+                              className={`inline-flex h-8 w-8 items-center justify-center rounded-lg border text-slate-500 transition hover:bg-slate-50 ${support ? "border-amber-300 bg-amber-50 text-amber-700" : "border-slate-200 bg-white"}`}
+                              title="Actions"
+                            >
+                              <MoreVertical className="h-4 w-4" />
+                            </button>
+                            {menuFor === company.id && (
+                              <>
+                                <button type="button" aria-label="Close menu" onClick={() => setMenuFor(null)} className="fixed inset-0 z-30 cursor-default" />
+                                <div className="absolute right-0 top-9 z-40 w-52 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-lg">
+                                  <RowAction icon={Eye} label="View details" onClick={() => { setMenuFor(null); navigate(`/platform-admin/company/${company.id}`); }} />
+                                  <RowAction icon={ShieldCheck} label={support ? "End support access" : "Support access"} onClick={() => { setMenuFor(null); toggleSupport(company); }} />
+                                  <RowAction
+                                    icon={company.status === "suspended" ? CheckCircle2 : PauseCircle}
+                                    label={company.status === "suspended" ? "Activate" : "Suspend"}
+                                    onClick={() => { setMenuFor(null); toggleStatus(company); }}
+                                  />
+                                  <div className="my-1 border-t border-slate-100" />
+                                  <RowAction
+                                    icon={Trash2}
+                                    label="Delete company"
+                                    danger
+                                    disabled={company.status === "active"}
+                                    title={company.status === "active" ? "Suspend or cancel first" : "Full clean-sweep delete"}
+                                    onClick={() => { setMenuFor(null); removeCompany(company); }}
+                                  />
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {!paged.length && (
+                    <tr>
+                      <td colSpan={8} className="px-4 py-12 text-center">
+                        <Building2 className="mx-auto h-8 w-8 text-slate-300" />
+                        <p className="mt-2 text-sm font-semibold text-slate-500">{rows.length ? "No companies match your filters." : "No companies yet. Create the first customer company."}</p>
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Mobile cards */}
+            <div className="divide-y divide-slate-100 lg:hidden">
+              {paged.map(({ company, plan, users, projects, reports, files }) => {
+                const support = activeSupportFor(company.id);
+                return (
+                  <div key={company.id} className="p-4">
+                    <button type="button" onClick={() => navigate(`/platform-admin/company/${company.id}`)} className="flex w-full items-center gap-3 text-left">
+                      <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-base font-bold text-white shadow-sm" style={{ background: company.brand_color || "#1d4ed8" }}>
+                        {(company.company_name || "?").charAt(0).toUpperCase()}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate font-bold text-slate-900">{company.company_name}</span>
+                        <span className="block truncate text-xs font-medium text-slate-400 capitalize">{plan} plan</span>
+                      </span>
+                      <StatusPill status={company.status} />
+                    </button>
+                    <div className="mt-3 grid grid-cols-4 gap-2 text-center">
+                      {[["Users", users], ["Projects", projects], ["Reports", reports], ["Files", files]].map(([l, v]) => (
+                        <div key={l} className="rounded-lg border border-slate-200/80 bg-slate-50 py-2">
+                          <p className="text-sm font-bold text-slate-900">{v}</p>
+                          <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">{l}</p>
+                        </div>
+                      ))}
                     </div>
-                  </article>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <select value={plan} onChange={(e) => changePlan(company, e.target.value)} className="h-9 flex-1 rounded-lg border border-slate-300 bg-white px-2 text-xs font-semibold capitalize text-slate-900">
+                        {PLANS.map((p) => <option key={p} value={p}>{p}</option>)}
+                      </select>
+                      <button type="button" onClick={() => toggleSupport(company)} className={`inline-flex min-h-9 items-center gap-1 rounded-lg px-3 text-xs font-bold ${support ? "bg-amber-100 text-amber-800" : "border border-slate-200 bg-white text-slate-700"}`}>
+                        <ShieldCheck className="h-3.5 w-3.5" />{support ? "End" : "Support"}
+                      </button>
+                      <button type="button" onClick={() => toggleStatus(company)} className={`min-h-9 rounded-lg px-3 text-xs font-bold ${company.status === "suspended" ? "bg-emerald-600 text-white" : "border border-rose-200 bg-white text-rose-700"}`}>
+                        {company.status === "suspended" ? "Activate" : "Suspend"}
+                      </button>
+                      <button type="button" onClick={() => removeCompany(company)} disabled={company.status === "active"} className="inline-flex min-h-9 items-center gap-1 rounded-lg bg-rose-600 px-3 text-xs font-bold text-white disabled:bg-rose-300">
+                        <Trash2 className="h-3.5 w-3.5" />Delete
+                      </button>
+                    </div>
+                  </div>
                 );
               })}
-              {!companies.length && (
-                <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center">
+              {!paged.length && (
+                <div className="p-10 text-center">
                   <Building2 className="mx-auto h-8 w-8 text-slate-300" />
-                  <p className="mt-2 text-sm font-semibold text-slate-500">No companies yet. Create the first customer company.</p>
+                  <p className="mt-2 text-sm font-semibold text-slate-500">{rows.length ? "No companies match your filters." : "No companies yet."}</p>
                 </div>
               )}
             </div>
+
+            {/* Pagination */}
+            {filtered.length > PAGE_SIZE && (
+              <div className="flex items-center justify-between gap-3 border-t border-slate-100 px-4 py-3 sm:px-5">
+                <p className="text-xs font-semibold text-slate-500">
+                  {(safePage - 1) * PAGE_SIZE + 1}–{Math.min(safePage * PAGE_SIZE, filtered.length)} of {filtered.length}
+                </p>
+                <div className="flex items-center gap-1.5">
+                  <button type="button" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={safePage <= 1} className="h-8 rounded-lg border border-slate-200 bg-white px-3 text-xs font-bold text-slate-600 disabled:opacity-40">Prev</button>
+                  <span className="px-2 text-xs font-bold text-slate-500">Page {safePage} / {pageCount}</span>
+                  <button type="button" onClick={() => setPage((p) => Math.min(pageCount, p + 1))} disabled={safePage >= pageCount} className="h-8 rounded-lg border border-slate-200 bg-white px-3 text-xs font-bold text-slate-600 disabled:opacity-40">Next</button>
+                </div>
+              </div>
+            )}
           </section>
         )}
 
@@ -344,7 +507,7 @@ export default function PlatformAdminDashboard() {
               className={`flex w-full items-center gap-2 px-5 py-4 text-left text-sm font-bold uppercase tracking-wide text-slate-500 ${auditOpen ? "border-b border-slate-100" : ""}`}
             >
               <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border border-slate-300 bg-white text-slate-600 transition hover:border-slate-400 hover:bg-slate-50">
-                {auditOpen ? <Minus className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
+                {auditOpen ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
               </span>
               <ListChecks className="h-4 w-4 text-slate-400" /> Audit Logs
               {auditLogs.length > 0 && (
@@ -367,28 +530,6 @@ export default function PlatformAdminDashboard() {
             </div>
             )}
           </section>
-        )}
-
-        {detailCompany && (
-          <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/60 sm:items-center sm:p-4">
-            <div className="max-h-[94vh] w-full max-w-xl overflow-y-auto rounded-t-3xl bg-white p-4 shadow-2xl sm:rounded-3xl sm:p-6">
-              <div className="flex items-center justify-between gap-3">
-                <h3 className="text-lg font-bold text-slate-950">{detailCompany.company_name}</h3>
-                <button type="button" onClick={() => setDetailCompany(null)} className="rounded-full border border-slate-200 p-2 text-slate-600"><X className="h-4 w-4" /></button>
-              </div>
-              <p className="mt-1 text-xs font-semibold text-amber-700">Read-only company metadata. Tenant report data requires audited support access.</p>
-              <KeyValueList className="mt-3" columns={1} items={[
-                ["Legal Name", detailCompany.legal_name],
-                ["Primary Contact", detailCompany.primary_contact_name],
-                ["Contact Email", detailCompany.primary_contact_email],
-                ["Phone", detailCompany.phone],
-                ["Address", detailCompany.address],
-                ["Status", detailCompany.status],
-                ["Brand Color", detailCompany.brand_color],
-                ["Created", new Date(detailCompany.created_at).toLocaleDateString()]
-              ]} />
-            </div>
-          </div>
         )}
 
         {showCreate && (
@@ -421,14 +562,14 @@ export default function PlatformAdminDashboard() {
                 <div className="grid grid-cols-2 gap-3">
                   <label className="block">
                     <span className="text-xs font-bold uppercase tracking-wide text-slate-500">Subscription Plan</span>
-                    <select value={form.plan} onChange={(event) => setForm({ ...form, plan: event.target.value })} className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm font-semibold">
+                    <select value={form.plan} onChange={(event) => setForm({ ...form, plan: event.target.value })} className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm font-semibold capitalize">
                       {PLANS.map((p) => <option key={p} value={p}>{p}</option>)}
                     </select>
                   </label>
                   <label className="block">
                     <span className="text-xs font-bold uppercase tracking-wide text-slate-500">Status</span>
-                    <select value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value })} className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm font-semibold">
-                      {["trial", "active", "suspended", "cancelled"].map((s) => <option key={s} value={s}>{s}</option>)}
+                    <select value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value })} className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm font-semibold capitalize">
+                      {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
                     </select>
                   </label>
                 </div>
@@ -455,5 +596,19 @@ export default function PlatformAdminDashboard() {
         </p>
       </div>
     </div>
+  );
+}
+
+function RowAction({ icon: Icon, label, onClick, danger, disabled, title }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      className={`flex w-full items-center gap-2.5 px-3 py-2 text-left text-[13px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${danger ? "text-rose-700 hover:bg-rose-50" : "text-slate-700 hover:bg-slate-50"}`}
+    >
+      <Icon className="h-4 w-4 shrink-0" /> {label}
+    </button>
   );
 }

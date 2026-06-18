@@ -24,6 +24,7 @@ import QCReviewDashboard from "./pages/QCReviewDashboard";
 import Reports from "./pages/Reports";
 import DailyLogReview from "./pages/DailyLogReview";
 import PlatformAdminDashboard from "./pages/PlatformAdminDashboard";
+import CompanyDetail from "./pages/CompanyDetail";
 import CompanyAdminDashboard from "./pages/CompanyAdminDashboard";
 import AcceptInvite from "./pages/AcceptInvite";
 
@@ -181,6 +182,11 @@ function App() {
         <Route
           path="/platform-admin"
           element={<RequirePlatformAdmin><PlatformAdminDashboard /></RequirePlatformAdmin>}
+        />
+
+        <Route
+          path="/platform-admin/company/:companyId"
+          element={<RequirePlatformAdmin><CompanyDetail /></RequirePlatformAdmin>}
         />
 
         <Route
