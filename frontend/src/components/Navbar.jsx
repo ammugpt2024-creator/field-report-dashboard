@@ -256,7 +256,7 @@ function Navbar() {
             className="flex shrink-0 items-center gap-1 rounded-lg px-1 py-1 transition hover:bg-slate-50"
           >
             <LogoMark tone="dark" className="h-8 w-8 sm:h-9 sm:w-9" />
-            <span className="-ml-0.5 text-xl font-bold tracking-tight text-navy-900 sm:text-2xl">Core</span>
+            <span className="text-xl font-bold tracking-tight text-navy-900 sm:text-2xl">QCore</span>
           </button>
           <nav className="hidden items-center gap-0.5 lg:flex">
             {topNav.map((item) => {
