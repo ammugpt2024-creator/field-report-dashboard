@@ -142,37 +142,80 @@ export async function deleteCompany(company) {
   return data?.counts || {};
 }
 
-// Support access is explicit, read-only, and audited.
-export async function startSupportSession(companyId, reason) {
-  const { data: auth } = await supabase.auth.getUser();
+// ── Consent-based support access ────────────────────────────────────────────
+// Platform admin requests → company admin approves (scoped to specific reports,
+// time-limited, optionally name-revealing) → masked read-only viewing. All the
+// state transitions and data reads run through SECURITY DEFINER functions so
+// the grant and the masking are enforced server-side.
+
+// Platform admin: open a request for a report type (scope, e.g. 'daily_log').
+export async function requestSupportAccess(companyId, scope, reason) {
+  const { data, error } = await supabase.rpc('request_support_access', {
+    p_company: companyId, p_scope: scope, p_reason: reason || ''
+  });
+  if (error) throw error;
+  return data; // session id
+}
+
+// Platform admin: all of MY support sessions for a company, newest first.
+export async function listSupportSessions(companyId) {
   const { data, error } = await supabase
     .from('platform_support_sessions')
-    .insert({ company_id: companyId, platform_admin_id: auth?.user?.id, reason: reason || '', read_only: true })
-    .select()
-    .single();
-  if (error) throw error;
-  logAuditEvent({
-    companyId,
-    action: 'platform_support_access_started',
-    entityType: 'platform_support_session',
-    entityId: data.id,
-    newValue: { reason: reason || '', readOnly: true }
+    .select('*')
+    .eq('company_id', companyId)
+    .order('requested_at', { ascending: false });
+  if (error) { console.warn('Support sessions could not be loaded.', error.message); return []; }
+  return data || [];
+}
+
+// Company admin: pending + active support sessions for THEIR company.
+export async function listSupportRequests() {
+  const { data, error } = await supabase
+    .from('platform_support_sessions')
+    .select('*')
+    .order('requested_at', { ascending: false });
+  if (error) { console.warn('Support requests could not be loaded.', error.message); return []; }
+  return data || [];
+}
+
+// Company admin: approve a request. resources = [{ id, label }].
+export async function approveSupportRequest(sessionId, resources, durationHours, unmask) {
+  const { error } = await supabase.rpc('approve_support_request', {
+    p_session: sessionId, p_resources: resources, p_duration_hours: durationHours, p_unmask: !!unmask
   });
+  if (error) throw error;
+}
+
+export async function denySupportRequest(sessionId) {
+  const { error } = await supabase.rpc('deny_support_request', { p_session: sessionId });
+  if (error) throw error;
+}
+
+// Either side ends an active grant.
+export async function endSupportSession(sessionRow) {
+  const { error } = await supabase.rpc('end_support_session', { p_session: sessionRow.id });
+  if (error) throw error;
+}
+
+// Platform admin: the masked, read-only contents of one approved daily log.
+export async function getSupportDailyLog(sessionId, logId) {
+  const { data, error } = await supabase.rpc('get_support_daily_log', { p_session: sessionId, p_log_id: logId });
+  if (error) throw error;
   return data;
 }
 
-export async function endSupportSession(sessionRow) {
-  const { error } = await supabase
-    .from('platform_support_sessions')
-    .update({ ended_at: new Date().toISOString() })
-    .eq('id', sessionRow.id);
-  if (error) throw error;
-  logAuditEvent({
-    companyId: sessionRow.company_id,
-    action: 'platform_support_access_ended',
-    entityType: 'platform_support_session',
-    entityId: sessionRow.id
-  });
+// Company admin: their own daily logs, for the approval report-picker.
+export async function listCompanyDailyLogs() {
+  const [logsRes, projectsRes] = await Promise.all([
+    supabase.from('daily_logs').select('id, log_date, status, project_id').order('log_date', { ascending: false }).limit(200),
+    supabase.from('projects').select('id, project_name')
+  ]);
+  if (logsRes.error) { console.warn('Daily logs could not be loaded.', logsRes.error.message); return []; }
+  const projectName = Object.fromEntries((projectsRes.data || []).map((p) => [p.id, p.project_name]));
+  return (logsRes.data || []).map((l) => ({
+    ...l,
+    project_name: projectName[l.project_id] || 'Project'
+  }));
 }
 
 // Fire the Supabase Auth invitation email via the edge function (the service

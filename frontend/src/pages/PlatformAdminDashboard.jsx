@@ -8,12 +8,10 @@ import {
 import {
   createCompany,
   deleteCompany,
-  endSupportSession,
   getCompanyUsage,
   listCompanies,
   setCompanyStatus,
-  setSubscriptionPlan,
-  startSupportSession
+  setSubscriptionPlan
 } from "../services/tenantService";
 import { fetchAuditLogs } from "../services/auditLogService";
 import { supabase } from "../services/supabase";
@@ -272,8 +270,14 @@ export default function PlatformAdminDashboard() {
     await refresh();
   }
 
+  // An active grant = approved, not ended, not expired.
   function activeSupportFor(companyId) {
-    return supportSessions.find((s) => s.company_id === companyId);
+    return supportSessions.find((s) =>
+      s.company_id === companyId && s.status === "approved" && !s.ended_at &&
+      (!s.expires_at || new Date(s.expires_at) > new Date()));
+  }
+  function pendingSupportFor(companyId) {
+    return supportSessions.find((s) => s.company_id === companyId && s.status === "requested");
   }
 
   async function removeCompany(company) {
@@ -299,16 +303,10 @@ export default function PlatformAdminDashboard() {
     }
   }
 
-  async function toggleSupport(company) {
-    const existing = activeSupportFor(company.id);
-    if (existing) {
-      await endSupportSession(existing);
-    } else {
-      const reason = window.prompt(`Read-only support access to ${company.company_name} — reason (audited):`);
-      if (!reason || !reason.trim()) return;
-      await startSupportSession(company.id, reason.trim());
-    }
-    await refresh();
+  // Requesting/viewing support access lives on the company detail Support tab
+  // (request → company-admin approval → masked read-only viewing).
+  function openSupport(company) {
+    navigate(`/platform-admin/company/${company.id}?tab=support`);
   }
 
   return (
@@ -424,7 +422,7 @@ export default function PlatformAdminDashboard() {
                         <td className="px-4 py-3">
                           <div className="flex items-center justify-end gap-1">
                             <IconBtn icon={Eye} title="View details" onClick={() => navigate(`/platform-admin/company/${company.id}`)} />
-                            <IconBtn icon={ShieldCheck} title={support ? "End support access" : "Support access"} active={support} onClick={() => toggleSupport(company)} />
+                            <IconBtn icon={ShieldCheck} title={support ? "Active support session — manage" : "Request support access"} active={support} onClick={() => openSupport(company)} />
                             <IconBtn
                               icon={company.status === "suspended" ? CheckCircle2 : PauseCircle}
                               title={company.status === "suspended" ? "Activate company" : "Suspend company"}
@@ -479,8 +477,8 @@ export default function PlatformAdminDashboard() {
                       ))}
                     </div>
                     <div className="mt-3 flex flex-wrap gap-2">
-                      <button type="button" onClick={() => toggleSupport(company)} className={`inline-flex min-h-9 items-center gap-1 rounded-lg px-3 text-xs font-bold ${support ? "bg-amber-100 text-amber-800" : "border border-slate-200 bg-white text-slate-700"}`}>
-                        <ShieldCheck className="h-3.5 w-3.5" />{support ? "End" : "Support"}
+                      <button type="button" onClick={() => openSupport(company)} className={`inline-flex min-h-9 items-center gap-1 rounded-lg px-3 text-xs font-bold ${support ? "bg-amber-100 text-amber-800" : "border border-slate-200 bg-white text-slate-700"}`}>
+                        <ShieldCheck className="h-3.5 w-3.5" />Support
                       </button>
                       <button type="button" onClick={() => toggleStatus(company)} className={`min-h-9 rounded-lg px-3 text-xs font-bold ${company.status === "suspended" ? "bg-emerald-600 text-white" : "border border-rose-200 bg-white text-rose-700"}`}>
                         {company.status === "suspended" ? "Activate" : "Suspend"}
@@ -611,27 +609,32 @@ export default function PlatformAdminDashboard() {
             <div className="divide-y divide-slate-100">
               {companies.map((company) => {
                 const support = activeSupportFor(company.id);
+                const pending = pendingSupportFor(company.id);
                 return (
                   <div key={company.id} className="flex flex-wrap items-center gap-3 px-5 py-3">
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-bold text-slate-900">{company.company_name}</p>
                       <p className="truncate text-xs font-medium text-slate-400">
-                        {support ? `Active session — ${support.reason || "no reason given"}` : "No active support session"}
+                        {support
+                          ? `Active grant${support.expires_at ? ` — expires ${new Date(support.expires_at).toLocaleString()}` : ""}`
+                          : pending ? "Request awaiting company approval" : "No active support access"}
                       </p>
                     </div>
+                    <span className={`inline-flex shrink-0 rounded-full px-2 py-1 text-[11px] font-bold uppercase tracking-wide ${support ? "bg-emerald-50 text-emerald-700" : pending ? "bg-amber-50 text-amber-700" : "bg-slate-100 text-slate-500"}`}>
+                      {support ? "Active" : pending ? "Pending" : "None"}
+                    </span>
                     <button
                       type="button"
-                      onClick={() => toggleSupport(company)}
-                      className={`inline-flex min-h-9 items-center gap-1.5 rounded-lg px-3 text-xs font-bold transition ${support ? "bg-amber-100 text-amber-800 hover:bg-amber-200" : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"}`}
+                      onClick={() => openSupport(company)}
+                      className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 transition hover:bg-slate-50"
                     >
-                      <ShieldCheck className="h-3.5 w-3.5" />
-                      {support ? "End Access" : "Start Access"}
+                      <ShieldCheck className="h-3.5 w-3.5" /> Manage
                     </button>
                   </div>
                 );
               })}
             </div>
-            <p className="px-5 py-3 text-xs font-semibold text-amber-700">Support access is read-only and fully audited. Tenant record data is never exposed without an active session.</p>
+            <p className="px-5 py-3 text-xs font-semibold text-amber-700">Access is requested per company, approved by the company admin (scoped to specific reports, time-limited), read-only, with sensitive data masked. Fully audited.</p>
           </section>
         )}
 

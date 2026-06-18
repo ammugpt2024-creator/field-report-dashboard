@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useLocation } from "react-router-dom";
 import {
-  Building2, CreditCard, FileText, FolderKanban, Plus, Upload, Users, Wrench, X
+  Building2, CreditCard, FileText, FolderKanban, Lock, Plus, ShieldCheck, Upload, Users, Wrench, X
 } from "lucide-react";
 import { supabase } from "../services/supabase";
 import {
@@ -12,7 +12,12 @@ import {
   setMemberRole,
   setMemberStatus,
   updateCompanyProfile,
-  updateCompanyRow
+  updateCompanyRow,
+  listSupportRequests,
+  approveSupportRequest,
+  denySupportRequest,
+  endSupportSession,
+  listCompanyDailyLogs
 } from "../services/tenantService";
 import { companyStoragePath, preloadCompanyBranding } from "../services/brandingService";
 import KeyValueList from "../components/mobile/KeyValueList";
@@ -115,24 +120,39 @@ export default function CompanyAdminDashboard() {
   const [newEquipment, setNewEquipment] = useState(null);
   const [newProject, setNewProject] = useState(null);
   const [profileDraft, setProfileDraft] = useState(null);
+  const [supportRequests, setSupportRequests] = useState([]);
+  const [approveFor, setApproveFor] = useState(null); // session being approved
 
   async function refresh() {
     try {
       const ctx = await getMyCompanyContext();
       setContext(ctx);
-      const [projectRows, clientRows, equipmentRows, labRows] = await Promise.all([
+      const [projectRows, clientRows, equipmentRows, labRows, supportRows] = await Promise.all([
         supabase.from("projects").select("*").order("project_name").then((r) => r.data || []),
         listCompanyRows("clients"),
         listCompanyRows("equipment"),
-        listCompanyRows("lab_reports")
+        listCompanyRows("lab_reports"),
+        listSupportRequests()
       ]);
       setProjects(projectRows);
       setClients(clientRows);
       setEquipment(equipmentRows);
       setLabReports(labRows);
+      setSupportRequests(supportRows);
     } catch (err) {
       setError(err.message || "Company data could not be loaded.");
     }
+  }
+
+  async function denyRequest(session) {
+    try { await denySupportRequest(session.id); await refresh(); }
+    catch (err) { window.alert(err.message); }
+  }
+
+  async function endGrant(session) {
+    if (!window.confirm("End this support session now? The platform admin will lose access immediately.")) return;
+    try { await endSupportSession(session); await refresh(); }
+    catch (err) { window.alert(err.message); }
   }
 
   useEffect(() => {
@@ -236,6 +256,41 @@ export default function CompanyAdminDashboard() {
             <StatCard icon={Wrench} label="Equipment" value={equipment.length} tone="slate" />
           </section>
         )}
+
+        {(() => {
+          const pending = supportRequests.filter((s) => s.status === "requested");
+          const active = supportRequests.filter((s) => s.status === "approved" && !s.ended_at && (!s.expires_at || new Date(s.expires_at) > new Date()));
+          if (!showAll || (!pending.length && !active.length)) return null;
+          return (
+            <section className={`overflow-hidden rounded-2xl border bg-white shadow-sm ${pending.length ? "border-amber-300" : "border-slate-200"}`}>
+              <h2 className="flex items-center gap-2 border-b border-slate-100 px-5 py-4 text-sm font-bold uppercase tracking-wide text-slate-500">
+                <ShieldCheck className="h-4 w-4 text-slate-400" /> Support Access
+                {pending.length > 0 && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold normal-case tracking-normal text-amber-800">{pending.length} awaiting approval</span>}
+              </h2>
+              <div className="divide-y divide-slate-100">
+                {pending.map((s) => (
+                  <div key={s.id} className="flex flex-wrap items-center gap-3 px-5 py-3.5">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-bold text-slate-900">QCore Support requests access to your <span className="text-blue-700">{s.requested_scope === "daily_log" ? "Daily Logs" : s.requested_scope}</span></p>
+                      <p className="truncate text-xs font-medium text-slate-500">Reason: {s.reason || "—"} · requested {new Date(s.requested_at).toLocaleString()}</p>
+                    </div>
+                    <button type="button" onClick={() => setApproveFor(s)} className="inline-flex min-h-9 items-center gap-1.5 rounded-lg bg-emerald-600 px-3 text-xs font-bold text-white hover:bg-emerald-700">Review &amp; Approve</button>
+                    <button type="button" onClick={() => denyRequest(s)} className="inline-flex min-h-9 items-center rounded-lg border border-rose-200 bg-white px-3 text-xs font-bold text-rose-700 hover:bg-rose-50">Deny</button>
+                  </div>
+                ))}
+                {active.map((s) => (
+                  <div key={s.id} className="flex flex-wrap items-center gap-3 px-5 py-3.5">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-bold text-slate-900">Active grant — {s.requested_scope === "daily_log" ? "Daily Logs" : s.requested_scope} <span className="text-xs font-semibold text-slate-400">({(s.approved_resources || []).length} report{(s.approved_resources || []).length === 1 ? "" : "s"} shared{s.unmask ? ", names visible" : ", masked"})</span></p>
+                      <p className="text-xs font-semibold text-emerald-600">Expires {s.expires_at ? new Date(s.expires_at).toLocaleString() : "—"}</p>
+                    </div>
+                    <button type="button" onClick={() => endGrant(s)} className="inline-flex min-h-9 items-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 hover:bg-slate-50">Revoke now</button>
+                  </div>
+                ))}
+              </div>
+            </section>
+          );
+        })()}
 
         {(showAll || section === "settings") && (
           <SectionCard
@@ -506,6 +561,101 @@ export default function CompanyAdminDashboard() {
           </div>
         )}
 
+        {approveFor && (
+          <SupportApproveModal
+            session={approveFor}
+            onClose={() => setApproveFor(null)}
+            onApproved={async () => { setApproveFor(null); await refresh(); }}
+          />
+        )}
+
+      </div>
+    </div>
+  );
+}
+
+// Company admin approves a support request: pick exactly which daily logs to
+// share, for how long, and whether to also reveal names.
+function SupportApproveModal({ session, onClose, onApproved }) {
+  const [logs, setLogs] = useState(null);
+  const [selected, setSelected] = useState({});
+  const [duration, setDuration] = useState(24);
+  const [unmask, setUnmask] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    listCompanyDailyLogs().then(setLogs);
+  }, []);
+
+  function toggle(log) {
+    setSelected((prev) => {
+      const next = { ...prev };
+      if (next[log.id]) delete next[log.id];
+      else next[log.id] = `${log.project_name} — ${log.log_date || "no date"} (${log.status || "draft"})`;
+      return next;
+    });
+  }
+
+  async function approve() {
+    const resources = Object.entries(selected).map(([id, label]) => ({ id: String(id), label }));
+    if (!resources.length) { window.alert("Select at least one daily log to share."); return; }
+    setBusy(true);
+    try {
+      await approveSupportRequest(session.id, resources, Number(duration), unmask);
+      await onApproved();
+    } catch (err) { window.alert(err.message); setBusy(false); }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/60 sm:items-center sm:p-4">
+      <div className="flex max-h-[94vh] w-full max-w-lg flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl sm:rounded-3xl">
+        <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+          <h3 className="text-lg font-bold text-slate-950">Approve Support Access</h3>
+          <button type="button" onClick={onClose} className="rounded-full border border-slate-200 p-2"><X className="h-4 w-4" /></button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+          <p className="text-[13px] font-medium text-slate-500">Choose exactly which daily logs to share. Only these will be visible to support, read-only, until the access expires.</p>
+          <p className="mt-1 text-xs font-semibold text-slate-400">Reason given: {session.reason || "—"}</p>
+
+          <p className="mt-4 mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">Daily logs to share</p>
+          <div className="max-h-64 space-y-1.5 overflow-y-auto rounded-xl border border-slate-200 p-2">
+            {logs === null && <p className="px-2 py-3 text-sm font-semibold text-slate-400">Loading…</p>}
+            {logs && !logs.length && <p className="px-2 py-3 text-sm font-semibold text-slate-400">No daily logs found.</p>}
+            {logs && logs.map((log) => (
+              <label key={log.id} className="flex cursor-pointer items-center gap-3 rounded-lg px-2 py-2 hover:bg-slate-50">
+                <input type="checkbox" checked={!!selected[log.id]} onChange={() => toggle(log)} className="h-4 w-4 rounded border-slate-300" />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-bold text-slate-800">{log.project_name}</span>
+                  <span className="block truncate text-xs font-medium text-slate-400">{log.log_date || "no date"} · {log.status || "draft"}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+
+          <div className="mt-4 grid grid-cols-2 gap-3">
+            <label className="block">
+              <span className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Access expires after</span>
+              <select value={duration} onChange={(e) => setDuration(e.target.value)} className="mt-1 h-10 w-full rounded-xl border border-slate-300 px-2 text-sm font-semibold">
+                <option value={1}>1 hour</option>
+                <option value={24}>24 hours</option>
+                <option value={168}>7 days</option>
+              </select>
+            </label>
+            <label className="flex cursor-pointer items-end gap-2 pb-1.5">
+              <input type="checkbox" checked={unmask} onChange={(e) => setUnmask(e.target.checked)} className="h-4 w-4 rounded border-slate-300" />
+              <span className="text-[13px] font-semibold text-slate-700">Also reveal names</span>
+            </label>
+          </div>
+          <p className="mt-2 flex items-center gap-1.5 text-[11px] font-semibold text-slate-400">
+            <Lock className="h-3 w-3" /> {unmask ? "Names will be visible. Signatures and file contents stay hidden." : "Names, signatures, and file contents stay masked."}
+          </p>
+        </div>
+        <div className="grid grid-cols-2 gap-2 border-t border-slate-100 px-5 py-4">
+          <button type="button" onClick={onClose} className="min-h-11 rounded-xl border border-slate-300 bg-white text-sm font-bold text-slate-700">Cancel</button>
+          <button type="button" onClick={approve} disabled={busy} className="min-h-11 rounded-xl bg-emerald-600 text-sm font-bold text-white hover:bg-emerald-700 disabled:opacity-50">
+            {busy ? "Approving…" : "Approve access"}
+          </button>
+        </div>
       </div>
     </div>
   );
