@@ -9,8 +9,7 @@ import {
   createHydrometerReport,
   formatHydrometerStatus,
   getHydrometerReport,
-  saveHydrometerReport,
-  usdaTexture
+  saveHydrometerReport
 } from "../services/hydrometerService";
 import { openHydrometerPdf } from "../services/hydrometerPdfService";
 
@@ -62,49 +61,65 @@ const CLASS_FILL = {
   "silt loam": "#bbf7d0", "silt": "#a7f3d0", "sandy clay loam": "#fecaca", "clay loam": "#c7d2fe",
   "silty clay loam": "#bfdbfe", "sandy clay": "#fca5a5", "silty clay": "#93c5fd", "clay": "#a5b4fc"
 };
-const REGION_LABELS = [
-  ["sand", 92, 3], ["loamy sand", 82, 8], ["sandy loam", 62, 11], ["loam", 40, 15], ["silt loam", 21, 13],
-  ["silt", 6, 5], ["sandy clay loam", 57, 27], ["clay loam", 33, 33], ["silty clay loam", 10, 33],
-  ["sandy clay", 50, 42], ["silty clay", 13, 47], ["clay", 25, 62]
+// Canonical USDA texture-class polygons; each vertex is [sand%, clay%].
+const TEXTURE_POLYS = [
+  { name: "clay", v: [[0, 100], [0, 60], [20, 40], [45, 40], [45, 55]] },
+  { name: "silty clay", v: [[0, 60], [0, 40], [20, 40]] },
+  { name: "sandy clay", v: [[45, 55], [45, 35], [65, 35]] },
+  { name: "clay loam", v: [[20, 40], [45, 40], [45, 27], [20, 27]] },
+  { name: "silty clay loam", v: [[0, 40], [20, 40], [20, 27], [0, 27]] },
+  { name: "sandy clay loam", v: [[45, 35], [45, 27], [52, 20], [80, 20], [65, 35]] },
+  { name: "loam", v: [[23, 27], [45, 27], [52, 20], [52, 7], [43, 7]] },
+  { name: "silt loam", v: [[0, 27], [23, 27], [50, 0], [20, 0], [8, 12], [0, 12]] },
+  { name: "sandy loam", v: [[43, 7], [52, 7], [52, 20], [80, 20], [85, 15], [70, 0], [50, 0]] },
+  { name: "loamy sand", v: [[70, 0], [85, 15], [90, 10], [85, 0]] },
+  { name: "sand", v: [[85, 0], [90, 10], [100, 0]] },
+  { name: "silt", v: [[0, 12], [8, 12], [20, 0], [0, 0]] }
 ];
 
-// USDA soil-texture triangle (ternary). Regions filled by the classifier; sample plotted.
+// Label anchors: [text-lines, sand%, clay%].
+const TEXTURE_LABELS = [
+  [["clay"], 30, 58], [["silty", "clay"], 10, 47], [["sandy", "clay"], 52, 42],
+  [["clay loam"], 32, 33], [["silty clay", "loam"], 9, 33], [["sandy clay", "loam"], 60, 25],
+  [["loam"], 41, 15], [["silt loam"], 18, 9], [["sandy loam"], 63, 8],
+  [["loamy", "sand"], 80, 6], [["sand"], 91, 3], [["silt"], 7, 5]
+];
+
+// USDA soil-texture triangle (ternary). Sand bottom-left, silt bottom-right, clay apex.
 function TextureTriangle({ sand, silt, clay, texture }) {
-  const W = 420, H = 380, pad = 46, size = W - pad * 2, hgt = size * Math.sqrt(3) / 2;
+  const W = 470, H = 430, pad = 54, size = W - pad * 2, hgt = size * Math.sqrt(3) / 2;
   const ox = pad, oy = pad + hgt;  // bottom-left (sand corner) origin
   const pt = (sa, cl) => { const si = 100 - sa - cl; return [ox + (si / 100 + 0.5 * cl / 100) * size, oy - (cl / 100) * hgt]; };
-  // mesh fill
-  const N = 22, tris = [];
-  for (let a = 0; a < N; a += 1) for (let b = 0; b < N - a; b += 1) {
-    const cells = [[[a, b], [a + 1, b], [a, b + 1]]];
-    if (a + b < N - 1) cells.push([[a + 1, b], [a, b + 1], [a + 1, b + 1]]);
-    for (const tri of cells) {
-      const verts = tri.map(([i, j]) => { const sa = (i / N) * 100, cl = ((N - i - j) / N) * 100; return pt(sa, cl); });
-      const cen = tri.reduce((acc, [i, j]) => { acc.sa += (i / N) * 100; acc.cl += ((N - i - j) / N) * 100; return acc; }, { sa: 0, cl: 0 });
-      const cls = usdaTexture(cen.sa / 3, 100 - cen.sa / 3 - cen.cl / 3, cen.cl / 3);
-      tris.push({ d: `M ${verts.map((v) => v.join(" ")).join(" L ")} Z`, fill: CLASS_FILL[cls] || "#f1f5f9" });
-    }
-  }
-  const grid = [];
-  for (let v = 10; v <= 90; v += 10) {
-    grid.push([pt(100 - v, v)[0], pt(100 - v, v)[1], pt(0, v)[0], pt(0, v)[1]]);          // clay const
-    grid.push([pt(v, 0)[0], pt(v, 0)[1], pt(v, 100 - v)[0], pt(v, 100 - v)[1]]);          // sand const
-    grid.push([pt(100 - v, 0)[0], pt(100 - v, 0)[1], pt(0, v)[0], pt(0, v)[1]]);          // silt const
-  }
-  const corners = [pt(100, 0), pt(0, 0), pt(0, 100)];
-  const here = sand != null && clay != null ? pt(sand, clay) : null;
+  const poly = (v) => `M ${v.map(([s, c]) => pt(s, c).join(" ")).join(" L ")} Z`;
+  const ticks = [10, 20, 30, 40, 50, 60, 70, 80, 90];
+  const has = sand != null && clay != null && silt != null;
+  const P = has ? pt(sand, clay) : null;
   return (
     <div className="overflow-x-auto">
       <p className="mb-1 text-center text-sm font-bold text-slate-900">USDA Soil Texture</p>
-      <svg viewBox={`0 0 ${W} ${H}`} className="w-full min-w-[320px]" style={{ border: "1px solid #cbd5e1", borderRadius: "10px", background: "white" }}>
-        {tris.map((t, i) => <path key={i} d={t.d} fill={t.fill} fillOpacity="0.55" stroke="none" />)}
-        {grid.map((g, i) => <line key={i} x1={g[0]} y1={g[1]} x2={g[2]} y2={g[3]} stroke="#ffffff" strokeWidth="0.6" />)}
-        <polygon points={corners.map((c) => c.join(",")).join(" ")} fill="none" stroke="#0f172a" strokeWidth="1.2" />
-        {REGION_LABELS.map(([name, sa, cl]) => { const [x, y] = pt(sa, cl); return <text key={name} x={x} y={y} textAnchor="middle" fontSize="6.5" fontWeight="bold" fill="#334155">{name}</text>; })}
-        {here && <circle cx={here[0]} cy={here[1]} r="5" fill="#bd5d3a" stroke="#7c2d12" strokeWidth="1.2" />}
-        <text x={ox + size / 2} y={oy + 26} textAnchor="middle" fontSize="9" fontWeight="bold" fill="#0f172a">percent sand →</text>
-        <text x={ox - 6} y={oy - hgt / 2} textAnchor="middle" fontSize="9" fontWeight="bold" fill="#0f172a" transform={`rotate(-60, ${ox - 6}, ${oy - hgt / 2})`}>← percent clay</text>
-        <text x={ox + size + 6} y={oy - hgt / 2} textAnchor="middle" fontSize="9" fontWeight="bold" fill="#0f172a" transform={`rotate(60, ${ox + size + 6}, ${oy - hgt / 2})`}>percent silt →</text>
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full min-w-[340px]" style={{ border: "1px solid #cbd5e1", borderRadius: "10px", background: "white" }}>
+        {TEXTURE_POLYS.map((r) => <path key={`f${r.name}`} d={poly(r.v)} fill={CLASS_FILL[r.name] || "#f1f5f9"} fillOpacity={r.name === texture ? 0.85 : 0.38} stroke="none" />)}
+        {ticks.map((v) => <line key={`gc${v}`} x1={pt(100 - v, v)[0]} y1={pt(100 - v, v)[1]} x2={pt(0, v)[0]} y2={pt(0, v)[1]} stroke="#cbd5e1" strokeWidth="0.4" />)}
+        {ticks.map((v) => <line key={`gs${v}`} x1={pt(v, 0)[0]} y1={pt(v, 0)[1]} x2={pt(v, 100 - v)[0]} y2={pt(v, 100 - v)[1]} stroke="#cbd5e1" strokeWidth="0.4" />)}
+        {ticks.map((v) => <line key={`gi${v}`} x1={pt(100 - v, 0)[0]} y1={pt(100 - v, 0)[1]} x2={pt(0, 100 - v)[0]} y2={pt(0, 100 - v)[1]} stroke="#cbd5e1" strokeWidth="0.4" />)}
+        {TEXTURE_POLYS.map((r) => <path key={`b${r.name}`} d={poly(r.v)} fill="none" stroke="#475569" strokeWidth="0.8" />)}
+        <polygon points={[pt(100, 0), pt(0, 0), pt(0, 100)].map((c) => c.join(",")).join(" ")} fill="none" stroke="#0f172a" strokeWidth="1.4" />
+        {ticks.map((v) => { const [x, y] = pt(v, 0); return <text key={`ns${v}`} x={x} y={y + 11} textAnchor="middle" fontSize="6" fill="#64748b">{v}</text>; })}
+        {ticks.map((v) => { const [x, y] = pt(100 - v, v); return <text key={`nc${v}`} x={x - 7} y={y + 2.4} textAnchor="end" fontSize="6" fill="#64748b">{v}</text>; })}
+        {ticks.map((v) => { const [x, y] = pt(0, 100 - v); return <text key={`ni${v}`} x={x + 7} y={y + 2.4} textAnchor="start" fontSize="6" fill="#64748b">{v}</text>; })}
+        {TEXTURE_LABELS.map(([lines, s, c]) => { const [x, y] = pt(s, c); return <text key={lines.join()} x={x} y={y - (lines.length - 1) * 3.2} textAnchor="middle" fontSize="6.4" fontWeight="bold" fill="#1e293b">{lines.map((ln, i) => <tspan key={i} x={x} dy={i === 0 ? 0 : 6.6}>{ln}</tspan>)}</text>; })}
+        {P && <g>
+          <line x1={P[0]} y1={P[1]} x2={pt(100 - clay, clay)[0]} y2={pt(100 - clay, clay)[1]} stroke="#1d4ed8" strokeWidth="1" />
+          <line x1={P[0]} y1={P[1]} x2={pt(0, 100 - silt)[0]} y2={pt(0, 100 - silt)[1]} stroke="#1d4ed8" strokeWidth="1" />
+          <line x1={P[0]} y1={P[1]} x2={pt(sand, 0)[0]} y2={pt(sand, 0)[1]} stroke="#1d4ed8" strokeWidth="1" />
+          <circle cx={P[0]} cy={P[1]} r="3.4" fill="#bd5d3a" stroke="#7c2d12" strokeWidth="1" />
+          <text x={pt(100 - clay, clay)[0] - 9} y={pt(100 - clay, clay)[1] + 2.4} textAnchor="end" fontSize="7" fontWeight="bold" fill="#1d4ed8">{Number(clay).toFixed(1)}</text>
+          <text x={pt(0, 100 - silt)[0] + 9} y={pt(0, 100 - silt)[1] + 2.4} textAnchor="start" fontSize="7" fontWeight="bold" fill="#1d4ed8">{Number(silt).toFixed(1)}</text>
+          <text x={pt(sand, 0)[0]} y={pt(sand, 0)[1] + 20} textAnchor="middle" fontSize="7" fontWeight="bold" fill="#1d4ed8">{Number(sand).toFixed(1)}</text>
+        </g>}
+        <text x={ox + size / 2} y={oy + 32} textAnchor="middle" fontSize="9" fontWeight="bold" fill="#0f172a">← percent sand</text>
+        <text x={ox - 16} y={oy - hgt / 2} textAnchor="middle" fontSize="9" fontWeight="bold" fill="#0f172a" transform={`rotate(-60, ${ox - 16}, ${oy - hgt / 2})`}>percent clay →</text>
+        <text x={ox + size + 16} y={oy - hgt / 2} textAnchor="middle" fontSize="9" fontWeight="bold" fill="#0f172a" transform={`rotate(60, ${ox + size + 16}, ${oy - hgt / 2})`}>percent silt →</text>
       </svg>
       {texture && <p className="mt-1 text-center text-sm font-bold text-emerald-700">Classification: {texture}</p>}
     </div>

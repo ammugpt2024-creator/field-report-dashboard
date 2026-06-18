@@ -1,6 +1,6 @@
 import jsPdfModule from "jspdf";
 import autoTable from "jspdf-autotable";
-import { computeHydrometerResults, usdaTexture } from "./hydrometerService";
+import { computeHydrometerResults } from "./hydrometerService";
 
 const JsPDFConstructor = jsPdfModule?.jsPDF || jsPdfModule?.default || jsPdfModule;
 const NAVY = [15, 23, 42];
@@ -19,10 +19,26 @@ const CLASS_FILL = {
   "silt loam": [187, 247, 208], "silt": [167, 243, 208], "sandy clay loam": [254, 202, 202], "clay loam": [199, 210, 254],
   "silty clay loam": [191, 219, 254], "sandy clay": [252, 165, 165], "silty clay": [147, 197, 253], "clay": [165, 180, 252]
 };
-const REGION_LABELS = [
-  ["sand", 92, 3], ["loamy sand", 82, 8], ["sandy loam", 62, 11], ["loam", 40, 15], ["silt loam", 21, 13],
-  ["silt", 6, 5], ["sandy clay loam", 57, 27], ["clay loam", 33, 33], ["silty clay loam", 10, 33],
-  ["sandy clay", 50, 42], ["silty clay", 13, 47], ["clay", 25, 62]
+// Canonical USDA texture-class polygons; each vertex is [sand%, clay%].
+const TEXTURE_POLYS = [
+  { name: "clay", v: [[0, 100], [0, 60], [20, 40], [45, 40], [45, 55]] },
+  { name: "silty clay", v: [[0, 60], [0, 40], [20, 40]] },
+  { name: "sandy clay", v: [[45, 55], [45, 35], [65, 35]] },
+  { name: "clay loam", v: [[20, 40], [45, 40], [45, 27], [20, 27]] },
+  { name: "silty clay loam", v: [[0, 40], [20, 40], [20, 27], [0, 27]] },
+  { name: "sandy clay loam", v: [[45, 35], [45, 27], [52, 20], [80, 20], [65, 35]] },
+  { name: "loam", v: [[23, 27], [45, 27], [52, 20], [52, 7], [43, 7]] },
+  { name: "silt loam", v: [[0, 27], [23, 27], [50, 0], [20, 0], [8, 12], [0, 12]] },
+  { name: "sandy loam", v: [[43, 7], [52, 7], [52, 20], [80, 20], [85, 15], [70, 0], [50, 0]] },
+  { name: "loamy sand", v: [[70, 0], [85, 15], [90, 10], [85, 0]] },
+  { name: "sand", v: [[85, 0], [90, 10], [100, 0]] },
+  { name: "silt", v: [[0, 12], [8, 12], [20, 0], [0, 0]] }
+];
+const TEXTURE_LABELS = [
+  [["clay"], 30, 58], [["silty", "clay"], 10, 47], [["sandy", "clay"], 52, 42],
+  [["clay loam"], 32, 33], [["silty clay", "loam"], 9, 33], [["sandy clay", "loam"], 60, 25],
+  [["loam"], 41, 15], [["silt loam"], 18, 9], [["sandy loam"], 63, 8],
+  [["loamy", "sand"], 80, 6], [["sand"], 91, 3], [["silt"], 7, 5]
 ];
 
 function gradationCurve(doc, curve, x0, y0, w, h) {
@@ -50,35 +66,56 @@ function gradationCurve(doc, curve, x0, y0, w, h) {
   doc.text("Percent Finer by Weight", x0 - 30, y0 + h / 2, { align: "center", angle: 90 });
 }
 
-function textureTriangle(doc, sand, clay, x0, oy, size) {
+function textureTriangle(doc, sand, silt, clay, x0, oy, size) {
   const hgt = size * Math.sqrt(3) / 2;
   const pt = (sa, cl) => { const si = 100 - sa - cl; return [x0 + (si / 100 + 0.5 * cl / 100) * size, oy - (cl / 100) * hgt]; };
-  const N = 22;
-  for (let a = 0; a < N; a += 1) for (let b = 0; b < N - a; b += 1) {
-    const cells = [[[a, b], [a + 1, b], [a, b + 1]]];
-    if (a + b < N - 1) cells.push([[a + 1, b], [a, b + 1], [a + 1, b + 1]]);
-    for (const tri of cells) {
-      const verts = tri.map(([i, j]) => { const sa = (i / N) * 100, cl = ((N - i - j) / N) * 100; return pt(sa, cl); });
-      const cen = tri.reduce((acc, [i, j]) => { acc.sa += (i / N) * 100; acc.cl += ((N - i - j) / N) * 100; return acc; }, { sa: 0, cl: 0 });
-      const cls = usdaTexture(cen.sa / 3, 100 - cen.sa / 3 - cen.cl / 3, cen.cl / 3);
-      const fill = CLASS_FILL[cls] || [241, 245, 249];
-      doc.setFillColor(...fill);
-      doc.triangle(verts[0][0], verts[0][1], verts[1][0], verts[1][1], verts[2][0], verts[2][1], "F");
-    }
-  }
-  doc.setDrawColor(255, 255, 255); doc.setLineWidth(0.4);
+  // region fills (fan-triangulate each convex polygon)
+  TEXTURE_POLYS.forEach((r) => {
+    doc.setFillColor(...(CLASS_FILL[r.name] || [241, 245, 249]));
+    const pts = r.v.map(([s, c]) => pt(s, c));
+    for (let i = 1; i < pts.length - 1; i += 1) doc.triangle(pts[0][0], pts[0][1], pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1], "F");
+  });
+  // internal gridlines every 10%
+  doc.setDrawColor(...LINE); doc.setLineWidth(0.25);
   for (let v = 10; v <= 90; v += 10) {
     let p1 = pt(100 - v, v), p2 = pt(0, v); doc.line(p1[0], p1[1], p2[0], p2[1]);
     p1 = pt(v, 0); p2 = pt(v, 100 - v); doc.line(p1[0], p1[1], p2[0], p2[1]);
-    p1 = pt(100 - v, 0); p2 = pt(0, v); doc.line(p1[0], p1[1], p2[0], p2[1]);
+    p1 = pt(100 - v, 0); p2 = pt(0, 100 - v); doc.line(p1[0], p1[1], p2[0], p2[1]);
   }
+  // region boundaries
+  doc.setDrawColor(...SLATE); doc.setLineWidth(0.4);
+  TEXTURE_POLYS.forEach((r) => { const pts = r.v.map(([s, c]) => pt(s, c)); for (let i = 0; i < pts.length; i += 1) { const a = pts[i], b = pts[(i + 1) % pts.length]; doc.line(a[0], a[1], b[0], b[1]); } });
+  // outer triangle
   const c = [pt(100, 0), pt(0, 0), pt(0, 100)];
   doc.setDrawColor(...NAVY); doc.setLineWidth(1); doc.line(c[0][0], c[0][1], c[1][0], c[1][1]); doc.line(c[1][0], c[1][1], c[2][0], c[2][1]); doc.line(c[2][0], c[2][1], c[0][0], c[0][1]);
-  doc.setFont("helvetica", "bold"); doc.setFontSize(5.5); doc.setTextColor(51, 65, 85);
-  REGION_LABELS.forEach(([name, sa, cl]) => { const [x, y] = pt(sa, cl); doc.text(name, x, y, { align: "center" }); });
-  if (sand != null && clay != null) { const [x, y] = pt(sand, clay); doc.setFillColor(...ACCENT); doc.circle(x, y, 2.6, "F"); }
-  doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.setTextColor(...NAVY);
-  doc.text("percent sand", x0 + size / 2, oy + 16, { align: "center" });
+  // axis tick numbers
+  doc.setFont("helvetica", "normal"); doc.setFontSize(4.5); doc.setTextColor(...MUTED);
+  for (let v = 10; v <= 90; v += 10) {
+    let p = pt(v, 0); doc.text(String(v), p[0], p[1] + 7, { align: "center" });
+    p = pt(100 - v, v); doc.text(String(v), p[0] - 5, p[1] + 1.5, { align: "right" });
+    p = pt(0, 100 - v); doc.text(String(v), p[0] + 5, p[1] + 1.5, { align: "left" });
+  }
+  // region labels
+  doc.setFont("helvetica", "bold"); doc.setFontSize(4.6); doc.setTextColor(30, 41, 59);
+  TEXTURE_LABELS.forEach(([lines, sa, cl]) => { const [x, y] = pt(sa, cl); lines.forEach((ln, i) => doc.text(ln, x, y - (lines.length - 1) * 2.2 + i * 4.4, { align: "center" })); });
+  // sample crosshair (constant clay / silt / sand lines through the point)
+  if (sand != null && silt != null && clay != null) {
+    const P = pt(sand, clay);
+    doc.setDrawColor(29, 78, 216); doc.setLineWidth(0.7);
+    let e = pt(100 - clay, clay); doc.line(P[0], P[1], e[0], e[1]);
+    e = pt(0, 100 - silt); doc.line(P[0], P[1], e[0], e[1]);
+    e = pt(sand, 0); doc.line(P[0], P[1], e[0], e[1]);
+    doc.setFillColor(...ACCENT); doc.circle(P[0], P[1], 2.2, "F");
+    doc.setFont("helvetica", "bold"); doc.setFontSize(6); doc.setTextColor(29, 78, 216);
+    e = pt(100 - clay, clay); doc.text(Number(clay).toFixed(1), e[0] - 6, e[1] + 1.5, { align: "right" });
+    e = pt(0, 100 - silt); doc.text(Number(silt).toFixed(1), e[0] + 6, e[1] + 1.5, { align: "left" });
+    e = pt(sand, 0); doc.text(Number(sand).toFixed(1), e[0], e[1] + 13, { align: "center" });
+  }
+  // axis titles
+  doc.setFont("helvetica", "bold"); doc.setFontSize(7.5); doc.setTextColor(...NAVY);
+  doc.text("percent sand", x0 + size / 2, oy + 20, { align: "center" });
+  doc.text("percent clay", x0 - 16, oy - hgt / 2, { align: "center", angle: 60 });
+  doc.text("percent silt", x0 + size + 16, oy - hgt / 2, { align: "center", angle: -60 });
 }
 
 export function generateHydrometerPdfBlob(report) {
@@ -129,7 +166,7 @@ export function generateHydrometerPdfBlob(report) {
   doc.setFont("helvetica", "bold"); doc.setFontSize(11); doc.setTextColor(...NAVY);
   doc.text("USDA Soil Texture", pageWidth / 2, y, { align: "center" });
   const triSize = 280;
-  textureTriangle(doc, res.sand, res.clay, (pageWidth - triSize) / 2, y + 20 + triSize * Math.sqrt(3) / 2, triSize);
+  textureTriangle(doc, res.sand, res.silt, res.clay, (pageWidth - triSize) / 2, y + 20 + triSize * Math.sqrt(3) / 2, triSize);
 
   const pages = doc.internal.getNumberOfPages();
   for (let p = 1; p <= pages; p += 1) {
