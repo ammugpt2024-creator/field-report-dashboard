@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { getCompanyById, getCompanyUsage } from "../services/tenantService";
 import { fetchAuditLogs } from "../services/auditLogService";
+import { planLimits, formatLimit, usageTone, utilization } from "../config/planLimits";
 
 const STATUS_TONES = {
   trial: "border-amber-200 bg-amber-50 text-amber-700",
@@ -37,6 +38,23 @@ function MetricTile({ icon: Icon, label, value }) {
       <div className="min-w-0">
         <p className="text-xl font-bold leading-tight text-slate-900">{value}</p>
         <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">{label}</p>
+      </div>
+    </div>
+  );
+}
+
+function UsageBar({ label, used, limit }) {
+  const tone = usageTone(used, limit);
+  const frac = utilization(used, limit);
+  const bar = { ok: "bg-emerald-500", warn: "bg-amber-500", over: "bg-rose-500", unlimited: "bg-slate-300" }[tone];
+  return (
+    <div>
+      <div className="flex items-baseline justify-between text-xs font-semibold">
+        <span className="text-slate-500">{label}</span>
+        <span className={tone === "over" ? "text-rose-600" : "text-slate-700"}>{used ?? 0} <span className="text-slate-400">/ {formatLimit(limit)}</span></span>
+      </div>
+      <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+        <div className={`h-full rounded-full ${bar}`} style={{ width: limit == null ? "8%" : `${Math.max(frac * 100, used ? 4 : 0)}%` }} />
       </div>
     </div>
   );
@@ -82,6 +100,7 @@ export default function CompanyDetail() {
   }, [companyId]);
 
   const subscription = company?.company_subscriptions?.[0] || {};
+  const limits = planLimits(subscription.plan || "trial");
   const reports = useMemo(
     () => (usage.daily_reports ?? 0) + (usage.field_test_reports ?? 0) + (usage.lab_reports ?? 0),
     [usage]
@@ -166,15 +185,20 @@ export default function CompanyDetail() {
         )}
 
         {tab === "usage" && (
-          <div className="space-y-3">
-            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-              <MetricTile icon={Users} label="Users" value={usage.users ?? "–"} />
-              <MetricTile icon={FolderKanban} label="Projects" value={usage.projects ?? "–"} />
-              <MetricTile icon={FileStack} label="Reports" value={reports} />
-              <MetricTile icon={HardDrive} label="Files" value={usage.storage_objects ?? "–"} />
-            </div>
+          <div className="space-y-4">
+            <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+              <h2 className="flex items-center gap-2 border-b border-slate-100 px-5 py-4 text-sm font-bold uppercase tracking-wide text-slate-500">
+                <BarChart3 className="h-4 w-4 text-slate-400" /> Usage vs. <span className="capitalize">{limits.label}</span> Plan
+              </h2>
+              <div className="grid grid-cols-1 gap-4 px-5 py-4 sm:grid-cols-2">
+                <UsageBar label="Users" used={usage.users} limit={limits.users} />
+                <UsageBar label="Projects" used={usage.projects} limit={limits.projects} />
+                <UsageBar label="Reports" used={reports} limit={limits.reports} />
+                <UsageBar label="Files" used={usage.storage_objects} limit={null} />
+              </div>
+            </section>
             <p className="text-xs font-semibold text-slate-400">
-              Seat, storage (GB), and project limits with progress bars arrive with subscription enforcement (Phase 2). Counts above come from the guarded platform usage function.
+              Limits are informational (Phase 2) — usage is shown against the plan's caps but actions are not blocked. Storage shows file count; GB tracking arrives with byte-level usage.
             </p>
           </div>
         )}

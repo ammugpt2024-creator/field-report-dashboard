@@ -17,6 +17,7 @@ import {
 } from "../services/tenantService";
 import { fetchAuditLogs } from "../services/auditLogService";
 import { supabase } from "../services/supabase";
+import { PLAN_LIMITS, PLAN_ORDER, planLimits, formatLimit, usageTone, utilization } from "../config/planLimits";
 
 const PLANS = ["trial", "starter", "professional", "enterprise"];
 const STATUSES = ["active", "trial", "suspended", "cancelled"];
@@ -74,6 +75,51 @@ function auditTone(action = "") {
   if (/(created|invite|added|claimed|activ)/i.test(action)) return "bg-emerald-400";
   if (/(support|access)/i.test(action)) return "bg-amber-400";
   return "bg-slate-300";
+}
+
+// Single labelled usage meter: used vs. plan limit, color-coded by headroom.
+function UsageBar({ label, used, limit }) {
+  const tone = usageTone(used, limit);
+  const frac = utilization(used, limit);
+  const bar = { ok: "bg-emerald-500", warn: "bg-amber-500", over: "bg-rose-500", unlimited: "bg-slate-300" }[tone];
+  return (
+    <div>
+      <div className="flex items-baseline justify-between text-xs font-semibold">
+        <span className="text-slate-500">{label}</span>
+        <span className={tone === "over" ? "text-rose-600" : "text-slate-700"}>
+          {used ?? 0} <span className="text-slate-400">/ {formatLimit(limit)}</span>
+        </span>
+      </div>
+      <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+        <div className={`h-full rounded-full ${bar}`} style={{ width: limit == null ? "8%" : `${Math.max(frac * 100, used ? 4 : 0)}%` }} />
+      </div>
+    </div>
+  );
+}
+
+// Per-company usage panel (used in the Usage section).
+function CompanyUsagePanel({ row }) {
+  const { company, plan, users, projects, reports, files } = row;
+  const limits = planLimits(plan);
+  return (
+    <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="flex items-center gap-3">
+        <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-sm font-bold text-white shadow-sm" style={{ background: company.brand_color || "#1d4ed8" }}>
+          {(company.company_name || "?").charAt(0).toUpperCase()}
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-bold text-slate-900">{company.company_name}</p>
+          <p className="text-xs font-semibold capitalize text-slate-400">{limits.label} plan</p>
+        </div>
+      </div>
+      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <UsageBar label="Users" used={users} limit={limits.users} />
+        <UsageBar label="Projects" used={projects} limit={limits.projects} />
+        <UsageBar label="Reports" used={reports} limit={limits.reports} />
+        <UsageBar label="Files" used={files} limit={null} />
+      </div>
+    </article>
+  );
 }
 
 // Sortable column header.
@@ -300,7 +346,7 @@ export default function PlatformAdminDashboard() {
 
         {error && <p className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm font-semibold text-rose-800">{error}</p>}
 
-        {(section === "companies" || section === "subscriptions" || section === "usage" || section === "support" || section === "settings") && (
+        {(section === "companies") && (
           <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
             {/* Toolbar */}
             <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 px-4 py-3 sm:px-5">
@@ -497,16 +543,163 @@ export default function PlatformAdminDashboard() {
           </section>
         )}
 
+        {/* Subscriptions */}
+        {section === "subscriptions" && (
+          <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+            <h2 className="flex items-center gap-2 border-b border-slate-100 px-5 py-4 text-sm font-bold uppercase tracking-wide text-slate-500">
+              <CreditCard className="h-4 w-4 text-slate-400" /> Subscriptions
+            </h2>
+            <div className="hidden overflow-x-auto lg:block">
+              <table className="w-full border-collapse text-sm">
+                <thead>
+                  <tr className="border-b border-slate-100 bg-slate-50/60 text-[11px] font-bold uppercase tracking-wide text-slate-400">
+                    <th className="px-4 py-3 text-left">Company</th>
+                    <th className="px-4 py-3 text-left">Plan</th>
+                    <th className="px-4 py-3 text-left">Billing</th>
+                    <th className="px-4 py-3 text-right">Seats</th>
+                    <th className="px-4 py-3 text-right">User Cap</th>
+                    <th className="px-4 py-3 text-right">Project Cap</th>
+                    <th className="px-4 py-3 text-left">Renews</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map(({ company, subscription, plan }) => {
+                    const limits = planLimits(plan);
+                    return (
+                      <tr key={company.id} className="border-b border-slate-50 hover:bg-slate-50/70">
+                        <td className="px-4 py-3 font-bold text-slate-900">{company.company_name}</td>
+                        <td className="px-4 py-3">
+                          <select value={plan} onChange={(e) => changePlan(company, e.target.value)} className="h-8 rounded-lg border border-slate-300 bg-white px-2 text-xs font-semibold capitalize text-slate-900 outline-none focus:border-blue-500">
+                            {PLANS.map((p) => <option key={p} value={p}>{p}</option>)}
+                          </select>
+                        </td>
+                        <td className="px-4 py-3"><span className={`text-xs font-bold ${subscription.billing_status === "past_due" ? "text-rose-600" : "text-emerald-600"}`}>{subscription.billing_status || "current"}</span></td>
+                        <td className="px-4 py-3 text-right font-semibold tabular-nums text-slate-700">{subscription.seats ?? "—"}</td>
+                        <td className="px-4 py-3 text-right font-semibold tabular-nums text-slate-700">{formatLimit(limits.users)}</td>
+                        <td className="px-4 py-3 text-right font-semibold tabular-nums text-slate-700">{formatLimit(limits.projects)}</td>
+                        <td className="px-4 py-3 text-xs font-medium text-slate-500">{subscription.current_period_end ? new Date(subscription.current_period_end).toLocaleDateString() : "—"}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div className="divide-y divide-slate-100 lg:hidden">
+              {rows.map(({ company, subscription, plan }) => {
+                const limits = planLimits(plan);
+                return (
+                  <div key={company.id} className="px-4 py-3">
+                    <p className="font-bold text-slate-900">{company.company_name}</p>
+                    <p className="mt-0.5 text-xs font-semibold capitalize text-slate-400">{limits.label} · {subscription.billing_status || "current"} · caps {formatLimit(limits.users)} users / {formatLimit(limits.projects)} projects</p>
+                    <select value={plan} onChange={(e) => changePlan(company, e.target.value)} className="mt-2 h-9 w-full rounded-lg border border-slate-300 bg-white px-2 text-xs font-semibold capitalize text-slate-900">
+                      {PLANS.map((p) => <option key={p} value={p}>{p}</option>)}
+                    </select>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        )}
+
+        {/* Usage analytics */}
+        {section === "usage" && (
+          <section className="space-y-4">
+            <div className="flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-slate-500">
+              <BarChart3 className="h-4 w-4 text-slate-400" /> Usage vs. Plan Limits
+            </div>
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+              {rows.map((row) => <CompanyUsagePanel key={row.company.id} row={row} />)}
+            </div>
+            <p className="text-xs font-semibold text-slate-400">
+              Limits are informational (Phase 2) — usage is shown against each plan's caps but actions are not yet blocked. Storage is shown as file count; GB tracking arrives with byte-level usage.
+            </p>
+          </section>
+        )}
+
+        {/* Support access */}
+        {section === "support" && (
+          <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+            <h2 className="flex items-center gap-2 border-b border-slate-100 px-5 py-4 text-sm font-bold uppercase tracking-wide text-slate-500">
+              <ShieldCheck className="h-4 w-4 text-slate-400" /> Support Access
+              {supportSessions.length > 0 && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold normal-case tracking-normal text-amber-800">{supportSessions.length} active</span>}
+            </h2>
+            <div className="divide-y divide-slate-100">
+              {companies.map((company) => {
+                const support = activeSupportFor(company.id);
+                return (
+                  <div key={company.id} className="flex flex-wrap items-center gap-3 px-5 py-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-bold text-slate-900">{company.company_name}</p>
+                      <p className="truncate text-xs font-medium text-slate-400">
+                        {support ? `Active session — ${support.reason || "no reason given"}` : "No active support session"}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => toggleSupport(company)}
+                      className={`inline-flex min-h-9 items-center gap-1.5 rounded-lg px-3 text-xs font-bold transition ${support ? "bg-amber-100 text-amber-800 hover:bg-amber-200" : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"}`}
+                    >
+                      <ShieldCheck className="h-3.5 w-3.5" />
+                      {support ? "End Access" : "Start Access"}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+            <p className="px-5 py-3 text-xs font-semibold text-amber-700">Support access is read-only and fully audited. Tenant record data is never exposed without an active session.</p>
+          </section>
+        )}
+
+        {/* Settings — plan limit reference matrix */}
+        {section === "settings" && (
+          <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+            <h2 className="flex items-center gap-2 border-b border-slate-100 px-5 py-4 text-sm font-bold uppercase tracking-wide text-slate-500">
+              <CreditCard className="h-4 w-4 text-slate-400" /> Plan Limits
+            </h2>
+            <div className="overflow-x-auto">
+              <table className="w-full border-collapse text-sm">
+                <thead>
+                  <tr className="border-b border-slate-100 bg-slate-50/60 text-[11px] font-bold uppercase tracking-wide text-slate-400">
+                    <th className="px-4 py-3 text-left">Plan</th>
+                    <th className="px-4 py-3 text-right">Users</th>
+                    <th className="px-4 py-3 text-right">Projects</th>
+                    <th className="px-4 py-3 text-right">Reports</th>
+                    <th className="px-4 py-3 text-right">Storage</th>
+                    <th className="px-4 py-3 text-left">Features</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {PLAN_ORDER.map((key) => {
+                    const p = PLAN_LIMITS[key];
+                    return (
+                      <tr key={key} className="border-b border-slate-50">
+                        <td className="px-4 py-3 font-bold capitalize text-slate-900">{p.label}</td>
+                        <td className="px-4 py-3 text-right tabular-nums text-slate-700">{formatLimit(p.users)}</td>
+                        <td className="px-4 py-3 text-right tabular-nums text-slate-700">{formatLimit(p.projects)}</td>
+                        <td className="px-4 py-3 text-right tabular-nums text-slate-700">{formatLimit(p.reports)}</td>
+                        <td className="px-4 py-3 text-right tabular-nums text-slate-700">{p.storageGb == null ? "∞" : `${p.storageGb} GB`}</td>
+                        <td className="px-4 py-3 text-xs font-medium text-slate-500">{p.features.length ? p.features.join(", ") : "—"}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <p className="px-4 py-3 text-xs font-semibold text-slate-400">∞ = unlimited. These caps drive the Usage meters. Editable per-company limits and enforcement are planned.</p>
+          </section>
+        )}
+
         {(section === "audit" || section === "companies") && (
           <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
             <button
               type="button"
               onClick={() => setAuditOpen((value) => !value)}
-              aria-expanded={auditOpen}
+              aria-expanded={auditOpen || section === "audit"}
+              disabled={section === "audit"}
               title={auditOpen ? "Collapse audit logs" : "Expand audit logs"}
-              className={`flex w-full items-center gap-2 px-5 py-4 text-left text-sm font-bold uppercase tracking-wide text-slate-500 ${auditOpen ? "border-b border-slate-100" : ""}`}
+              className={`flex w-full items-center gap-2 px-5 py-4 text-left text-sm font-bold uppercase tracking-wide text-slate-500 ${(auditOpen || section === "audit") ? "border-b border-slate-100" : ""}`}
             >
-              <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border border-slate-300 bg-white text-slate-600 transition hover:border-slate-400 hover:bg-slate-50">
+              <span className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border border-slate-300 bg-white text-slate-600 transition hover:border-slate-400 hover:bg-slate-50 ${section === "audit" ? "invisible" : ""}`}>
                 {auditOpen ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
               </span>
               <ListChecks className="h-4 w-4 text-slate-400" /> Audit Logs
@@ -514,7 +707,7 @@ export default function PlatformAdminDashboard() {
                 <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[11px] font-bold normal-case tracking-normal text-slate-600">{auditLogs.length}</span>
               )}
             </button>
-            {auditOpen && (
+            {(auditOpen || section === "audit") && (
             <div className="divide-y divide-slate-100">
               {auditLogs.map((log) => (
                 <div key={log.id} className="flex min-w-0 items-center gap-3 px-5 py-3">
