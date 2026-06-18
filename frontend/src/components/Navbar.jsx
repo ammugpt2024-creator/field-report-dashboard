@@ -29,6 +29,7 @@ import { getRoleHomeRoute } from "../utils/navigation";
 import { isQcRole, ROLES } from "../utils/permissions";
 import { BRAND, MODULE_NAMES } from "../config/branding";
 import { getCompanyBranding } from "../services/brandingService";
+import { globalSearch } from "../services/searchService";
 import { FIELD_ENGINEER_NAV } from "../modules/field-engineer/fieldEngineerConfig";
 import { LogoMark } from "./Logo";
 
@@ -40,6 +41,9 @@ function Navbar() {
   const [companyOpen, setCompanyOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [search, setSearch] = useState("");
+  const [results, setResults] = useState([]);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searching, setSearching] = useState(false);
 
   const {
     session,
@@ -188,6 +192,30 @@ function Navbar() {
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [profileOpen, companyOpen]);
 
+  // Debounced, access-scoped global search (RLS filters results to the user).
+  useEffect(() => {
+    const q = search.trim();
+    const handle = window.setTimeout(() => {
+      if (q.length < 2) { setResults([]); setSearching(false); return; }
+      setSearching(true);
+      globalSearch(q)
+        .then((rows) => { setResults(rows); setSearchOpen(true); })
+        .catch(() => setResults([]))
+        .finally(() => setSearching(false));
+    }, 250);
+    return () => window.clearTimeout(handle);
+  }, [search]);
+
+  function openResult(r) {
+    setSearchOpen(false);
+    setSearch("");
+    if (r.type === "report" && r.projectId) {
+      navigate(`/project/${r.projectId}/field-reports/concrete-test-log/${r.id}`);
+    } else if (r.projectId) {
+      navigate(`/project/${r.projectId}`);
+    }
+  }
+
   async function handleLogout() {
     try {
       const { error } = await supabase.auth.signOut();
@@ -257,9 +285,36 @@ function Navbar() {
               type="search"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
+              onFocus={() => { if (results.length) setSearchOpen(true); }}
               placeholder="Search projects, reports, logs…"
               className="h-9 w-full rounded-xl border border-slate-200 bg-slate-50 pl-9 pr-4 text-sm font-medium text-slate-800 outline-none transition placeholder:text-slate-400 hover:bg-slate-100 focus:border-blue-400 focus:bg-white focus:ring-2 focus:ring-blue-100"
             />
+            {searchOpen && search.trim().length >= 2 && (
+              <>
+                <button type="button" aria-label="Close search" onClick={() => setSearchOpen(false)} className="fixed inset-0 z-40 cursor-default" />
+                <div className="absolute left-0 right-0 top-full z-50 mt-1.5 max-h-[60vh] overflow-y-auto rounded-xl border border-slate-200 bg-white py-1.5 shadow-2xl shadow-slate-950/10">
+                  {searching && <p className="px-3 py-2 text-sm font-semibold text-slate-400">Searching…</p>}
+                  {!searching && !results.length && <p className="px-3 py-2 text-sm font-semibold text-slate-400">No matches you can access.</p>}
+                  {results.map((r) => (
+                    <button
+                      key={`${r.type}-${r.id}`}
+                      type="button"
+                      onClick={() => openResult(r)}
+                      className="flex w-full items-center gap-2.5 px-3 py-2 text-left hover:bg-slate-50"
+                    >
+                      <span className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${r.type === "report" ? "bg-violet-50 text-violet-600" : r.type === "daily_log" ? "bg-blue-50 text-blue-600" : "bg-slate-100 text-slate-500"}`}>
+                        {r.type === "report" ? <FileCheck2 className="h-4 w-4" /> : r.type === "daily_log" ? <ClipboardCheck className="h-4 w-4" /> : <FolderKanban className="h-4 w-4" />}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-semibold text-slate-800">{r.title}</span>
+                        {r.subtitle && <span className="block truncate text-xs font-medium text-slate-400">{r.subtitle}</span>}
+                      </span>
+                      <span className="shrink-0 text-[10px] font-bold uppercase tracking-wide text-slate-400">{r.type === "daily_log" ? "log" : r.type}</span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
         </div>
 
