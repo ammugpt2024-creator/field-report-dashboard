@@ -24,6 +24,8 @@ import AsphaltGravityReport from "./pages/AsphaltGravityReport";
 import AsphaltGravityList from "./pages/AsphaltGravityList";
 import GradationReport from "./pages/GradationReport";
 import GradationList from "./pages/GradationList";
+import ProctorReportPage from "./pages/ProctorReportPage";
+import ProctorList from "./pages/ProctorList";
 import TimesheetsPage from "./pages/TimesheetsPage";
 import ProjectWorkspace from "./pages/ProjectWorkspace";
 import FieldReports from "./pages/FieldReports";
@@ -161,6 +163,16 @@ function App() {
         <Route
           path="/technician/lab/gradation/:reportId"
           element={<GradationReport />}
+        />
+
+        <Route
+          path="/technician/lab/proctor"
+          element={<ProctorList />}
+        />
+
+        <Route
+          path="/technician/lab/proctor/:reportId"
+          element={<ProctorReportPage />}
         />
 
         <Route
