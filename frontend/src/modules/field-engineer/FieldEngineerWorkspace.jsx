@@ -3543,7 +3543,7 @@ function LabReportsPage({ navigate }) {
   );
 }
 
-function DailyLogsPage({ logCollections, initialTab = "draft", onOpenLog, onCreateLog, onDeleteLog, onRecallLog, onDownloadLogPdf }) {
+function DailyLogsPage({ navigate, logCollections, initialTab = "draft", onOpenLog, onCreateLog, onDeleteLog, onRecallLog, onDownloadLogPdf }) {
   const [activeTab, setActiveTab] = useState(initialTab);
   const [searchTerm, setSearchTerm] = useState("");
   useEffect(() => {
@@ -3580,15 +3580,21 @@ function DailyLogsPage({ logCollections, initialTab = "draft", onOpenLog, onCrea
 
   return (
     <>
-      <section className={cardClass()}>
-        <div className="flex items-center justify-between gap-3">
-          {commandCenterTitle("Daily Logs", "Review Daily Field Logs by status.")}
-          <button type="button" onClick={onCreateLog} className="min-h-10 shrink-0 rounded-xl bg-slate-950 px-3 text-sm font-bold text-white sm:min-h-11 sm:rounded-2xl sm:px-4">
-            <span className="sm:hidden">+ New</span>
-            <span className="hidden sm:inline">+ Create Daily Log</span>
-          </button>
+      <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+        <div className="border-b-4 border-accent-500 bg-gradient-to-br from-navy-800 via-navy-900 to-navy-950 px-5 py-5 sm:px-7">
+          <button type="button" onClick={() => navigate("/technician/dashboard?view=reports-home")} className="text-xs font-bold text-slate-400 hover:text-white">&larr; Reports</button>
+          <div className="mt-1 flex items-start justify-between gap-3">
+            <div>
+              <h1 className="text-2xl font-bold text-white sm:text-3xl">Daily Logs</h1>
+              <p className="mt-1 text-xs font-semibold text-slate-400">Review Daily Field Logs by status.</p>
+            </div>
+            <button type="button" onClick={onCreateLog} className="inline-flex min-h-10 shrink-0 items-center rounded-xl bg-accent-500 px-3 text-sm font-bold text-white shadow-lg shadow-accent-950/30 transition hover:bg-accent-600 sm:min-h-11 sm:rounded-2xl sm:px-4">
+              <span className="sm:hidden">+ New</span>
+              <span className="hidden sm:inline">+ Create Daily Log</span>
+            </button>
+          </div>
         </div>
-        <div className="mt-3">
+        <div className="p-5 sm:p-7">
           <StatusTabs tabs={DAILY_LOG_TABS} activeTab={activeTab} onChange={setActiveTab} counts={tabCounts} />
         </div>
       </section>
@@ -4945,6 +4951,7 @@ export default function FieldEngineerWorkspace({
         {Object.prototype.hasOwnProperty.call(logTabByView, currentView) && (
           <DailyLogsPage
             key={currentView}
+            navigate={navigate}
             logCollections={logCollections}
             initialTab={logTabByView[currentView]}
             onOpenLog={openLog}
