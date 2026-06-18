@@ -1188,7 +1188,6 @@ function TimeCardsPage({
           <div className="min-w-0">
             <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-300">Field Operations</p>
             <h1 className="mt-0.5 text-lg font-bold leading-tight tracking-tight text-white sm:text-[28px]">Timesheets</h1>
-            <p className="mt-1 hidden text-[13px] font-medium text-slate-300 sm:block">Track labor records by status.</p>
           </div>
           <button
             type="button"
