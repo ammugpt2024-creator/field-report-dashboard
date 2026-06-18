@@ -3446,7 +3446,7 @@ const LAB_REPORT_SECTIONS = [
       { label: "Proctor — Standard", description: "Standard Proctor moisture-density (ASTM D698 / AASHTO T99).", route: "/technician/lab/proctor" },
       { label: "Proctor — Modified", description: "Modified Proctor moisture-density (ASTM D1557 / AASHTO T180 / VTM-1).", route: "/technician/lab/proctor" },
       { label: "Sieve Analysis", description: "Washed particle size distribution / gradation (ASTM D422).", route: "/technician/lab/gradation" },
-      { label: "Atterberg Limits", description: "Liquid limit, plastic limit, plasticity index." },
+      { label: "Atterberg Limits", description: "Liquid limit, plastic limit, plasticity index (ASTM D4318).", route: "/technician/lab/atterberg" },
       { label: "Hydrometer Analysis", description: "Fine-grained particle size by sedimentation." },
       { label: "CBR (California Bearing Ratio)", description: "Subgrade strength / bearing ratio." }
     ]
