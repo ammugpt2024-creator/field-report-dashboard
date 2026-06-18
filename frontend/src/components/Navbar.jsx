@@ -24,6 +24,7 @@ import { useAuth } from "../context/AuthContext";
 import { getRoleHomeRoute } from "../utils/navigation";
 import { isQcRole, ROLES } from "../utils/permissions";
 import { BRAND, MODULE_NAMES } from "../config/branding";
+import { getCompanyBranding } from "../services/brandingService";
 import { FIELD_ENGINEER_NAV } from "../modules/field-engineer/fieldEngineerConfig";
 import { LogoMark } from "./Logo";
 
@@ -43,6 +44,18 @@ function Navbar() {
     companyName,
     role
   } = useAuth();
+
+  // Company branding (logo + name), read from the module cache that AuthContext
+  // preloads after login; re-read when the company resolves.
+  const [branding, setBranding] = useState(getCompanyBranding());
+  const [logoFailed, setLogoFailed] = useState(false);
+  useEffect(() => {
+    // Sync from the module-level branding cache once the company resolves.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setBranding(getCompanyBranding());
+    setLogoFailed(false);
+  }, [companyName]);
+  const companyDisplay = companyName || branding.name || "Company";
 
   const displayName =
     profile?.full_name ||
@@ -179,19 +192,28 @@ function Navbar() {
 
   return (
 
-    <header className="sticky top-0 z-40 w-full max-w-full overflow-x-hidden border-b-4 border-accent-500 bg-gradient-to-br from-navy-900 via-navy-900 to-navy-950 px-4 py-2.5 text-white sm:px-6">
+    <header className="sticky top-0 z-40 w-full max-w-full overflow-x-hidden border-b border-white/10 bg-gradient-to-br from-navy-900 via-navy-900 to-navy-950 px-4 py-2.5 text-white sm:px-6">
       <div className="flex items-center justify-between gap-3 sm:gap-4">
 
-        {/* LEFT — brand + tagline */}
+        {/* LEFT — platform mark + company branding */}
         <div className="flex min-w-0 items-center gap-3 sm:gap-4">
           <div className="flex shrink-0 items-center gap-0.5">
             <LogoMark tone="light" className="h-8 w-8 sm:h-9 sm:w-9" />
             <span className="-ml-0.5 text-xl font-bold tracking-tight text-white sm:text-2xl">Core</span>
           </div>
-          <div className="hidden h-9 w-px bg-white/15 lg:block" />
-          <div className="hidden min-w-0 lg:block">
-            <p className="truncate text-[13px] font-semibold leading-tight text-white">{BRAND.platformDescription}</p>
-            <p className="truncate text-[11px] font-medium leading-tight text-slate-400">{BRAND.tagline.replace(/\.\s*/g, ". ").trim()}</p>
+          <div className="hidden h-8 w-px bg-white/15 sm:block" />
+          {/* Company brand: its own logo on a legible white chip, name beside it. */}
+          <div className="flex min-w-0 items-center gap-2.5">
+            <span className="inline-flex h-8 items-center justify-center overflow-hidden rounded-lg bg-white px-1.5 shadow-sm">
+              {branding.logoUrl && !logoFailed ? (
+                <img src={branding.logoUrl} alt={companyDisplay} onError={() => setLogoFailed(true)} className="h-6 w-auto max-w-[120px] object-contain" />
+              ) : (
+                <span className="flex h-6 w-6 items-center justify-center rounded bg-navy-900 text-xs font-bold text-white">
+                  {(companyDisplay || "C").charAt(0).toUpperCase()}
+                </span>
+              )}
+            </span>
+            <span className="hidden min-w-0 truncate text-sm font-semibold text-white sm:block">{companyDisplay}</span>
           </div>
         </div>
 
@@ -209,18 +231,8 @@ function Navbar() {
           </div>
         </div>
 
-        {/* RIGHT — company, alerts, help, profile */}
+        {/* RIGHT — alerts, help, profile */}
         <div className="relative flex shrink-0 items-center gap-1 sm:gap-2">
-
-          <button
-            type="button"
-            className="hidden items-center gap-2 rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm font-semibold text-white transition hover:bg-white/10 lg:inline-flex"
-            title={companyName || "Dulles Engineering"}
-          >
-            <Building2 className="h-4 w-4 text-slate-300" />
-            <span className="max-w-[150px] truncate">{companyName || "Dulles Engineering"}</span>
-            <ChevronDown className="h-4 w-4 text-slate-400" />
-          </button>
 
           <button
             type="button"
