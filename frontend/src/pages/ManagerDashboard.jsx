@@ -489,14 +489,14 @@ function SummaryLegendRow({ color, label, count, onClick }) {
 
 function KpiCard({ label, value, icon: Icon, chipClass }) {
   return (
-    <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
       <div className="flex items-center justify-between gap-3">
-        <p className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">{label}</p>
+        <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">{label}</p>
         <span className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl ${chipClass}`}>
           <Icon className="h-4 w-4" />
         </span>
       </div>
-      <p className="mt-3 text-3xl font-bold text-slate-950">{value}</p>
+      <p className="mt-2 text-2xl font-bold text-slate-900">{value}</p>
     </div>
   );
 }
@@ -789,37 +789,38 @@ function ManagerDashboard() {
     { label: "Open Digital Deliverables", icon: FileText, onClick: () => navigate("/project/1/field-reports/concrete-test-log") }
   ];
 
-  const today = new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+  const greeting = (() => {
+    const h = new Date().getHours();
+    return h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
+  })();
 
   return (
-    <div className="w-full max-w-full overflow-x-hidden bg-slate-100 px-4 py-5 sm:px-6 lg:p-8">
-      <div className="mx-auto w-full max-w-[1500px] space-y-5">
-        <section className="overflow-hidden rounded-3xl border border-slate-200 shadow-sm">
-          <div className="border-b-4 border-accent-500 bg-gradient-to-br from-navy-800 via-navy-900 to-navy-950 px-5 py-6 sm:px-8">
-            <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-              <div className="min-w-0">
-                <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">Project Operations Overview</p>
-                <h1 className="mt-1 text-3xl font-bold text-white sm:text-4xl">{MODULE_NAMES.commandCenter}</h1>
-                <p className="mt-2 flex items-center gap-2 text-xs font-semibold text-slate-400">
-                  <CalendarDays className="h-4 w-4" /> {today}
-                </p>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                {pendingDailyLogs.length > 0 && (
-                  <span className="inline-flex items-center gap-2 rounded-full border border-amber-400/40 bg-amber-400/10 px-3 py-1.5 text-xs font-bold text-amber-300">
-                    <Clock className="h-3.5 w-3.5" />
-                    {pendingDailyLogs.length} daily {pendingDailyLogs.length === 1 ? "log" : "logs"} awaiting your review
-                  </span>
-                )}
-                <button
-                  type="button"
-                  onClick={() => navigate("/qc/dashboard")}
-                  className="inline-flex min-h-11 items-center justify-center rounded-2xl bg-blue-600 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-blue-500"
-                >
-                  Open {MODULE_NAMES.validationCenter}
-                </button>
-              </div>
-            </div>
+    <div className="w-full max-w-full overflow-x-hidden bg-slate-50 px-4 py-5 sm:px-6 lg:p-8">
+      <div className="mx-auto w-full max-w-[1500px] space-y-5 sm:space-y-6">
+        <section className="flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h1 className="text-xl font-bold tracking-tight text-slate-900 sm:text-2xl">
+              {greeting}{profile?.full_name ? `, ${profile.full_name}` : ""}
+            </h1>
+            <p className="mt-0.5 text-[13px] font-medium text-slate-500">
+              {pendingDailyLogs.length > 0
+                ? `${pendingDailyLogs.length} daily ${pendingDailyLogs.length === 1 ? "log" : "logs"} awaiting your review`
+                : "No reviews pending"}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {pendingDailyLogs.length > 0 && (
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-bold text-amber-700">
+                <Clock className="h-3.5 w-3.5" /> {pendingDailyLogs.length} pending
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={() => navigate("/qc/dashboard")}
+              className="inline-flex h-10 items-center justify-center gap-1.5 rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
+            >
+              Open {MODULE_NAMES.validationCenter}
+            </button>
           </div>
         </section>
 
