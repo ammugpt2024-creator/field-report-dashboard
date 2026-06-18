@@ -5,10 +5,12 @@ import {
   CalendarDays,
   Camera,
   Calculator,
+  ChevronDown,
   ClipboardCheck,
   Download,
   FileText,
   FlaskConical,
+  FolderKanban,
   HardHat,
   KeyRound,
   Layers3,
@@ -398,6 +400,7 @@ function ActionTimeCardRow({ card, onOpen }) {
 function DashboardOverview({ profile, logCollections, timeCardCollections, onOpenLog, onOpenTimeCard, onCreateLog, navigate }) {
   // Collapsed by default — expand on demand via the +/- control.
   const [activityCollapsed, setActivityCollapsed] = useState(true);
+  const [createOpen, setCreateOpen] = useState(false);
   const actionRequiredLogs = [...logCollections.returnedLogs, ...logCollections.draftLogs];
   const actionRequiredTimeCards = [...timeCardCollections.returnedTimeCards, ...timeCardCollections.draftTimeCards];
   const actionRequiredItems = [
@@ -439,60 +442,116 @@ function DashboardOverview({ profile, logCollections, timeCardCollections, onOpe
     .slice(0, 50);
   const latestActivity = recentActivity.slice(0, 5);
   const technicianName = profile?.full_name || profile?.name || "Technician";
-  const todayText = new Intl.DateTimeFormat(undefined, { month: "short", day: "2-digit", year: "numeric" }).format(new Date());
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
+  // The project the technician is currently working in — the most recently
+  // touched daily log.
+  const currentProject = [...allLogs].sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0))[0] || null;
 
   return (
     <>
-      {/* Slim toolbar header — Procore-style, no hero banner */}
-      <section className="rounded-xl border border-slate-200 bg-white px-4 py-3 sm:px-5 sm:py-4">
-        <div className="flex flex-wrap items-center justify-between gap-2 sm:gap-3">
-          <div className="min-w-0">
-            <h1 className="text-lg font-semibold text-slate-900 sm:text-xl">Welcome, {technicianName}</h1>
-            <p className="mt-0.5 text-[13px] font-medium text-slate-500">
-              {todayText}
-              {actionRequiredItems.length
-                ? ` · ${actionRequiredItems.length} ${actionRequiredItems.length === 1 ? "item needs" : "items need"} your action`
-                : " · You're all caught up"}
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
+      {/* Compact greeting + quick create */}
+      <section className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-lg font-bold tracking-tight text-slate-900 sm:text-xl">{greeting}, {technicianName}</h1>
+          <p className="mt-0.5 text-[13px] font-medium text-slate-500">
+            {actionRequiredItems.length
+              ? `${actionRequiredItems.length} ${actionRequiredItems.length === 1 ? "item requires" : "items require"} attention`
+              : "You're all caught up"}
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => navigate("/timesheets")}
+            className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+          >
+            <CalendarDays className="h-4 w-4" /> My Timesheet
+          </button>
+          <div className="relative">
             <button
               type="button"
-              onClick={() => navigate("/timesheets")}
-              className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-            >
-              <CalendarDays className="h-4 w-4" /> My Timesheet
-            </button>
-            <button
-              type="button"
-              onClick={onCreateLog}
+              onClick={() => setCreateOpen((v) => !v)}
+              aria-expanded={createOpen}
               className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-accent-500 px-3 text-sm font-semibold text-white hover:bg-accent-600"
             >
-              <Plus className="h-4 w-4" /> Start Daily Log
+              <Plus className="h-4 w-4" /> Create <ChevronDown className="h-3.5 w-3.5" />
             </button>
+            {createOpen && (
+              <>
+                <button type="button" aria-label="Close" onClick={() => setCreateOpen(false)} className="fixed inset-0 z-40 cursor-default" />
+                <div className="absolute right-0 top-full z-50 mt-1.5 w-48 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-xl">
+                  <button type="button" onClick={() => { setCreateOpen(false); onCreateLog(); }} className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm font-semibold text-slate-700 hover:bg-slate-50">
+                    <ClipboardCheck className="h-4 w-4 text-slate-400" /> Daily Log
+                  </button>
+                  <button type="button" onClick={() => { setCreateOpen(false); navigate("/timesheets"); }} className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm font-semibold text-slate-700 hover:bg-slate-50">
+                    <CalendarDays className="h-4 w-4 text-slate-400" /> Timesheet
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       </section>
 
-      {/* Metric strip — one card, divided columns; zeros dimmed, alerts colored */}
+      {/* Current project context — field users work project-first */}
+      {currentProject && (
+        <section className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3">
+          <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-navy-50 text-navy-700">
+            <FolderKanban className="h-5 w-5" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Current project</p>
+            <p className="truncate text-sm font-bold text-slate-900">{currentProject.projectName || "—"}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => onOpenLog(currentProject)}
+            className="hidden shrink-0 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 sm:inline-flex"
+          >
+            Open latest log
+          </button>
+        </section>
+      )}
+
+      {/* KPI hierarchy — attention items prominent, the rest a muted strip */}
+      <section className="grid grid-cols-2 gap-3 sm:gap-4">
+        <button
+          type="button"
+          onClick={() => navigate("/technician/dashboard?view=returned-logs")}
+          className="flex flex-col rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-left transition hover:bg-rose-100"
+        >
+          <span className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-rose-700"><AlertTriangle className="h-3.5 w-3.5" /> Returned logs</span>
+          <span className="mt-1 text-3xl font-bold text-rose-700">{logCollections.returnedLogs.length}</span>
+          <span className="text-xs font-semibold text-rose-600/80">Need correction &amp; resubmit</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => navigate("/technician/dashboard?view=daily-logs")}
+          className="flex flex-col rounded-xl border border-slate-200 bg-white px-4 py-3 text-left transition hover:bg-slate-50"
+        >
+          <span className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Draft logs</span>
+          <span className={`mt-1 text-3xl font-bold ${logCollections.draftLogs.length > 0 ? "text-slate-900" : "text-slate-300"}`}>{logCollections.draftLogs.length}</span>
+          <span className="text-xs font-semibold text-slate-400">In progress, not submitted</span>
+        </button>
+      </section>
+
       <section className="overflow-hidden rounded-xl border border-slate-200 bg-white">
-        <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 xl:divide-x xl:divide-slate-200">
+        <div className="grid grid-cols-2 sm:grid-cols-4 sm:divide-x sm:divide-slate-100">
           {[
-            { label: "Draft logs", value: logCollections.draftLogs.length, view: "daily-logs" },
-            { label: "Submitted logs", value: logCollections.submittedLogs.length, view: "submitted-logs", tone: "text-blue-700" },
-            { label: "Returned logs", value: logCollections.returnedLogs.length, view: "returned-logs", tone: "text-rose-600" },
-            { label: "Approved logs", value: logCollections.approvedLogs.length, view: "approved-logs", tone: "text-emerald-700" },
-            { label: "Timesheets pending", value: timeCardCollections.submittedTimeCards.length, view: "submitted-time-cards", tone: "text-blue-700" },
-            { label: "Timesheets approved", value: timeCardCollections.approvedTimeCards.length, view: "approved-time-cards", tone: "text-emerald-700" }
-          ].map(({ label, value, view, tone }) => (
+            { label: "Submitted logs", value: logCollections.submittedLogs.length, view: "submitted-logs" },
+            { label: "Approved logs", value: logCollections.approvedLogs.length, view: "approved-logs" },
+            { label: "Timesheets pending", value: timeCardCollections.submittedTimeCards.length, view: "submitted-time-cards" },
+            { label: "Timesheets approved", value: timeCardCollections.approvedTimeCards.length, view: "approved-time-cards" }
+          ].map(({ label, value, view }) => (
             <button
               key={label}
               type="button"
               onClick={() => navigate(`/technician/dashboard?view=${view}`)}
-              className="flex items-baseline justify-between gap-2 border-b border-slate-100 px-4 py-2.5 text-left transition hover:bg-slate-50 sm:block sm:py-3 xl:border-b-0"
+              className="flex items-baseline justify-between gap-2 border-b border-slate-100 px-4 py-2.5 text-left transition hover:bg-slate-50 sm:block sm:border-b-0"
             >
               <p className="text-xs font-medium text-slate-500">{label}</p>
-              <p className={`text-xl font-semibold sm:mt-1 sm:text-2xl ${value > 0 ? (tone || "text-slate-900") : "text-slate-300"}`}>{value}</p>
+              <p className={`text-lg font-bold sm:mt-0.5 ${value > 0 ? "text-slate-700" : "text-slate-300"}`}>{value}</p>
             </button>
           ))}
         </div>
