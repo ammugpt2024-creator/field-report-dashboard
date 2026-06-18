@@ -5,12 +5,12 @@ import {
   CalendarDays,
   Camera,
   Calculator,
+  Building2,
   ChevronDown,
   ClipboardCheck,
   Download,
   FileText,
   FlaskConical,
-  FolderKanban,
   HardHat,
   KeyRound,
   Layers3,
@@ -497,8 +497,8 @@ function DashboardOverview({ profile, logCollections, timeCardCollections, onOpe
       {/* Current project context — field users work project-first */}
       {currentProject && (
         <section className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3">
-          <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-navy-50 text-navy-700">
-            <FolderKanban className="h-5 w-5" />
+          <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-500">
+            <Building2 className="h-5 w-5" />
           </span>
           <div className="min-w-0 flex-1">
             <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Current project</p>
@@ -541,8 +541,8 @@ function DashboardOverview({ profile, logCollections, timeCardCollections, onOpe
           {[
             { label: "Submitted logs", value: logCollections.submittedLogs.length, view: "submitted-logs" },
             { label: "Approved logs", value: logCollections.approvedLogs.length, view: "approved-logs" },
-            { label: "Timesheets pending", value: timeCardCollections.submittedTimeCards.length, view: "submitted-time-cards" },
-            { label: "Timesheets approved", value: timeCardCollections.approvedTimeCards.length, view: "approved-time-cards" }
+            { label: "Submitted timesheets", value: timeCardCollections.submittedTimeCards.length, view: "submitted-time-cards" },
+            { label: "Approved timesheets", value: timeCardCollections.approvedTimeCards.length, view: "approved-time-cards" }
           ].map(({ label, value, view }) => (
             <button
               key={label}

@@ -9,7 +9,6 @@ import {
   FileText,
   Gauge,
   HardHat,
-  History,
   Layers3,
   Mic,
   PenLine,
@@ -32,7 +31,8 @@ export const FIELD_ENGINEER_NAV = [
   { section: "Workforce" },
   { label: "Timesheets", path: "/technician/dashboard?view=time-cards", icon: FileText },
   { label: "Current", path: "/timesheets", icon: Clock, nested: true },
-  { label: "History", path: "/technician/dashboard?view=approved-time-cards", icon: History, nested: true },
+  { label: "Submitted", path: "/technician/dashboard?view=submitted-time-cards", icon: SendHorizontal, nested: true },
+  { label: "Approved", path: "/technician/dashboard?view=approved-time-cards", icon: CheckCircle2, nested: true },
   { section: "Account" },
   { label: "Notifications", path: "/technician/dashboard?view=notifications", icon: Bell },
   { label: "Profile", path: "/technician/dashboard?view=profile", icon: User }
