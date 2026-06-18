@@ -26,6 +26,8 @@ import GradationReport from "./pages/GradationReport";
 import GradationList from "./pages/GradationList";
 import ProctorReportPage from "./pages/ProctorReportPage";
 import ProctorList from "./pages/ProctorList";
+import AtterbergReportPage from "./pages/AtterbergReportPage";
+import AtterbergList from "./pages/AtterbergList";
 import TimesheetsPage from "./pages/TimesheetsPage";
 import ProjectWorkspace from "./pages/ProjectWorkspace";
 import FieldReports from "./pages/FieldReports";
@@ -173,6 +175,16 @@ function App() {
         <Route
           path="/technician/lab/proctor/:reportId"
           element={<ProctorReportPage />}
+        />
+
+        <Route
+          path="/technician/lab/atterberg"
+          element={<AtterbergList />}
+        />
+
+        <Route
+          path="/technician/lab/atterberg/:reportId"
+          element={<AtterbergReportPage />}
         />
 
         <Route
