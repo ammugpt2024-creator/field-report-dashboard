@@ -40,6 +40,18 @@ function isActiveGrant(s) {
   return s.status === "approved" && !s.ended_at && (!s.expires_at || new Date(s.expires_at) > new Date());
 }
 
+// Plain-English status for a support request.
+function grantStatusText(s) {
+  if (s.status === "requested") return "Awaiting company-admin approval";
+  if (s.status === "denied") return "Denied by the company admin";
+  if (s.status === "ended") return "Access ended";
+  if (s.status === "expired") return "Access expired";
+  if (s.status === "approved") {
+    return isActiveGrant(s) ? "Approved — active" : "Approved grant ended or expired";
+  }
+  return s.status;
+}
+
 function auditTone(action = "") {
   if (/(deleted|suspend|removed|cancel)/i.test(action)) return "bg-rose-400";
   if (/(created|invite|added|claimed|activ)/i.test(action)) return "bg-emerald-400";
@@ -363,8 +375,11 @@ export default function CompanyDetail() {
                           <button type="button" onClick={() => endGrant(s)} className="shrink-0 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-bold text-slate-600 hover:bg-slate-50">End</button>
                         )}
                       </div>
-                      {s.status === "approved" && !active && (
-                        <p className="mt-1 text-xs font-semibold text-slate-400">This grant has ended or expired.</p>
+                      {!active && (
+                        <p className="mt-1 text-xs font-semibold text-slate-500">
+                          {grantStatusText(s)}
+                          {s.requested_at && <span className="text-slate-400"> · requested {new Date(s.requested_at).toLocaleString()}</span>}
+                        </p>
                       )}
                       {active && (
                         <div className="mt-2.5 rounded-xl border border-emerald-100 bg-emerald-50/50 p-3">
