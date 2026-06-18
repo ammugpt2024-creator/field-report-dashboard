@@ -8,7 +8,7 @@ import {
 } from "react";
 
 import { supabase } from "../services/supabase";
-import { preloadCompanyBranding } from "../services/brandingService";
+import { preloadCompanyBranding, getCompanyBranding } from "../services/brandingService";
 
 const AuthContext = createContext();
 
@@ -57,6 +57,10 @@ export function AuthProvider({ children }) {
   const [role, setRole] = useState("viewer");
 
   const [companyName, setCompanyName] = useState("");
+
+  // Company branding (logo/name/color), kept reactive so the header updates
+  // once the logo resolves after login.
+  const [companyBranding, setCompanyBranding] = useState(getCompanyBranding());
 
   const [loading, setLoading] = useState(true);
 
@@ -147,7 +151,7 @@ export function AuthProvider({ children }) {
     // admin routed on the placeholder state would land on the viewer fallback.
     await loadTenantContext(currentSession.user.id);
     setProfileUserId(currentSession.user.id);
-    preloadCompanyBranding();
+    preloadCompanyBranding().then((b) => setCompanyBranding({ ...b }));
   }, [loadTenantContext]);
 
   useEffect(() => {
@@ -210,6 +214,7 @@ export function AuthProvider({ children }) {
         companyRole,
         isPlatformAdmin,
         companyName,
+        companyBranding,
         loading
       }}
     >

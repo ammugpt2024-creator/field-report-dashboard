@@ -3,9 +3,11 @@ import { supabase } from './supabase';
 // Company branding for PDFs and headers. Cached at module level so the
 // synchronous PDF generators can read it; preloaded after login from
 // AuthContext. Falls back to the historic defaults when no company exists.
+// No hard-coded logo: a company shows its OWN uploaded logo or nothing (the UI
+// falls back to the company name). Never brand one tenant with another's logo.
 const FALLBACK = {
-  name: 'Dulles Engineering, Inc.',
-  logoUrl: 'https://img1.wsimg.com/isteam/ip/5d283b38-0950-4c46-838b-44766d9a75d2/DULLES%20ENGINEERING_new%20logo.png/%3A/rs%3Dh%3A78%2Ccg%3Atrue%2Cm/qt%3Dq%3A95',
+  name: 'Your Company',
+  logoUrl: '',
   brandColor: '#1d4ed8'
 };
 
@@ -17,17 +19,31 @@ export function getCompanyBranding() {
 
 export async function preloadCompanyBranding() {
   try {
+    // SaaS members resolve their company via the roster; legacy users
+    // (e.g. technicians) resolve it via their profile's company_id.
     const { data: membership } = await supabase
       .from('company_users')
       .select('company_id')
       .eq('status', 'active')
       .maybeSingle();
-    if (!membership?.company_id) return cachedBranding;
+    let companyId = membership?.company_id || null;
+    if (!companyId) {
+      const { data: auth } = await supabase.auth.getUser();
+      if (auth?.user?.id) {
+        const { data: prof } = await supabase
+          .from('profiles')
+          .select('company_id')
+          .eq('id', auth.user.id)
+          .maybeSingle();
+        companyId = prof?.company_id || null;
+      }
+    }
+    if (!companyId) return cachedBranding;
 
     const { data: company } = await supabase
       .from('companies')
       .select('company_name, legal_name, logo_url, logo_storage_path, brand_color')
-      .eq('id', membership.company_id)
+      .eq('id', companyId)
       .maybeSingle();
     if (!company) return cachedBranding;
 
@@ -41,7 +57,7 @@ export async function preloadCompanyBranding() {
 
     cachedBranding = {
       name: company.company_name || company.legal_name || FALLBACK.name,
-      logoUrl: logoUrl || FALLBACK.logoUrl,
+      logoUrl: logoUrl, // the company's own uploaded logo, or '' → UI shows the name
       brandColor: company.brand_color || FALLBACK.brandColor
     };
   } catch (error) {

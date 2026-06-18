@@ -28,7 +28,6 @@ import { useAuth } from "../context/AuthContext";
 import { getRoleHomeRoute } from "../utils/navigation";
 import { isQcRole, ROLES } from "../utils/permissions";
 import { BRAND, MODULE_NAMES } from "../config/branding";
-import { getCompanyBranding } from "../services/brandingService";
 import { globalSearch } from "../services/searchService";
 import { FIELD_ENGINEER_NAV } from "../modules/field-engineer/fieldEngineerConfig";
 import { LogoMark } from "./Logo";
@@ -51,20 +50,14 @@ function Navbar() {
     companyName,
     role,
     companyRole,
-    isPlatformAdmin
+    isPlatformAdmin,
+    companyBranding
   } = useAuth();
 
-  // Company branding (logo + name), from the cache AuthContext preloads.
-  const [branding, setBranding] = useState(getCompanyBranding());
+  // Company branding (logo + name) comes reactively from AuthContext.
+  const branding = companyBranding || {};
   const [logoFailed, setLogoFailed] = useState(false);
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setBranding(getCompanyBranding());
-    setLogoFailed(false);
-  }, [companyName]);
   const companyDisplay = companyName || branding.name || "Company";
-  const companyInitials = (companyDisplay || "C")
-    .split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]?.toUpperCase()).join("") || "C";
 
   const displayName =
     profile?.full_name ||
@@ -175,16 +168,18 @@ function Navbar() {
     }
   }
 
+  // Show the company's uploaded logo if it loads; otherwise fall back to the
+  // company name (never initials, never another tenant's logo).
+  const hasLogo = Boolean(branding.logoUrl) && !logoFailed;
   const CompanyChipInner = (
     <>
-      <span className="inline-flex h-7 items-center justify-center overflow-hidden rounded-md bg-white px-1 ring-1 ring-slate-200">
-        {branding.logoUrl && !logoFailed ? (
-          <img src={branding.logoUrl} alt={companyDisplay} onError={() => setLogoFailed(true)} className="h-5 w-auto max-w-[96px] object-contain" />
-        ) : (
-          <span className="flex h-5 w-5 items-center justify-center rounded bg-navy-900 text-[10px] font-bold text-white">{companyInitials}</span>
-        )}
-      </span>
-      <span className="hidden max-w-[140px] truncate text-sm font-semibold text-slate-700 lg:block">{companyDisplay}</span>
+      {hasLogo ? (
+        <span className="inline-flex h-7 items-center justify-center overflow-hidden rounded-md bg-white px-1 ring-1 ring-slate-200">
+          <img src={branding.logoUrl} alt={companyDisplay} onError={() => setLogoFailed(true)} className="h-5 w-auto max-w-[120px] object-contain" />
+        </span>
+      ) : (
+        <span className="max-w-[160px] truncate text-sm font-semibold text-slate-700">{companyDisplay}</span>
+      )}
       <ChevronDown className="hidden h-4 w-4 text-slate-400 sm:block" />
     </>
   );
@@ -285,13 +280,11 @@ function Navbar() {
                 <div role="menu" className="absolute right-0 top-full z-50 mt-2 w-64 overflow-hidden rounded-2xl border border-slate-200 bg-white p-2 shadow-2xl shadow-slate-950/10">
                   <p className="px-3 pb-1.5 pt-1 text-[11px] font-bold uppercase tracking-wide text-slate-400">Current company</p>
                   <div className="flex items-center gap-2.5 rounded-xl bg-slate-50 px-3 py-2.5">
-                    <span className="inline-flex h-8 items-center justify-center overflow-hidden rounded-md bg-white px-1 ring-1 ring-slate-200">
-                      {branding.logoUrl && !logoFailed ? (
-                        <img src={branding.logoUrl} alt={companyDisplay} className="h-6 w-auto max-w-[96px] object-contain" />
-                      ) : (
-                        <span className="flex h-6 w-6 items-center justify-center rounded bg-navy-900 text-xs font-bold text-white">{companyInitials}</span>
-                      )}
-                    </span>
+                    {hasLogo && (
+                      <span className="inline-flex h-8 items-center justify-center overflow-hidden rounded-md bg-white px-1 ring-1 ring-slate-200">
+                        <img src={branding.logoUrl} alt={companyDisplay} className="h-6 w-auto max-w-[110px] object-contain" />
+                      </span>
+                    )}
                     <span className="min-w-0 flex-1 truncate text-sm font-bold text-slate-900">{companyDisplay}</span>
                     <Check className="h-4 w-4 shrink-0 text-emerald-600" />
                   </div>
