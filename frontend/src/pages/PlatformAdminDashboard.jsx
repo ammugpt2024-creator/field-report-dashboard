@@ -559,15 +559,16 @@ export default function PlatformAdminDashboard() {
                     <th className="px-4 py-3 text-left">Company</th>
                     <th className="px-4 py-3 text-left">Plan</th>
                     <th className="px-4 py-3 text-left">Billing</th>
-                    <th className="px-4 py-3 text-right">Seats (used / total)</th>
-                    <th className="px-4 py-3 text-right">Project Cap</th>
+                    <th className="px-4 py-3 text-right">Users / Seats</th>
+                    <th className="px-4 py-3 text-right">Projects / Cap</th>
                     <th className="px-4 py-3 text-left">Renews</th>
                   </tr>
                 </thead>
                 <tbody>
                   {rows.map(({ company, subscription, plan, users, projects }) => {
                     const limits = planLimits(plan);
-                    const overSeats = subscription.seats != null && users > subscription.seats;
+                    const overSeats = limits.users != null && users > limits.users;
+                    const overProjects = limits.projects != null && projects > limits.projects;
                     return (
                       <tr key={company.id} className="border-b border-slate-50 hover:bg-slate-50/70">
                         <td className="px-4 py-3 font-bold text-slate-900">{company.company_name}</td>
@@ -577,8 +578,8 @@ export default function PlatformAdminDashboard() {
                           </select>
                         </td>
                         <td className="px-4 py-3"><span className={`inline-flex items-center gap-1.5 text-xs font-bold ${subscription.billing_status === "past_due" ? "text-rose-600" : "text-emerald-600"}`}><span className={`h-1.5 w-1.5 rounded-full ${subscription.billing_status === "past_due" ? "bg-rose-500" : "bg-emerald-500"}`} />{subscription.billing_status || "current"}</span></td>
-                        <td className={`px-4 py-3 text-right font-semibold tabular-nums ${overSeats ? "text-rose-600" : "text-slate-700"}`}>{users} / {subscription.seats ?? "—"}</td>
-                        <td className="px-4 py-3 text-right font-semibold tabular-nums text-slate-700">{projects} / {formatLimit(limits.projects)}</td>
+                        <td className={`px-4 py-3 text-right font-semibold tabular-nums ${overSeats ? "text-rose-600" : "text-slate-700"}`}>{users} / {formatLimit(limits.users)}</td>
+                        <td className={`px-4 py-3 text-right font-semibold tabular-nums ${overProjects ? "text-rose-600" : "text-slate-700"}`}>{projects} / {formatLimit(limits.projects)}</td>
                         <td className="px-4 py-3 text-xs font-medium text-slate-500">{subscription.current_period_end ? new Date(subscription.current_period_end).toLocaleDateString() : "—"}</td>
                       </tr>
                     );
