@@ -4,6 +4,7 @@ import { supabase } from "../services/supabase";
 import { getRoleHomeRoute } from "../utils/navigation";
 import { BRAND } from "../config/branding";
 import Logo from "../components/Logo";
+import loginBg from "../assets/login-bg.png";
 
 function Login() {
 
@@ -33,9 +34,12 @@ function Login() {
 
   return (
 
-    <div className="flex min-h-screen w-full max-w-full items-center justify-center overflow-x-hidden bg-slate-100 px-4">
+    <div
+      className="flex min-h-screen w-full max-w-full items-center justify-center overflow-x-hidden bg-slate-50 bg-cover bg-center bg-no-repeat px-4"
+      style={{ backgroundImage: `url(${loginBg})` }}
+    >
 
-      <div className="w-full max-w-[420px] rounded-2xl bg-white p-6 shadow-xl sm:p-10">
+      <div className="w-full max-w-[420px] rounded-2xl border border-white/60 bg-white/85 p-6 shadow-2xl shadow-navy-900/10 backdrop-blur-md sm:p-10">
 
         <div className="text-center mb-8">
 
