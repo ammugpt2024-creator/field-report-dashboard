@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 
 export const FIELD_ENGINEER_NAV = [
-  { label: "Command Center", path: "/technician/dashboard", icon: Gauge },
+  { label: "Dashboard", path: "/technician/dashboard", icon: Gauge },
   { label: "Daily Logs", path: "/technician/dashboard?view=reports-home", icon: ClipboardList },
   { label: "Timesheets", path: "/technician/dashboard?view=time-cards", icon: FileText },
   { label: "Profile", path: "/technician/dashboard?view=profile", icon: User },

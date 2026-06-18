@@ -1,19 +1,23 @@
 import { useNavigate } from "react-router-dom";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   BarChart3,
   Bell,
   Building2,
+  Check,
   ChevronDown,
   ClipboardCheck,
+  CreditCard,
   FileCheck2,
   FileClock,
   FolderKanban,
   HelpCircle,
   Home,
   LayoutDashboard,
+  LogOut,
   Menu,
   Search,
+  Settings,
   ShieldCheck,
   Users,
   Workflow,
@@ -32,30 +36,31 @@ function Navbar() {
 
   const navigate = useNavigate();
   const [profileOpen, setProfileOpen] = useState(false);
+  const [companyOpen, setCompanyOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [search, setSearch] = useState("");
-  const profileButtonRef = useRef(null);
-  const [profileMenuPosition, setProfileMenuPosition] = useState({ top: 76, right: 16 });
 
   const {
     session,
     profile,
     roleLabel,
     companyName,
-    role
+    role,
+    companyRole,
+    isPlatformAdmin
   } = useAuth();
 
-  // Company branding (logo + name), read from the module cache that AuthContext
-  // preloads after login; re-read when the company resolves.
+  // Company branding (logo + name), from the cache AuthContext preloads.
   const [branding, setBranding] = useState(getCompanyBranding());
   const [logoFailed, setLogoFailed] = useState(false);
   useEffect(() => {
-    // Sync from the module-level branding cache once the company resolves.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setBranding(getCompanyBranding());
     setLogoFailed(false);
   }, [companyName]);
   const companyDisplay = companyName || branding.name || "Company";
+  const companyInitials = (companyDisplay || "C")
+    .split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]?.toUpperCase()).join("") || "C";
 
   const displayName =
     profile?.full_name ||
@@ -68,11 +73,9 @@ function Navbar() {
     .map((part) => part[0]?.toUpperCase())
     .join("") || "U";
   const normalizedRole = String(role || "").toLowerCase();
-  const mobileLinks = (() => {
-    if (normalizedRole === ROLES.TECHNICIAN) {
-      return FIELD_ENGINEER_NAV;
-    }
 
+  const mobileLinks = (() => {
+    if (normalizedRole === ROLES.TECHNICIAN) return FIELD_ENGINEER_NAV;
     if (normalizedRole === ROLES.ADMIN) {
       return [
         { label: MODULE_NAMES.platformAdministration, icon: LayoutDashboard, path: "/admin/dashboard" },
@@ -82,7 +85,6 @@ function Navbar() {
         { label: "Audit Logs", icon: ClipboardCheck, path: "/admin/dashboard?module=audit" }
       ];
     }
-
     if (normalizedRole === ROLES.QC_MANAGER || normalizedRole === "project_manager" || normalizedRole === "manager") {
       return [
         { label: MODULE_NAMES.commandCenter, icon: LayoutDashboard, path: "/manager/dashboard" },
@@ -92,7 +94,6 @@ function Navbar() {
         { label: "Analytics", icon: BarChart3, path: "/manager/dashboard?view=analytics" }
       ];
     }
-
     if (isQcRole(normalizedRole)) {
       return [
         { label: MODULE_NAMES.validationCenter, icon: ShieldCheck, path: "/qc/dashboard" },
@@ -102,7 +103,6 @@ function Navbar() {
         { label: "Notifications", icon: Bell, path: "/qc/dashboard?panel=notifications" }
       ];
     }
-
     return [
       { label: "Client Command Center", icon: Home, path: getRoleHomeRoute(role) },
       { label: "Approved Deliverables", icon: FileCheck2, path: "/client/dashboard?view=approved" },
@@ -114,131 +114,91 @@ function Navbar() {
     navigate(path);
     setMobileMenuOpen(false);
     setProfileOpen(false);
+    setCompanyOpen(false);
   }
 
   const notificationsPath = normalizedRole === ROLES.TECHNICIAN
     ? "/technician/dashboard?view=notifications"
     : `${getRoleHomeRoute(role)}?view=notifications`;
+  const profilePath = normalizedRole === ROLES.TECHNICIAN ? "/technician/dashboard?view=profile" : "/profile";
 
-  function openProfileMenu() {
-    const rect = profileButtonRef.current?.getBoundingClientRect();
-    if (rect) {
-      setProfileMenuPosition({
-        top: Math.min(rect.bottom + 8, window.innerHeight - 16),
-        right: Math.max(16, window.innerWidth - rect.right)
-      });
-    }
-    setProfileOpen((previous) => !previous);
-  }
+  // Where the company switcher's management links point (admins only).
+  const canManageCompany = companyRole === "company_admin" || ["admin", "qc_manager"].includes(normalizedRole) || isPlatformAdmin;
 
   useEffect(() => {
-    if (!profileOpen) return undefined;
-
+    if (!profileOpen && !companyOpen) return undefined;
     function handleKeyDown(event) {
-      if (event.key === "Escape") setProfileOpen(false);
+      if (event.key === "Escape") { setProfileOpen(false); setCompanyOpen(false); }
     }
-
-    function handleViewportChange() {
-      const rect = profileButtonRef.current?.getBoundingClientRect();
-      if (!rect) return;
-      setProfileMenuPosition({
-        top: Math.min(rect.bottom + 8, window.innerHeight - 16),
-        right: Math.max(16, window.innerWidth - rect.right)
-      });
-    }
-
     document.addEventListener("keydown", handleKeyDown);
-    window.addEventListener("resize", handleViewportChange);
-    window.addEventListener("scroll", handleViewportChange, true);
-    return () => {
-      document.removeEventListener("keydown", handleKeyDown);
-      window.removeEventListener("resize", handleViewportChange);
-      window.removeEventListener("scroll", handleViewportChange, true);
-    };
-  }, [profileOpen]);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [profileOpen, companyOpen]);
 
   async function handleLogout() {
-
     try {
-
-      // logout from Supabase auth
-
       const { error } = await supabase.auth.signOut();
-
-      if (error) {
-        console.error("Logout Error:", error.message);
-        return;
-      }
-
-      // clear local storage/session cache if needed
-
+      if (error) { console.error("Logout Error:", error.message); return; }
       localStorage.clear();
       sessionStorage.clear();
-
-      // redirect properly
-
       navigate("/login", { replace: true });
-
-      // hard refresh to clear stale auth state
-
       window.location.reload();
-
     } catch (err) {
-
       console.error("Logout Failed:", err);
-
     }
   }
+
+  const CompanyChipInner = (
+    <>
+      <span className="inline-flex h-7 items-center justify-center overflow-hidden rounded-md bg-white px-1 ring-1 ring-slate-200">
+        {branding.logoUrl && !logoFailed ? (
+          <img src={branding.logoUrl} alt={companyDisplay} onError={() => setLogoFailed(true)} className="h-5 w-auto max-w-[96px] object-contain" />
+        ) : (
+          <span className="flex h-5 w-5 items-center justify-center rounded bg-navy-900 text-[10px] font-bold text-white">{companyInitials}</span>
+        )}
+      </span>
+      <span className="hidden max-w-[140px] truncate text-sm font-semibold text-slate-700 lg:block">{companyDisplay}</span>
+      <ChevronDown className="hidden h-4 w-4 text-slate-400 sm:block" />
+    </>
+  );
 
   return (
 
-    <header className="sticky top-0 z-40 w-full max-w-full overflow-x-hidden border-b border-white/10 bg-gradient-to-br from-navy-900 via-navy-900 to-navy-950 px-4 py-2.5 text-white sm:px-6">
+    <header className="sticky top-0 z-40 w-full max-w-full overflow-visible border-b border-slate-200 bg-white px-4 py-2.5 sm:px-6">
       <div className="flex items-center justify-between gap-3 sm:gap-4">
 
-        {/* LEFT — platform mark + company branding */}
-        <div className="flex min-w-0 items-center gap-3 sm:gap-4">
-          <div className="flex shrink-0 items-center gap-0.5">
-            <LogoMark tone="light" className="h-8 w-8 sm:h-9 sm:w-9" />
-            <span className="-ml-0.5 text-xl font-bold tracking-tight text-white sm:text-2xl">Core</span>
-          </div>
-          <div className="hidden h-8 w-px bg-white/15 sm:block" />
-          {/* Company brand: its own logo on a legible white chip, name beside it. */}
-          <div className="flex min-w-0 items-center gap-2.5">
-            <span className="inline-flex h-8 items-center justify-center overflow-hidden rounded-lg bg-white px-1.5 shadow-sm">
-              {branding.logoUrl && !logoFailed ? (
-                <img src={branding.logoUrl} alt={companyDisplay} onError={() => setLogoFailed(true)} className="h-6 w-auto max-w-[120px] object-contain" />
-              ) : (
-                <span className="flex h-6 w-6 items-center justify-center rounded bg-navy-900 text-xs font-bold text-white">
-                  {(companyDisplay || "C").charAt(0).toUpperCase()}
-                </span>
-              )}
-            </span>
-            <span className="hidden min-w-0 truncate text-sm font-semibold text-white sm:block">{companyDisplay}</span>
-          </div>
-        </div>
+        {/* LEFT — platform mark */}
+        <button
+          type="button"
+          onClick={() => handleNavigate(getRoleHomeRoute(role))}
+          className="flex shrink-0 items-center gap-1 rounded-lg px-1 py-1 transition hover:bg-slate-50"
+          style={{ maxWidth: 220 }}
+        >
+          <LogoMark tone="dark" className="h-8 w-8 sm:h-9 sm:w-9" />
+          <span className="-ml-0.5 text-xl font-bold tracking-tight text-navy-900 sm:text-2xl">Core</span>
+        </button>
 
         {/* CENTER — search */}
         <div className="hidden min-w-0 flex-1 justify-center px-2 md:flex">
-          <div className="relative w-full max-w-xl">
-            <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <div className="relative w-full max-w-[400px]" style={{ width: 320 }}>
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
             <input
               type="search"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search projects, logs, activities…"
-              className="h-10 w-full rounded-xl border border-white/15 bg-white/10 pl-10 pr-4 text-sm font-medium text-white outline-none transition placeholder:text-slate-400 hover:bg-white/[0.14] focus:border-accent-400 focus:bg-white/[0.14] focus:ring-2 focus:ring-accent-500/30"
+              placeholder="Search projects, reports, logs…"
+              className="h-10 w-full rounded-xl border border-slate-200 bg-slate-50 pl-9 pr-4 text-sm font-medium text-slate-800 outline-none transition placeholder:text-slate-400 hover:bg-slate-100 focus:border-blue-400 focus:bg-white focus:ring-2 focus:ring-blue-100"
             />
           </div>
         </div>
 
-        {/* RIGHT — alerts, help, profile */}
-        <div className="relative flex shrink-0 items-center gap-1 sm:gap-2">
+        {/* RIGHT — utilities */}
+        <div className="flex shrink-0 items-center gap-1 sm:gap-3">
 
           <button
             type="button"
             onClick={() => handleNavigate(notificationsPath)}
             aria-label="Notifications"
-            className="relative inline-flex h-10 w-10 items-center justify-center rounded-xl text-slate-200 transition hover:bg-white/10"
+            className="relative inline-flex h-10 w-10 items-center justify-center rounded-xl text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
           >
             <Bell className="h-5 w-5" />
           </button>
@@ -246,113 +206,102 @@ function Navbar() {
           <button
             type="button"
             aria-label="Help"
-            className="hidden h-10 w-10 items-center justify-center rounded-xl text-slate-200 transition hover:bg-white/10 sm:inline-flex"
+            className="hidden h-10 w-10 items-center justify-center rounded-xl text-slate-500 transition hover:bg-slate-100 hover:text-slate-700 sm:inline-flex"
           >
             <HelpCircle className="h-5 w-5" />
           </button>
 
+          <div className="hidden h-6 w-px bg-slate-200 sm:block" />
+
+          {/* Company switcher */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => { setCompanyOpen((v) => !v); setProfileOpen(false); }}
+              aria-expanded={companyOpen}
+              aria-haspopup="menu"
+              title={companyDisplay}
+              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-2 py-1.5 transition hover:bg-slate-50"
+            >
+              {CompanyChipInner}
+            </button>
+            {companyOpen && (
+              <>
+                <button type="button" aria-label="Close" onClick={() => setCompanyOpen(false)} className="fixed inset-0 z-40 cursor-default" />
+                <div role="menu" className="absolute right-0 top-full z-50 mt-2 w-64 overflow-hidden rounded-2xl border border-slate-200 bg-white p-2 shadow-2xl shadow-slate-950/10">
+                  <p className="px-3 pb-1.5 pt-1 text-[11px] font-bold uppercase tracking-wide text-slate-400">Current company</p>
+                  <div className="flex items-center gap-2.5 rounded-xl bg-slate-50 px-3 py-2.5">
+                    <span className="inline-flex h-8 items-center justify-center overflow-hidden rounded-md bg-white px-1 ring-1 ring-slate-200">
+                      {branding.logoUrl && !logoFailed ? (
+                        <img src={branding.logoUrl} alt={companyDisplay} className="h-6 w-auto max-w-[96px] object-contain" />
+                      ) : (
+                        <span className="flex h-6 w-6 items-center justify-center rounded bg-navy-900 text-xs font-bold text-white">{companyInitials}</span>
+                      )}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-sm font-bold text-slate-900">{companyDisplay}</span>
+                    <Check className="h-4 w-4 shrink-0 text-emerald-600" />
+                  </div>
+                  {canManageCompany && (
+                    <nav className="mt-2 space-y-1">
+                      <button type="button" role="menuitem" onClick={() => handleNavigate("/company-admin")} className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left text-sm font-semibold text-slate-700 hover:bg-slate-100">
+                        <Settings className="h-4 w-4 text-slate-400" /> Company Settings
+                      </button>
+                      <button type="button" role="menuitem" onClick={() => handleNavigate("/company-admin?section=billing")} className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left text-sm font-semibold text-slate-700 hover:bg-slate-100">
+                        <CreditCard className="h-4 w-4 text-slate-400" /> Subscription
+                      </button>
+                    </nav>
+                  )}
+                  <p className="mt-2 border-t border-slate-100 px-3 pb-1 pt-2 text-[11px] font-medium text-slate-400">Multi-company switching coming soon.</p>
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* User menu */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => { setProfileOpen((v) => !v); setCompanyOpen(false); }}
+              aria-expanded={profileOpen}
+              aria-haspopup="menu"
+              className="inline-flex items-center gap-2 rounded-xl px-1 py-1 transition hover:bg-slate-100 sm:px-1.5"
+            >
+              <span className="flex h-9 w-9 items-center justify-center rounded-full bg-navy-900 text-sm font-bold text-white">{initials}</span>
+              <span className="hidden items-center gap-1 sm:flex">
+                <span className="block text-sm font-semibold text-slate-800">{displayName}</span>
+                <ChevronDown className="h-4 w-4 text-slate-400" />
+              </span>
+            </button>
+            {profileOpen && (
+              <>
+                <button type="button" aria-label="Close" onClick={() => setProfileOpen(false)} className="fixed inset-0 z-40 cursor-default" />
+                <div role="menu" className="absolute right-0 top-full z-50 mt-2 w-64 overflow-hidden rounded-2xl border border-slate-200 bg-white p-2 shadow-2xl shadow-slate-950/10">
+                  <div className="border-b border-slate-100 px-3 py-2.5">
+                    <p className="truncate text-sm font-bold text-slate-950">{displayName}</p>
+                    <p className="truncate text-xs font-semibold text-slate-500">{session?.user?.email || "No email"}</p>
+                    <p className="mt-1.5 truncate text-[11px] font-bold uppercase tracking-wide text-slate-400">{roleLabel || "Field User"}</p>
+                  </div>
+                  <nav className="mt-1.5 space-y-1">
+                    <button type="button" role="menuitem" onClick={() => handleNavigate(profilePath)} className="flex min-h-10 w-full items-center gap-2.5 rounded-xl px-3 text-left text-sm font-semibold text-slate-800 hover:bg-slate-100"><Users className="h-4 w-4 text-slate-400" /> Profile</button>
+                    <button type="button" role="menuitem" onClick={() => handleNavigate(profilePath)} className="flex min-h-10 w-full items-center gap-2.5 rounded-xl px-3 text-left text-sm font-semibold text-slate-800 hover:bg-slate-100"><Settings className="h-4 w-4 text-slate-400" /> Preferences</button>
+                    <button type="button" role="menuitem" onClick={() => setProfileOpen(false)} className="flex min-h-10 w-full items-center gap-2.5 rounded-xl px-3 text-left text-sm font-semibold text-slate-800 hover:bg-slate-100"><HelpCircle className="h-4 w-4 text-slate-400" /> Help Center</button>
+                    <button type="button" role="menuitem" onClick={handleLogout} className="flex min-h-10 w-full items-center gap-2.5 rounded-xl px-3 text-left text-sm font-bold text-rose-700 hover:bg-rose-50"><LogOut className="h-4 w-4" /> Logout</button>
+                  </nav>
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* Mobile nav trigger */}
           <button
             type="button"
             onClick={() => setMobileMenuOpen(true)}
-            className="inline-flex h-10 w-10 items-center justify-center rounded-xl text-white transition hover:bg-white/10 md:hidden"
+            className="inline-flex h-10 w-10 items-center justify-center rounded-xl text-slate-600 transition hover:bg-slate-100 md:hidden"
             aria-label="Open navigation menu"
           >
             <Menu className="h-5 w-5" />
           </button>
-
-          <button
-            ref={profileButtonRef}
-            type="button"
-            onClick={openProfileMenu}
-            aria-expanded={profileOpen}
-            aria-haspopup="menu"
-            className="inline-flex items-center gap-2 rounded-xl px-1.5 py-1.5 text-left transition hover:bg-white/10 sm:px-2"
-          >
-            <span className="flex h-9 w-9 items-center justify-center rounded-full bg-white text-sm font-bold text-navy-900">
-              {initials}
-            </span>
-            <span className="hidden items-center gap-1 sm:flex">
-              <span className="block text-sm font-semibold text-white">{displayName}</span>
-              <ChevronDown className="h-4 w-4 text-slate-400" />
-            </span>
-          </button>
-
-        {profileOpen && (
-          <div className="fixed inset-0 z-[1000]">
-            <button
-              type="button"
-              className="absolute inset-0 cursor-default bg-transparent"
-              onClick={() => setProfileOpen(false)}
-              aria-label="Close profile menu"
-            />
-            <div
-              role="menu"
-              className="
-                fixed
-                left-4
-                right-4
-                max-h-[calc(100vh-6rem)]
-                overflow-y-auto
-                rounded-2xl
-                border
-                border-slate-200
-                bg-white
-                p-2
-                text-sm
-                shadow-2xl
-                shadow-slate-950/20
-                sm:left-auto
-                sm:w-72
-              "
-              style={{
-                top: `${profileMenuPosition.top}px`,
-                right: `${profileMenuPosition.right}px`
-              }}
-            >
-              <div className="border-b border-slate-100 px-3 py-3">
-                <p className="truncate text-sm font-bold text-slate-950">{displayName}</p>
-                <p className="truncate text-xs font-semibold text-slate-500">{session?.user?.email || "No email available"}</p>
-                <p className="mt-2 truncate text-xs font-bold uppercase tracking-[0.14em] text-slate-400">{roleLabel || "Field User"}</p>
-                <p className="mt-1 truncate text-xs font-semibold text-slate-600">{companyName || "Dulles Engineering"}</p>
-              </div>
-              <nav className="mt-2 space-y-1">
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => handleNavigate(normalizedRole === ROLES.TECHNICIAN ? "/technician/dashboard?view=profile" : "/profile")}
-                  className="flex min-h-11 w-full items-center rounded-xl px-3 text-left text-sm font-bold text-slate-800 hover:bg-slate-100"
-                >
-                  My Profile
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => handleNavigate(normalizedRole === ROLES.TECHNICIAN ? "/technician/dashboard?view=notifications" : `${getRoleHomeRoute(role)}?view=notifications`)}
-                  className="flex min-h-11 w-full items-center rounded-xl px-3 text-left text-sm font-bold text-slate-800 hover:bg-slate-100"
-                >
-                  Notifications
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => handleNavigate(normalizedRole === ROLES.TECHNICIAN ? "/technician/dashboard?view=profile" : "/profile")}
-                  className="flex min-h-11 w-full items-center rounded-xl px-3 text-left text-sm font-bold text-slate-800 hover:bg-slate-100"
-                >
-                  Change Password
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={handleLogout}
-                  className="flex min-h-11 w-full items-center rounded-xl px-3 text-left text-sm font-bold text-rose-700 hover:bg-rose-50"
-                >
-                  Logout
-                </button>
-              </nav>
-            </div>
-          </div>
-        )}
-
+        </div>
       </div>
 
       {mobileMenuOpen && (
@@ -369,7 +318,7 @@ function Navbar() {
                 <LogoMark className="h-9 w-9 shrink-0" />
                 <div className="min-w-0">
                   <p className="text-xl font-bold text-slate-950">{BRAND.name}</p>
-                  <p className="mt-1 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{roleLabel || "Field User"}</p>
+                  <p className="mt-1 truncate text-xs font-semibold text-slate-500">{companyDisplay}</p>
                 </div>
               </div>
               <button
@@ -386,9 +335,7 @@ function Navbar() {
               {mobileLinks.map(({ label, icon: Icon, path, section }) => {
                 if (section) {
                   return (
-                    <p key={section} className="px-4 pt-4 pb-2 text-[11px] font-bold uppercase tracking-[0.22em] text-slate-400 first:pt-0">
-                      {section}
-                    </p>
+                    <p key={section} className="px-4 pt-4 pb-2 text-[11px] font-bold uppercase tracking-[0.22em] text-slate-400 first:pt-0">{section}</p>
                   );
                 }
                 return (
@@ -406,13 +353,12 @@ function Navbar() {
             </nav>
 
             <div className="mt-auto border-t border-slate-100 pt-4">
-              <p className="px-4 text-xs font-semibold text-slate-500">Account actions are available from the profile menu.</p>
+              <button type="button" onClick={handleLogout} className="flex min-h-11 w-full items-center gap-2.5 rounded-2xl px-4 text-left text-sm font-bold text-rose-700 hover:bg-rose-50"><LogOut className="h-4 w-4" /> Logout</button>
             </div>
           </aside>
         </div>
       )}
 
-      </div>
     </header>
 
   );
