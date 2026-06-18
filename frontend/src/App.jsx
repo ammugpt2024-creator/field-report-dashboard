@@ -28,6 +28,8 @@ import ProctorReportPage from "./pages/ProctorReportPage";
 import ProctorList from "./pages/ProctorList";
 import AtterbergReportPage from "./pages/AtterbergReportPage";
 import AtterbergList from "./pages/AtterbergList";
+import HydrometerReportPage from "./pages/HydrometerReportPage";
+import HydrometerList from "./pages/HydrometerList";
 import TimesheetsPage from "./pages/TimesheetsPage";
 import ProjectWorkspace from "./pages/ProjectWorkspace";
 import FieldReports from "./pages/FieldReports";
@@ -185,6 +187,16 @@ function App() {
         <Route
           path="/technician/lab/atterberg/:reportId"
           element={<AtterbergReportPage />}
+        />
+
+        <Route
+          path="/technician/lab/hydrometer"
+          element={<HydrometerList />}
+        />
+
+        <Route
+          path="/technician/lab/hydrometer/:reportId"
+          element={<HydrometerReportPage />}
         />
 
         <Route
