@@ -2,17 +2,24 @@
 import { createClient } from '@supabase/supabase-js'
 
 // Database selection (the build-time branch mapping lives in vite.config.js):
-// - `npm run dev` loads .env.development → dev project.
-// - Deploys resolve by git branch: `main` → production; every other branch
-//   (feature / Roopa / Hari / Indra / …) → dev. Feature/dev deployments never
-//   touch the production database.
-// - An explicit VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY always wins.
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || __DB_URL__
-const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY || __DB_ANON_KEY__
+// - Deploys resolve by git branch: `main`/`master` → production; every other
+//   branch (feature / Roopa / Hari / Indra / …) → dev.
+// - NON-PRODUCTION BRANCHES ARE PINNED TO DEV. An env var (e.g. a stray
+//   VITE_SUPABASE_URL in Vercel) can NOT point a feature/dev deploy at the
+//   production database — this is a hard safety rail so dev work never writes
+//   to production. Env overrides are honored only on the production branch.
+const supabaseUrl = __DB_TARGET__ === 'production'
+  ? (import.meta.env.VITE_SUPABASE_URL || __DB_URL__)
+  : __DB_URL__
+const supabaseKey = __DB_TARGET__ === 'production'
+  ? (import.meta.env.VITE_SUPABASE_ANON_KEY || __DB_ANON_KEY__)
+  : __DB_ANON_KEY__
 
-// Surface which database this build talks to — catches env misconfiguration.
+// Log the ACTUAL project this build talks to (ref + branch), so a misconfig is
+// obvious in the console.
 if (typeof console !== 'undefined') {
-  console.info(`[QCore] Database: ${__DB_TARGET__} (branch: ${__DB_BRANCH__})`)
+  const ref = String(supabaseUrl).replace('https://', '').split('.')[0]
+  console.info(`[QCore] Database: ${__DB_TARGET__} → ${ref} (branch: ${__DB_BRANCH__})`)
 }
 
 // Invitation and recovery links land with the token type in the URL hash,
