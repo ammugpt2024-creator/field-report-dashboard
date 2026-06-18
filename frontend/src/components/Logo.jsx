@@ -15,7 +15,8 @@ import { BRAND } from "../config/branding";
 const NAVY = "#1c2f4a";
 const ORANGE = "#bd5d3a";
 
-function Mark({ className = "", title = "QCore mark" }) {
+function Mark({ className = "", title = "QCore mark", tone = "dark" }) {
+  const ring = tone === "light" ? "#ffffff" : NAVY;
   return (
     <svg
       viewBox="0 0 100 100"
@@ -29,7 +30,7 @@ function Mark({ className = "", title = "QCore mark" }) {
         cy="48"
         r="30"
         fill="none"
-        stroke={NAVY}
+        stroke={ring}
         strokeWidth="11"
         strokeLinecap="round"
         strokeDasharray="150 38"
