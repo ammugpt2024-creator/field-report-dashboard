@@ -514,25 +514,31 @@ function DashboardOverview({ profile, logCollections, timeCardCollections, onOpe
         </section>
       )}
 
-      {/* KPI hierarchy — attention items prominent, the rest a muted strip */}
-      <section className="grid grid-cols-2 gap-3 sm:gap-4">
+      {/* KPI hierarchy — attention items prominent (but compact), rest muted */}
+      <section className="grid grid-cols-2 gap-3">
         <button
           type="button"
           onClick={() => navigate("/technician/dashboard?view=returned-logs")}
-          className="flex flex-col rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-left transition hover:bg-rose-100"
+          className="flex items-center gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-left transition hover:bg-rose-100"
         >
-          <span className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-rose-700"><AlertTriangle className="h-3.5 w-3.5" /> Returned logs</span>
-          <span className="mt-1 text-3xl font-bold text-rose-700">{logCollections.returnedLogs.length}</span>
-          <span className="text-xs font-semibold text-rose-600/80">Need correction &amp; resubmit</span>
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-rose-100 text-rose-600"><AlertTriangle className="h-4 w-4" /></span>
+          <span className="text-2xl font-bold leading-none text-rose-700">{logCollections.returnedLogs.length}</span>
+          <span className="min-w-0 leading-tight">
+            <span className="block text-[13px] font-bold text-rose-800">Returned logs</span>
+            <span className="block text-[11px] font-semibold text-rose-600/80">Need correction</span>
+          </span>
         </button>
         <button
           type="button"
           onClick={() => navigate("/technician/dashboard?view=daily-logs")}
-          className="flex flex-col rounded-xl border border-slate-200 bg-white px-4 py-3 text-left transition hover:bg-slate-50"
+          className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-left transition hover:bg-slate-50"
         >
-          <span className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Draft logs</span>
-          <span className={`mt-1 text-3xl font-bold ${logCollections.draftLogs.length > 0 ? "text-slate-900" : "text-slate-300"}`}>{logCollections.draftLogs.length}</span>
-          <span className="text-xs font-semibold text-slate-400">In progress, not submitted</span>
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-500"><FileText className="h-4 w-4" /></span>
+          <span className={`text-2xl font-bold leading-none ${logCollections.draftLogs.length > 0 ? "text-slate-900" : "text-slate-300"}`}>{logCollections.draftLogs.length}</span>
+          <span className="min-w-0 leading-tight">
+            <span className="block text-[13px] font-bold text-slate-800">Draft logs</span>
+            <span className="block text-[11px] font-semibold text-slate-400">Not submitted</span>
+          </span>
         </button>
       </section>
 
