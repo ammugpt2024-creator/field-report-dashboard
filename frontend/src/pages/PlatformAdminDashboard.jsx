@@ -139,7 +139,7 @@ function SortHeader({ label, sortKey, active, dir, onSort, align = "left", class
 export default function PlatformAdminDashboard() {
   const location = useLocation();
   const navigate = useNavigate();
-  const section = new URLSearchParams(location.search).get("section") || "companies";
+  const section = new URLSearchParams(location.search).get("section") || "dashboard";
   const [companies, setCompanies] = useState([]);
   const [usageById, setUsageById] = useState({});
   const [auditLogs, setAuditLogs] = useState([]);
@@ -329,19 +329,48 @@ export default function PlatformAdminDashboard() {
           </button>
         </section>
 
-        {/* KPI row */}
-        <section className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
-          <StatCard icon={Building2} label="Companies" value={totals.companies} tone="slate" />
-          <StatCard icon={CheckCircle2} label="Active" value={totals.active} tone="emerald" />
-          <StatCard icon={Clock} label="Trial" value={totals.trial} tone="amber" />
-          <StatCard icon={PauseCircle} label="Suspended" value={totals.suspended} tone="rose" />
-          <StatCard icon={Users} label="Total Users" value={totals.users} tone="blue" />
-          <StatCard icon={ListChecks} label="Total Projects" value={totals.projects} tone="violet" />
-          <StatCard icon={BarChart3} label="Total Reports" value={totals.reports} tone="slate" />
-          <StatCard icon={CreditCard} label="Active Subscriptions" value={totals.subscriptions} tone="emerald" />
-        </section>
-
         {error && <p className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm font-semibold text-rose-800">{error}</p>}
+
+        {/* DASHBOARD — overview: KPIs + companies at a glance + recent activity */}
+        {section === "dashboard" && (
+          <>
+            <section className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
+              <StatCard icon={Building2} label="Companies" value={totals.companies} tone="slate" />
+              <StatCard icon={CheckCircle2} label="Active" value={totals.active} tone="emerald" />
+              <StatCard icon={Clock} label="Trial" value={totals.trial} tone="amber" />
+              <StatCard icon={PauseCircle} label="Suspended" value={totals.suspended} tone="rose" />
+              <StatCard icon={Users} label="Total Users" value={totals.users} tone="blue" />
+              <StatCard icon={ListChecks} label="Total Projects" value={totals.projects} tone="violet" />
+              <StatCard icon={BarChart3} label="Total Reports" value={totals.reports} tone="slate" />
+              <StatCard icon={CreditCard} label="Active Subscriptions" value={totals.subscriptions} tone="emerald" />
+            </section>
+
+            <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+              <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
+                <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-slate-500">
+                  <Building2 className="h-4 w-4 text-slate-400" /> Companies
+                  <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[11px] font-bold normal-case tracking-normal text-slate-600">{companies.length}</span>
+                </h2>
+                <button type="button" onClick={() => navigate("/platform-admin?section=companies")} className="text-[13px] font-semibold text-blue-700 hover:text-blue-800">Manage all →</button>
+              </div>
+              <div className="divide-y divide-slate-100">
+                {rows.slice(0, 5).map(({ company, plan }) => (
+                  <button key={company.id} type="button" onClick={() => navigate(`/platform-admin/company/${company.id}`)} className="flex w-full items-center gap-3 px-5 py-3 text-left transition hover:bg-slate-50">
+                    <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-xs font-bold text-white shadow-sm" style={{ background: company.brand_color || "#1d4ed8" }}>
+                      {(company.company_name || "?").charAt(0).toUpperCase()}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-bold text-slate-900">{company.company_name}</span>
+                      <span className="block truncate text-xs font-medium capitalize text-slate-400">{plan} plan</span>
+                    </span>
+                    <StatusPill status={company.status} />
+                  </button>
+                ))}
+                {!companies.length && <p className="px-5 py-6 text-center text-sm font-semibold text-slate-500">No companies yet.</p>}
+              </div>
+            </section>
+          </>
+        )}
 
         {(section === "companies") && (
           <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
@@ -677,7 +706,7 @@ export default function PlatformAdminDashboard() {
           </section>
         )}
 
-        {(section === "audit" || section === "companies") && (
+        {(section === "audit" || section === "dashboard") && (
           <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
             <button
               type="button"
