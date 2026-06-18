@@ -1,8 +1,10 @@
+import { useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import {
   BarChart3,
   Bell,
   Building2,
+  ChevronDown,
   ClipboardCheck,
   FileCheck2,
   FileClock,
@@ -101,37 +103,82 @@ function getNavKey(role, { isPlatformAdmin = false, companyRole = "" } = {}) {
   return "client";
 }
 
+// Split a flat nav list (with {section} markers) into an ungrouped lead block
+// plus titled groups.
+function toGroups(navItems) {
+  const groups = [];
+  let current = { section: null, items: [] };
+  navItems.forEach((item) => {
+    if (item.section) {
+      if (current.items.length || current.section) groups.push(current);
+      current = { section: item.section, items: [] };
+    } else {
+      current.items.push(item);
+    }
+  });
+  if (current.items.length || current.section) groups.push(current);
+  return groups;
+}
+
 function Sidebar() {
   const { role, isPlatformAdmin, companyRole } = useAuth();
   const location = useLocation();
   const navItems = navByRole[getNavKey(role, { isPlatformAdmin, companyRole })] || navByRole.client;
+  const groups = toGroups(navItems);
+  const [collapsed, setCollapsed] = useState(() => new Set());
+
+  function isActive(path) {
+    const basePath = path.split("?")[0];
+    return location.pathname === basePath && (!path.includes("?") || `${location.pathname}${location.search}` === path);
+  }
+
+  function NavRow({ label, path, icon: Icon, nested }) {
+    const active = isActive(path);
+    return (
+      <NavLink
+        to={path}
+        className={`flex min-h-9 items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13px] font-semibold transition ${
+          active
+            ? "bg-accent-50 text-accent-800"
+            : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+        } ${nested ? "ml-3 border-l border-slate-200 pl-3" : ""}`}
+      >
+        <Icon className={`h-[18px] w-[18px] shrink-0 ${active ? "text-accent-700" : "text-slate-400"}`} />
+        <span className="truncate">{label}</span>
+      </NavLink>
+    );
+  }
 
   return (
-    <aside className="hidden h-full w-64 shrink-0 overflow-y-auto border-r border-slate-200 bg-white px-3 py-4 lg:block">
-      <nav className="space-y-1">
-        {navItems.map(({ label, path, icon: Icon, nested, section }) => {
-          if (section) {
-            return (
-              <p key={section} className="px-3 pt-4 pb-2 text-[11px] font-bold uppercase tracking-[0.22em] text-slate-400 first:pt-0">
-                {section}
-              </p>
-            );
+    <aside className="hidden h-full w-[220px] shrink-0 overflow-y-auto border-r border-slate-200 bg-white px-2.5 py-3 lg:block">
+      <nav className="space-y-0.5">
+        {groups.map((group, gi) => {
+          if (!group.section) {
+            // Lead block (e.g. Dashboard) — no header.
+            return group.items.map((item) => <NavRow key={item.path} {...item} />);
           }
-          const basePath = path.split("?")[0];
-          const active = location.pathname === basePath && (!path.includes("?") || `${location.pathname}${location.search}` === path);
+          const isOpen = !collapsed.has(group.section);
           return (
-            <NavLink
-              key={path}
-              to={path}
-              className={`flex min-h-11 items-center gap-3 rounded-2xl px-3 py-2 text-sm font-bold transition ${
-                active
-                  ? "bg-accent-50 text-accent-800 ring-1 ring-accent-100"
-                  : "text-slate-600 hover:bg-slate-100 hover:text-slate-950"
-              } ${nested ? "ml-4 min-h-10 border-l border-slate-200 pl-4 text-xs" : ""}`}
-            >
-              <Icon className="h-5 w-5 shrink-0" />
-              <span className="truncate">{label}</span>
-            </NavLink>
+            <div key={group.section} className="pt-2">
+              <button
+                type="button"
+                onClick={() => setCollapsed((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(group.section)) next.delete(group.section); else next.add(group.section);
+                  return next;
+                })}
+                className="flex w-full items-center justify-between px-2.5 pb-1 pt-1 text-[11px] font-bold uppercase tracking-wide text-slate-400 transition hover:text-slate-600"
+              >
+                {group.section}
+                <ChevronDown className={`h-3.5 w-3.5 transition-transform ${isOpen ? "" : "-rotate-90"}`} />
+              </button>
+              {isOpen && (
+                <div className="space-y-0.5">
+                  {group.items.map((item) => <NavRow key={item.path} {...item} />)}
+                </div>
+              )}
+              {gi < groups.length - 1 && <div className="mx-2.5 mt-2 border-b border-slate-100" />}
+            </div>
           );
         })}
       </nav>

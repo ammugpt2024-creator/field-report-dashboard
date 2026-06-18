@@ -18,10 +18,13 @@ import {
 
 export const FIELD_ENGINEER_NAV = [
   { label: "Dashboard", path: "/technician/dashboard", icon: Gauge },
+  { section: "Operations" },
   { label: "Daily Logs", path: "/technician/dashboard?view=reports-home", icon: ClipboardList },
+  { section: "Workforce" },
   { label: "Timesheets", path: "/technician/dashboard?view=time-cards", icon: FileText },
-  { label: "Profile", path: "/technician/dashboard?view=profile", icon: User },
-  { label: "Notifications", path: "/technician/dashboard?view=notifications", icon: Bell }
+  { section: "Account" },
+  { label: "Notifications", path: "/technician/dashboard?view=notifications", icon: Bell },
+  { label: "Profile", path: "/technician/dashboard?view=profile", icon: User }
 ];
 
 export const INSPECTION_TEMPLATES = [

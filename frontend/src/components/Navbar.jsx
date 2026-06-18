@@ -1,4 +1,4 @@
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { useEffect, useState } from "react";
 import {
   BarChart3,
@@ -35,6 +35,7 @@ import { LogoMark } from "./Logo";
 function Navbar() {
 
   const navigate = useNavigate();
+  const location = useLocation();
   const [profileOpen, setProfileOpen] = useState(false);
   const [companyOpen, setCompanyOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -122,6 +123,59 @@ function Navbar() {
     : `${getRoleHomeRoute(role)}?view=notifications`;
   const profilePath = normalizedRole === ROLES.TECHNICIAN ? "/technician/dashboard?view=profile" : "/profile";
 
+  // Primary top navigation — the product areas, role-based.
+  const topNav = (() => {
+    if (normalizedRole === ROLES.TECHNICIAN) {
+      return [
+        { label: "Dashboard", path: "/technician/dashboard" },
+        { label: "Daily Logs", path: "/technician/dashboard?view=reports-home" },
+        { label: "Timesheets", path: "/technician/dashboard?view=time-cards" }
+      ];
+    }
+    if (isPlatformAdmin || normalizedRole === "platform_admin") {
+      return [
+        { label: "Companies", path: "/platform-admin?section=companies" },
+        { label: "Subscriptions", path: "/platform-admin?section=subscriptions" },
+        { label: "Usage", path: "/platform-admin?section=usage" }
+      ];
+    }
+    if (companyRole === "company_admin" || normalizedRole === "company_admin") {
+      return [
+        { label: "Overview", path: "/company-admin" },
+        { label: "Employees", path: "/company-admin?section=employees" },
+        { label: "Projects", path: "/company-admin?section=projects" }
+      ];
+    }
+    if (normalizedRole === ROLES.QC_MANAGER || normalizedRole === "project_manager" || normalizedRole === "manager") {
+      return [
+        { label: "Dashboard", path: "/manager/dashboard" },
+        { label: "Reviews", path: "/qc/dashboard" },
+        { label: "Projects", path: "/project/1" },
+        { label: "Timesheets", path: "/timesheets" }
+      ];
+    }
+    if (isQcRole(normalizedRole)) {
+      return [
+        { label: "Reviews", path: "/qc/dashboard" },
+        { label: "Approved", path: "/qc/dashboard?status=approved" }
+      ];
+    }
+    return [
+      { label: "Dashboard", path: getRoleHomeRoute(role) },
+      { label: "Deliverables", path: "/client/dashboard?view=approved" },
+      { label: "Projects", path: "/client/dashboard?view=projects" }
+    ];
+  })();
+
+  const here = `${location.pathname}${location.search}`;
+  function navActive(path) {
+    if (path === here) return true;
+    // Base dashboards: active when on the path with no extra view param.
+    const [base, query] = path.split("?");
+    if (!query) return location.pathname === base && !location.search.includes("view=") && !location.search.includes("section=");
+    return false;
+  }
+
   // Where the company switcher's management links point (admins only).
   const canManageCompany = companyRole === "company_admin" || ["admin", "qc_manager"].includes(normalizedRole) || isPlatformAdmin;
 
@@ -166,27 +220,45 @@ function Navbar() {
     <header className="sticky top-0 z-40 w-full max-w-full overflow-visible border-b border-slate-200 bg-white px-4 py-2.5 sm:px-6">
       <div className="flex items-center justify-between gap-3 sm:gap-4">
 
-        {/* LEFT — platform mark */}
-        <button
-          type="button"
-          onClick={() => handleNavigate(getRoleHomeRoute(role))}
-          className="flex shrink-0 items-center gap-1 rounded-lg px-1 py-1 transition hover:bg-slate-50"
-          style={{ maxWidth: 220 }}
-        >
-          <LogoMark tone="dark" className="h-8 w-8 sm:h-9 sm:w-9" />
-          <span className="-ml-0.5 text-xl font-bold tracking-tight text-navy-900 sm:text-2xl">Core</span>
-        </button>
+        {/* LEFT — platform mark + primary navigation */}
+        <div className="flex min-w-0 items-center gap-2 sm:gap-5">
+          <button
+            type="button"
+            onClick={() => handleNavigate(getRoleHomeRoute(role))}
+            className="flex shrink-0 items-center gap-1 rounded-lg px-1 py-1 transition hover:bg-slate-50"
+          >
+            <LogoMark tone="dark" className="h-8 w-8 sm:h-9 sm:w-9" />
+            <span className="-ml-0.5 text-xl font-bold tracking-tight text-navy-900 sm:text-2xl">Core</span>
+          </button>
+          <nav className="hidden items-center gap-0.5 lg:flex">
+            {topNav.map((item) => {
+              const active = navActive(item.path);
+              return (
+                <button
+                  key={item.path}
+                  type="button"
+                  onClick={() => handleNavigate(item.path)}
+                  className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${
+                    active ? "bg-slate-100 text-navy-900" : "text-slate-500 hover:bg-slate-50 hover:text-slate-800"
+                  }`}
+                >
+                  {item.label}
+                </button>
+              );
+            })}
+          </nav>
+        </div>
 
         {/* CENTER — search */}
-        <div className="hidden min-w-0 flex-1 justify-center px-2 md:flex">
-          <div className="relative w-full max-w-[400px]" style={{ width: 320 }}>
+        <div className="hidden min-w-0 flex-1 justify-end px-2 lg:flex">
+          <div className="relative w-full max-w-[360px]">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
             <input
               type="search"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder="Search projects, reports, logs…"
-              className="h-10 w-full rounded-xl border border-slate-200 bg-slate-50 pl-9 pr-4 text-sm font-medium text-slate-800 outline-none transition placeholder:text-slate-400 hover:bg-slate-100 focus:border-blue-400 focus:bg-white focus:ring-2 focus:ring-blue-100"
+              className="h-9 w-full rounded-xl border border-slate-200 bg-slate-50 pl-9 pr-4 text-sm font-medium text-slate-800 outline-none transition placeholder:text-slate-400 hover:bg-slate-100 focus:border-blue-400 focus:bg-white focus:ring-2 focus:ring-blue-100"
             />
           </div>
         </div>
