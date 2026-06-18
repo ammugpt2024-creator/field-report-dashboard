@@ -102,6 +102,7 @@ export default function CompanyDetail() {
   const [reason, setReason] = useState("");
   const [scope, setScope] = useState(SUPPORT_SCOPES[0].value);
   const [requesting, setRequesting] = useState(false);
+  const [notice, setNotice] = useState(null); // { ok, text }
   const [viewer, setViewer] = useState(null); // { label, data } | { loading } | { error }
 
   async function refreshSessions() {
@@ -111,11 +112,17 @@ export default function CompanyDetail() {
   async function submitRequest() {
     if (!reason.trim()) { window.alert("Add a short reason (e.g. the customer's ticket reference)."); return; }
     setRequesting(true);
+    setNotice(null);
     try {
-      await requestSupportAccess(companyId, scope, reason.trim());
+      const { notify } = await requestSupportAccess(companyId, scope, reason.trim());
       setReason("");
       await refreshSessions();
-    } catch (err) { window.alert(err.message); }
+      if (notify?.ok) {
+        setNotice({ ok: true, text: `Request submitted. Approval email sent to ${notify.sentTo.join(", ")}.` });
+      } else {
+        setNotice({ ok: false, text: `Request submitted, but the approval email didn't send (${notify?.error || "unknown error"}). The company admin can still approve from their dashboard.` });
+      }
+    } catch (err) { setNotice({ ok: false, text: err.message }); }
     setRequesting(false);
   }
 
@@ -321,6 +328,11 @@ export default function CompanyDetail() {
                 >
                   <ShieldCheck className="h-4 w-4" /> {requesting ? "Requesting…" : `Request ${supportScopeLabel(scope)} access`}
                 </button>
+                {notice && (
+                  <p className={`rounded-lg px-3 py-2 text-[13px] font-semibold ${notice.ok ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-800"}`}>
+                    {notice.text}
+                  </p>
+                )}
               </div>
             </section>
 

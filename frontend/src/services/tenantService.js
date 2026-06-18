@@ -159,27 +159,46 @@ export function supportScopeLabel(scope) {
 }
 
 // Platform admin: open a request for a report type (scope), then email the
-// company admin(s) that an approval is waiting.
+// company admin(s) that an approval is waiting. Returns the session id plus a
+// `notify` result so the UI can show whether the email actually went out.
 export async function requestSupportAccess(companyId, scope, reason) {
   const { data, error } = await supabase.rpc('request_support_access', {
     p_company: companyId, p_scope: scope, p_reason: reason || ''
   });
   if (error) throw error;
-  notifySupportRequest(companyId, scope, reason).catch((e) => console.warn('Support request email failed:', e?.message));
-  return data; // session id
+  let notify;
+  try {
+    notify = await notifySupportRequest(companyId, scope, reason);
+  } catch (e) {
+    notify = { ok: false, error: e?.message || 'email failed', sentTo: [] };
+  }
+  return { sessionId: data, notify };
 }
 
 // Email the company's admin(s) that a support-access request needs approval.
+// Returns { ok, sentTo, error } — never throws into the request flow.
 async function notifySupportRequest(companyId, scope, reason) {
   const { data: company } = await supabase.from('companies').select('company_name').eq('id', companyId).maybeSingle();
+
+  // Company admins: roster invited_email is the reliable source the platform
+  // admin can read; also try profiles for any linked accounts.
   const { data: admins } = await supabase
     .from('company_users')
-    .select('invited_email')
+    .select('invited_email, user_id')
     .eq('company_id', companyId)
     .eq('role', 'company_admin')
     .eq('status', 'active');
-  const to = [...new Set((admins || []).map((a) => (a.invited_email || '').trim()).filter(Boolean))];
-  if (!to.length) return;
+  let emails = (admins || []).map((a) => a.invited_email).filter(Boolean);
+  const userIds = (admins || []).map((a) => a.user_id).filter(Boolean);
+  if (userIds.length) {
+    const { data: profs } = await supabase.from('profiles').select('email').in('id', userIds);
+    emails = emails.concat((profs || []).map((p) => p.email).filter(Boolean));
+  }
+  const to = [...new Set(emails.map((e) => String(e).trim().toLowerCase()).filter(Boolean))];
+  if (!to.length) {
+    return { ok: false, error: 'No active company admin with an email to notify.', sentTo: [] };
+  }
+
   const label = supportScopeLabel(scope);
   const origin = typeof window !== 'undefined' ? window.location.origin : '';
   const html = `
@@ -193,9 +212,17 @@ async function notifySupportRequest(companyId, scope, reason) {
       <a href="${origin}/company-admin" style="display:inline-block;background:#2563eb;color:#fff;
       text-decoration:none;font-weight:600;padding:10px 16px;border-radius:8px">Review &amp; approve</a>
     </div>`;
-  await supabase.functions.invoke('send-qc-email', {
+
+  const { data: result, error } = await supabase.functions.invoke('send-qc-email', {
     body: { to, subject: `QCore: approve support access to your ${label}`, html }
   });
+  if (error) {
+    // FunctionsHttpError hides the body — surface the real message.
+    const body = await error.context?.json?.().catch(() => null);
+    return { ok: false, error: body?.error || error.message, sentTo: to };
+  }
+  if (result?.error) return { ok: false, error: result.error, sentTo: to };
+  return { ok: true, sentTo: to };
 }
 
 // Platform admin: all of MY support sessions for a company, newest first.
