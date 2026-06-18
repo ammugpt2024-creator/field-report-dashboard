@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "react-router-dom";
 import {
   BarChart3, Building2, CheckCircle2, Clock, FileStack, FolderKanban,
-  HardDrive, ListChecks, PauseCircle, Plus, ShieldCheck, Trash2, Users, X
+  HardDrive, ListChecks, Minus, PauseCircle, Plus, ShieldCheck, Trash2, Users, X
 } from "lucide-react";
 import {
   createCompany,
@@ -96,6 +96,9 @@ export default function PlatformAdminDashboard() {
   const [form, setForm] = useState(EMPTY_FORM);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // The audit trail is the compliance record but rarely the daily focus —
+  // collapsed by default, expand on demand via the +/- control.
+  const [auditOpen, setAuditOpen] = useState(false);
   const [detailCompany, setDetailCompany] = useState(null);
 
   async function refresh() {
@@ -333,9 +336,22 @@ export default function PlatformAdminDashboard() {
 
         {(section === "audit" || section === "companies") && (
           <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
-            <h2 className="flex items-center gap-2 border-b border-slate-100 px-5 py-4 text-sm font-bold uppercase tracking-wide text-slate-500">
+            <button
+              type="button"
+              onClick={() => setAuditOpen((value) => !value)}
+              aria-expanded={auditOpen}
+              title={auditOpen ? "Collapse audit logs" : "Expand audit logs"}
+              className={`flex w-full items-center gap-2 px-5 py-4 text-left text-sm font-bold uppercase tracking-wide text-slate-500 ${auditOpen ? "border-b border-slate-100" : ""}`}
+            >
+              <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border border-slate-300 bg-white text-slate-600 transition hover:border-slate-400 hover:bg-slate-50">
+                {auditOpen ? <Minus className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
+              </span>
               <ListChecks className="h-4 w-4 text-slate-400" /> Audit Logs
-            </h2>
+              {auditLogs.length > 0 && (
+                <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[11px] font-bold normal-case tracking-normal text-slate-600">{auditLogs.length}</span>
+              )}
+            </button>
+            {auditOpen && (
             <div className="divide-y divide-slate-100">
               {auditLogs.map((log) => (
                 <div key={log.id} className="flex min-w-0 items-center gap-3 px-5 py-3">
@@ -349,6 +365,7 @@ export default function PlatformAdminDashboard() {
               ))}
               {!auditLogs.length && <p className="px-5 py-4 text-sm font-semibold text-slate-500">No audit events yet.</p>}
             </div>
+            )}
           </section>
         )}
 

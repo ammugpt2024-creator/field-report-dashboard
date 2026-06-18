@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { useLocation } from "react-router-dom";
-import { Building2, FolderKanban, Plus, Settings, Upload, Users, Wrench, X } from "lucide-react";
+import {
+  Building2, CreditCard, FileText, FolderKanban, Plus, Upload, Users, Wrench, X
+} from "lucide-react";
 import { supabase } from "../services/supabase";
 import {
   getMyCompanyContext,
@@ -21,25 +23,81 @@ const COMPANY_ROLES = [
 ];
 const CLIENT_TYPES = ["owner", "general_contractor", "agency", "utility", "developer", "other"];
 
-function SectionCard({ icon: Icon, title, action, children }) {
+// Section panel with a header band (icon + uppercase label + count badge) to
+// match the Platform Admin console.
+function SectionCard({ icon: Icon, title, count, action, children }) {
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5">
-      <div className="flex items-center justify-between gap-3">
-        <h2 className="flex min-w-0 items-center gap-2 text-base font-bold text-slate-950 sm:text-lg">
-          <Icon className="h-5 w-5 shrink-0 text-blue-700" /> <span className="truncate">{title}</span>
+    <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
+        <h2 className="flex min-w-0 items-center gap-2 text-sm font-bold uppercase tracking-wide text-slate-500">
+          <Icon className="h-4 w-4 shrink-0 text-slate-400" /> <span className="truncate">{title}</span>
+          {count != null && (
+            <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[11px] font-bold normal-case tracking-normal text-slate-600">{count}</span>
+          )}
         </h2>
         {action}
       </div>
-      <div className="mt-3">{children}</div>
+      <div className="px-5 py-4">{children}</div>
     </section>
   );
 }
 
 function SmallButton({ children, ...props }) {
   return (
-    <button type="button" {...props} className={`min-h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 hover:bg-slate-50 ${props.className || ""}`}>
+    <button type="button" {...props} className={`inline-flex min-h-9 items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 transition hover:bg-slate-50 ${props.className || ""}`}>
       {children}
     </button>
+  );
+}
+
+// KPI summary card with a tinted icon chip (shared visual with the platform console).
+function StatCard({ icon: Icon, label, value, tone }) {
+  const tones = {
+    slate: "bg-slate-100 text-slate-600",
+    blue: "bg-blue-50 text-blue-600",
+    emerald: "bg-emerald-50 text-emerald-600",
+    amber: "bg-amber-50 text-amber-600"
+  };
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <div className="flex items-center gap-3.5 px-5 py-4">
+        <span className={`inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${tones[tone] || tones.slate}`}>
+          <Icon className="h-5 w-5" />
+        </span>
+        <div className="min-w-0">
+          <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">{label}</p>
+          <p className="text-2xl font-bold leading-tight text-slate-900">{value}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Initial-letter avatar, sized via the className passed in.
+function InitialAvatar({ name, color = "#1d4ed8", className = "" }) {
+  return (
+    <span className={`inline-flex shrink-0 items-center justify-center rounded-xl font-bold text-white shadow-sm ${className}`} style={{ background: color }}>
+      {(name || "?").charAt(0).toUpperCase()}
+    </span>
+  );
+}
+
+const ROW_STATUS_TONES = {
+  active: "border-emerald-200 bg-emerald-50 text-emerald-700",
+  invited: "border-amber-200 bg-amber-50 text-amber-700",
+  disabled: "border-slate-200 bg-slate-100 text-slate-500",
+  inactive: "border-slate-200 bg-slate-100 text-slate-500"
+};
+
+function RowStatus({ status }) {
+  const dot = {
+    active: "bg-emerald-500", invited: "bg-amber-500", disabled: "bg-slate-400", inactive: "bg-slate-400"
+  }[status] || "bg-slate-400";
+  return (
+    <span className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide ${ROW_STATUS_TONES[status] || ROW_STATUS_TONES.inactive}`}>
+      <span className={`h-1.5 w-1.5 rounded-full ${dot}`} />
+      {status}
+    </span>
   );
 }
 
@@ -78,8 +136,8 @@ export default function CompanyAdminDashboard() {
   }
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- initial data load on mount
     refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const company = context.company;
@@ -151,24 +209,33 @@ export default function CompanyAdminDashboard() {
   const showAll = section === "overview";
 
   return (
-    <div className="w-full max-w-full overflow-x-hidden bg-slate-100 px-4 py-5 sm:px-6 lg:p-8">
-      <div className="mx-auto w-full max-w-[1500px] space-y-4 sm:space-y-5">
+    <div className="w-full max-w-full overflow-x-hidden bg-slate-50 px-4 py-5 sm:px-6 lg:p-8">
+      <div className="mx-auto w-full max-w-[1500px] space-y-4 sm:space-y-6">
 
-        <section className="rounded-xl border border-slate-200 bg-white px-4 py-3 sm:px-5 sm:py-4">
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex min-w-0 items-center gap-3">
-              <span className="h-9 w-9 shrink-0 rounded-xl" style={{ background: company.brand_color || "#1d4ed8" }} />
-              <div className="min-w-0">
-                <h1 className="truncate text-lg font-semibold text-slate-900 sm:text-xl">{company.company_name}</h1>
-                <p className="text-[13px] font-medium text-slate-500">
-                  Company Administration · {context.subscription?.plan || "trial"} plan · {company.status}
-                </p>
-              </div>
-            </div>
+        <section className="flex items-center gap-3.5">
+          <InitialAvatar name={company.company_name} color={company.brand_color || "#1d4ed8"} className="h-12 w-12 text-lg" />
+          <div className="min-w-0">
+            <h1 className="truncate text-xl font-bold tracking-tight text-slate-900 sm:text-2xl">{company.company_name}</h1>
+            <p className="mt-0.5 truncate text-[13px] font-medium text-slate-500">
+              Company Administration
+              <span className="mx-1.5 text-slate-300">·</span>
+              <span className="capitalize">{context.subscription?.plan || "trial"}</span> plan
+              <span className="mx-1.5 text-slate-300">·</span>
+              <span className="capitalize">{company.status}</span>
+            </p>
           </div>
         </section>
 
         {error && <p className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm font-semibold text-rose-800">{error}</p>}
+
+        {showAll && (
+          <section className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
+            <StatCard icon={Users} label="Employees" value={context.roster.length} tone="blue" />
+            <StatCard icon={FolderKanban} label="Projects" value={projects.length} tone="emerald" />
+            <StatCard icon={Building2} label="Clients" value={clients.length} tone="amber" />
+            <StatCard icon={Wrench} label="Equipment" value={equipment.length} tone="slate" />
+          </section>
+        )}
 
         {(showAll || section === "settings") && (
           <SectionCard
@@ -199,28 +266,34 @@ export default function CompanyAdminDashboard() {
         {(showAll || section === "employees") && (
           <SectionCard
             icon={Users}
-            title={`Employees (${context.roster.length})`}
-            action={<SmallButton onClick={() => setInvite({ email: "", fullName: "", role: "technician" })}><Plus className="mr-1 inline h-3.5 w-3.5" />Invite</SmallButton>}
+            title="Employees"
+            count={context.roster.length}
+            action={<SmallButton onClick={() => setInvite({ email: "", fullName: "", role: "technician" })}><Plus className="h-3.5 w-3.5" />Invite</SmallButton>}
           >
-            <div className="divide-y divide-slate-100">
+            <div className="-my-1 divide-y divide-slate-100">
               {context.roster.map((member) => (
-                <div key={member.id} className="flex flex-wrap items-center gap-2 py-2">
+                <div key={member.id} className="flex flex-wrap items-center gap-3 py-3">
+                  <InitialAvatar name={member.full_name || member.invited_email} color={company.brand_color || "#1d4ed8"} className="h-9 w-9 text-sm" />
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-bold text-slate-900">{member.full_name || member.invited_email || "—"}</p>
-                    <p className="truncate text-xs font-semibold text-slate-500">{member.invited_email} · {member.status}</p>
+                    <div className="flex items-center gap-2">
+                      <p className="truncate text-sm font-bold text-slate-900">{member.full_name || member.invited_email || "—"}</p>
+                      <RowStatus status={member.status} />
+                    </div>
+                    <p className="truncate text-xs font-medium text-slate-400">{member.invited_email}</p>
                   </div>
                   <select
                     value={member.role}
                     onChange={(event) => setMemberRole(member, event.target.value).then(refresh)}
-                    className="h-9 rounded-lg border border-slate-300 bg-white px-2 text-xs font-semibold text-slate-900"
+                    className="h-9 rounded-lg border border-slate-300 bg-white px-2 text-xs font-semibold capitalize text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                   >
                     {COMPANY_ROLES.map((r) => <option key={r} value={r}>{r.replace(/_/g, " ")}</option>)}
                   </select>
-                  <SmallButton onClick={() => setMemberStatus(member, member.status === "disabled" ? "active" : "disabled").then(refresh)} className={member.status === "disabled" ? "" : "text-rose-700"}>
+                  <SmallButton onClick={() => setMemberStatus(member, member.status === "disabled" ? "active" : "disabled").then(refresh)} className={member.status === "disabled" ? "" : "border-rose-200 text-rose-700 hover:bg-rose-50"}>
                     {member.status === "disabled" ? "Enable" : "Disable"}
                   </SmallButton>
                 </div>
               ))}
+              {!context.roster.length && <p className="py-3 text-sm font-semibold text-slate-500">No employees yet — invite your first team member.</p>}
             </div>
           </SectionCard>
         )}
@@ -228,21 +301,21 @@ export default function CompanyAdminDashboard() {
         {(showAll || section === "projects") && (
           <SectionCard
             icon={FolderKanban}
-            title={`Projects (${projects.length})`}
-            action={<SmallButton onClick={() => setNewProject({ project_name: "", project_number: "", client_name: "", project_location: "", status: "Active" })}><Plus className="mr-1 inline h-3.5 w-3.5" />Add</SmallButton>}
+            title="Projects"
+            count={projects.length}
+            action={<SmallButton onClick={() => setNewProject({ project_name: "", project_number: "", client_name: "", project_location: "", status: "Active" })}><Plus className="h-3.5 w-3.5" />Add</SmallButton>}
           >
-            <div className="divide-y divide-slate-100">
+            <div className="-my-1 divide-y divide-slate-100">
               {projects.map((project) => (
-                <div key={project.id} className="flex items-center justify-between gap-3 py-2">
+                <div key={project.id} className="flex items-center justify-between gap-3 py-3">
                   <div className="min-w-0">
                     <p className="truncate text-sm font-bold text-slate-900">{project.project_name}</p>
-                    <p className="truncate text-xs font-semibold text-slate-500">#{project.project_number} · {project.client_name} · {project.project_location}</p>
+                    <p className="truncate text-xs font-medium text-slate-400">#{project.project_number} · {project.client_name} · {project.project_location}</p>
                   </div>
-                  <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-bold ${String(project.status).toLowerCase() === "active" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-slate-200 bg-slate-100 text-slate-600"}`}>
-                    {project.status || "Active"}
-                  </span>
+                  <RowStatus status={String(project.status || "active").toLowerCase()} />
                 </div>
               ))}
+              {!projects.length && <p className="py-3 text-sm font-semibold text-slate-500">No projects yet.</p>}
             </div>
           </SectionCard>
         )}
@@ -250,15 +323,16 @@ export default function CompanyAdminDashboard() {
         {(showAll || section === "clients") && (
           <SectionCard
             icon={Building2}
-            title={`Clients & Contractors (${clients.length})`}
-            action={<SmallButton onClick={() => setNewClient({ client_name: "", client_type: "owner", contact_name: "", contact_email: "" })}><Plus className="mr-1 inline h-3.5 w-3.5" />Add</SmallButton>}
+            title="Clients & Contractors"
+            count={clients.length}
+            action={<SmallButton onClick={() => setNewClient({ client_name: "", client_type: "owner", contact_name: "", contact_email: "" })}><Plus className="h-3.5 w-3.5" />Add</SmallButton>}
           >
-            <div className="divide-y divide-slate-100">
+            <div className="-my-1 divide-y divide-slate-100">
               {clients.map((client) => (
-                <div key={client.id} className="flex items-center justify-between gap-3 py-2">
+                <div key={client.id} className="flex items-center justify-between gap-3 py-3">
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-bold text-slate-900">{client.client_name}</p>
-                    <p className="truncate text-xs font-semibold text-slate-500">{client.client_type.replace(/_/g, " ")} · {client.contact_name || "—"} {client.contact_email ? `· ${client.contact_email}` : ""}</p>
+                    <p className="truncate text-sm font-bold capitalize text-slate-900">{client.client_name}</p>
+                    <p className="truncate text-xs font-medium text-slate-400">{client.client_type.replace(/_/g, " ")} · {client.contact_name || "—"} {client.contact_email ? `· ${client.contact_email}` : ""}</p>
                   </div>
                   <SmallButton onClick={() => updateCompanyRow("clients", company.id, client.id, { status: client.status === "active" ? "inactive" : "active" }, "client_updated").then(refresh)}>
                     {client.status === "active" ? "Deactivate" : "Activate"}
@@ -273,17 +347,18 @@ export default function CompanyAdminDashboard() {
         {(showAll || section === "equipment") && (
           <SectionCard
             icon={Wrench}
-            title={`Equipment & Calibration (${equipment.length})`}
-            action={<SmallButton onClick={() => setNewEquipment({ equipment_name: "", equipment_type: "", serial_number: "", model: "" })}><Plus className="mr-1 inline h-3.5 w-3.5" />Add</SmallButton>}
+            title="Equipment & Calibration"
+            count={equipment.length}
+            action={<SmallButton onClick={() => setNewEquipment({ equipment_name: "", equipment_type: "", serial_number: "", model: "" })}><Plus className="h-3.5 w-3.5" />Add</SmallButton>}
           >
-            <div className="divide-y divide-slate-100">
+            <div className="-my-1 divide-y divide-slate-100">
               {equipment.map((item) => (
-                <div key={item.id} className="flex items-center justify-between gap-3 py-2">
+                <div key={item.id} className="flex items-center justify-between gap-3 py-3">
                   <div className="min-w-0">
                     <p className="truncate text-sm font-bold text-slate-900">{item.equipment_name}</p>
-                    <p className="truncate text-xs font-semibold text-slate-500">{item.equipment_type || "—"} · SN {item.serial_number || "—"} · {item.model || ""}</p>
+                    <p className="truncate text-xs font-medium text-slate-400">{item.equipment_type || "—"} · SN {item.serial_number || "—"} · {item.model || ""}</p>
                   </div>
-                  <span className="shrink-0 rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-bold text-slate-600">{item.status.replace(/_/g, " ")}</span>
+                  <span className="shrink-0 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-slate-600">{item.status.replace(/_/g, " ")}</span>
                 </div>
               ))}
               {!equipment.length && <p className="py-3 text-sm font-semibold text-slate-500">No equipment recorded yet.</p>}
@@ -292,13 +367,13 @@ export default function CompanyAdminDashboard() {
         )}
 
         {(showAll || section === "lab-reports") && (
-          <SectionCard icon={Settings} title={`Lab Reports (${labReports.length})`}>
-            <div className="divide-y divide-slate-100">
+          <SectionCard icon={FileText} title="Lab Reports" count={labReports.length}>
+            <div className="-my-1 divide-y divide-slate-100">
               {labReports.map((report) => (
-                <div key={report.id} className="flex items-center justify-between gap-3 py-2">
+                <div key={report.id} className="flex items-center justify-between gap-3 py-3">
                   <div className="min-w-0">
                     <p className="truncate text-sm font-bold text-slate-900">{report.report_number || report.sample_id || report.id.slice(0, 8)}</p>
-                    <p className="truncate text-xs font-semibold text-slate-500">{report.test_type || "—"} · {report.status}</p>
+                    <p className="truncate text-xs font-medium text-slate-400">{report.test_type || "—"} · {report.status}</p>
                   </div>
                 </div>
               ))}
@@ -308,7 +383,7 @@ export default function CompanyAdminDashboard() {
         )}
 
         {(showAll || section === "billing") && (
-          <SectionCard icon={Settings} title="Billing">
+          <SectionCard icon={CreditCard} title="Billing">
             <KeyValueList columns={2} items={[
               ["Plan", context.subscription?.plan],
               ["Billing Status", context.subscription?.billing_status],
