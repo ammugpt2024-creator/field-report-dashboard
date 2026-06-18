@@ -184,9 +184,9 @@ function Navbar() {
 
         {/* LEFT — brand + tagline */}
         <div className="flex min-w-0 items-center gap-3 sm:gap-4">
-          <div className="flex shrink-0 items-center gap-2.5">
+          <div className="flex shrink-0 items-center gap-0.5">
             <LogoMark tone="light" className="h-8 w-8 sm:h-9 sm:w-9" />
-            <span className="text-xl font-bold tracking-tight text-white sm:text-2xl">Core</span>
+            <span className="-ml-0.5 text-xl font-bold tracking-tight text-white sm:text-2xl">Core</span>
           </div>
           <div className="hidden h-9 w-px bg-white/15 lg:block" />
           <div className="hidden min-w-0 lg:block">
