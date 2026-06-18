@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
-  ArrowLeft, BarChart3, Building2, CreditCard, FileStack, FolderKanban,
-  HardDrive, Lock, ListChecks, ShieldCheck, Users, X
+  ArrowLeft, BarChart3, Building2, CreditCard, Eye, FileStack, FolderKanban,
+  HardDrive, Lock, ListChecks, RefreshCw, ShieldCheck, Users, X
 } from "lucide-react";
 import {
   getCompanyById, getCompanyUsage,
@@ -338,7 +338,12 @@ export default function CompanyDetail() {
 
             {/* My sessions */}
             <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
-              <h2 className="border-b border-slate-100 px-5 py-4 text-sm font-bold uppercase tracking-wide text-slate-500">Access Requests</h2>
+              <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
+                <h2 className="text-sm font-bold uppercase tracking-wide text-slate-500">Access Requests</h2>
+                <button type="button" onClick={refreshSessions} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-bold text-slate-600 transition hover:bg-slate-50">
+                  <RefreshCw className="h-3.5 w-3.5" /> Refresh
+                </button>
+              </div>
               <div className="divide-y divide-slate-100">
                 {sessions.map((s) => {
                   const active = isActiveGrant(s);
@@ -362,20 +367,25 @@ export default function CompanyDetail() {
                         <p className="mt-1 text-xs font-semibold text-slate-400">This grant has ended or expired.</p>
                       )}
                       {active && (
-                        <div className="mt-2.5 flex flex-wrap gap-2">
-                          {resources.length === 0 && <p className="text-xs font-semibold text-slate-400">No reports were shared.</p>}
-                          {resources.map((r) => (
-                            <button
-                              key={r.id}
-                              type="button"
-                              onClick={() => openReport(s, r)}
-                              className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-bold text-blue-700 transition hover:bg-blue-100"
-                            >
-                              <FileStack className="h-3.5 w-3.5" /> {r.label}
-                            </button>
-                          ))}
+                        <div className="mt-2.5 rounded-xl border border-emerald-100 bg-emerald-50/50 p-3">
+                          <p className="mb-2 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-emerald-700">
+                            <ShieldCheck className="h-3.5 w-3.5" /> Approved — open a shared report (read-only)
+                          </p>
+                          <div className="flex flex-wrap gap-2">
+                            {resources.length === 0 && <p className="text-xs font-semibold text-slate-400">No reports were shared.</p>}
+                            {resources.map((r) => (
+                              <button
+                                key={r.id}
+                                type="button"
+                                onClick={() => openReport(s, r)}
+                                className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-bold text-white shadow-sm transition hover:bg-blue-700"
+                              >
+                                <Eye className="h-3.5 w-3.5" /> Open {r.label}
+                              </button>
+                            ))}
+                          </div>
                           {!s.unmask && (
-                            <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-400"><Lock className="h-3 w-3" /> names &amp; signatures masked</span>
+                            <span className="mt-2 inline-flex items-center gap-1 text-[11px] font-semibold text-slate-400"><Lock className="h-3 w-3" /> names &amp; signatures masked</span>
                           )}
                         </div>
                       )}
