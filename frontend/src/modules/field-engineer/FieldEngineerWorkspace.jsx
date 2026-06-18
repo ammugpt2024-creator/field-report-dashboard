@@ -5,8 +5,6 @@ import {
   CalendarDays,
   Camera,
   Calculator,
-  Building2,
-  ChevronDown,
   ClipboardCheck,
   Download,
   FileText,
@@ -14,6 +12,7 @@ import {
   HardHat,
   KeyRound,
   Layers3,
+  MapPin,
   Minus,
   Plus,
   Save,
@@ -51,6 +50,7 @@ import {
   saveTimeCard,
   TIME_CARD_STATUS
 } from "../../services/timeCardService";
+import { supabase } from "../../services/supabase";
 import { formatDateTime } from "./fieldEngineerData";
 import { fetchTimesheetStatusUpdates, fetchTimesheetsForTechnician } from "../../services/timesheetSyncService";
 import {
@@ -397,10 +397,9 @@ function ActionTimeCardRow({ card, onOpen }) {
 
 
 
-function DashboardOverview({ profile, logCollections, timeCardCollections, onOpenLog, onOpenTimeCard, onCreateLog, navigate }) {
+function DashboardOverview({ logCollections, timeCardCollections, onOpenLog, onOpenTimeCard, onCreateLog, navigate }) {
   // Collapsed by default — expand on demand via the +/- control.
   const [activityCollapsed, setActivityCollapsed] = useState(true);
-  const [createOpen, setCreateOpen] = useState(false);
   const actionRequiredLogs = [...logCollections.returnedLogs, ...logCollections.draftLogs];
   const actionRequiredTimeCards = [...timeCardCollections.returnedTimeCards, ...timeCardCollections.draftTimeCards];
   const actionRequiredItems = [
@@ -441,76 +440,102 @@ function DashboardOverview({ profile, logCollections, timeCardCollections, onOpe
     .sort((a, b) => new Date(b.at || 0) - new Date(a.at || 0))
     .slice(0, 50);
   const latestActivity = recentActivity.slice(0, 5);
-  const technicianName = profile?.full_name || profile?.name || "Technician";
-  const hour = new Date().getHours();
-  const greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
   // The project the technician is currently working in — the most recently
   // touched daily log.
   const currentProject = [...allLogs].sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0))[0] || null;
+  const currentProjectId = currentProject?.projectId || currentProject?.project_id || null;
+  const currentProjectName = currentProject?.projectName || "—";
+
+  // Richer project context (location, number, lead) — fetched once per project.
+  const [projectInfo, setProjectInfo] = useState(null);
+  useEffect(() => {
+    if (!currentProjectId) return undefined;
+    let active = true;
+    supabase
+      .from("projects")
+      .select("project_number, project_location, project_manager_name, gc_representative")
+      .eq("id", currentProjectId)
+      .maybeSingle()
+      .then(({ data }) => { if (active) setProjectInfo(data || null); })
+      .catch(() => {});
+    return () => { active = false; };
+  }, [currentProjectId]);
+
+  const projectNumber = projectInfo?.project_number || currentProject?.projectNumber || currentProject?.project_number || "";
+  const projectLocation = projectInfo?.project_location || "";
+  const projectLead = projectInfo?.project_manager_name || projectInfo?.gc_representative || "";
+
+  // Operational status for the field-ops widgets.
+  const lastSubmittedAt = allLogs.map((l) => l.submittedAt).filter(Boolean).sort((a, b) => new Date(b) - new Date(a))[0] || null;
+  const reportsInReview = logCollections.submittedLogs.length;
+  const timesheetStatus = timeCardCollections.draftTimeCards.length > 0
+    ? { label: "Pending submission", tone: "text-amber-700" }
+    : timeCardCollections.submittedTimeCards.length > 0
+      ? { label: "Awaiting approval", tone: "text-blue-700" }
+      : { label: "Up to date", tone: "text-emerald-700" };
 
   return (
     <>
-      {/* Compact greeting + quick create */}
+      {/* Title + quick actions (sidebar owns navigation; this is the page head) */}
       <section className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
-          <h1 className="text-lg font-bold tracking-tight text-slate-900 sm:text-xl">{greeting}, {technicianName}</h1>
-          <p className="mt-0.5 text-[13px] font-medium text-slate-500">
-            {actionRequiredItems.length
-              ? `${actionRequiredItems.length} ${actionRequiredItems.length === 1 ? "item requires" : "items require"} attention`
-              : "You're all caught up"}
-          </p>
+          <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Technician</p>
+          <h1 className="text-xl font-bold tracking-tight text-slate-900 sm:text-2xl">Dashboard</h1>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={onCreateLog}
+            className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-accent-500 px-3 text-sm font-semibold text-white transition hover:bg-accent-600"
+          >
+            <Plus className="h-4 w-4" /> Daily Log
+          </button>
           <button
             type="button"
             onClick={() => navigate("/timesheets")}
-            className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+            className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
           >
-            <CalendarDays className="h-4 w-4" /> My Timesheet
+            <Plus className="h-4 w-4" /> Timesheet
           </button>
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => setCreateOpen((v) => !v)}
-              aria-expanded={createOpen}
-              className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-accent-500 px-3 text-sm font-semibold text-white hover:bg-accent-600"
-            >
-              <Plus className="h-4 w-4" /> Create <ChevronDown className="h-3.5 w-3.5" />
-            </button>
-            {createOpen && (
-              <>
-                <button type="button" aria-label="Close" onClick={() => setCreateOpen(false)} className="fixed inset-0 z-40 cursor-default" />
-                <div className="absolute right-0 top-full z-50 mt-1.5 w-48 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-xl">
-                  <button type="button" onClick={() => { setCreateOpen(false); onCreateLog(); }} className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm font-semibold text-slate-700 hover:bg-slate-50">
-                    <ClipboardCheck className="h-4 w-4 text-slate-400" /> Daily Log
-                  </button>
-                  <button type="button" onClick={() => { setCreateOpen(false); navigate("/timesheets"); }} className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm font-semibold text-slate-700 hover:bg-slate-50">
-                    <CalendarDays className="h-4 w-4 text-slate-400" /> Timesheet
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
         </div>
       </section>
 
-      {/* Current project context — field users work project-first */}
+      {/* PROJECT CONTEXT — the center of the technician workflow */}
       {currentProject && (
-        <section className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3">
-          <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-500">
-            <Building2 className="h-5 w-5" />
-          </span>
-          <div className="min-w-0 flex-1">
-            <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Current project</p>
-            <p className="truncate text-sm font-bold text-slate-900">{currentProject.projectName || "—"}</p>
+        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-3 px-5 py-4">
+            <div className="min-w-0">
+              <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Current Project</p>
+              <h2 className="mt-0.5 truncate text-xl font-bold text-slate-900 sm:text-2xl">{currentProjectName}</h2>
+              <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[13px] font-medium text-slate-500">
+                {projectNumber && <span>Project #{projectNumber}</span>}
+                {projectLocation && <span className="inline-flex items-center gap-1"><MapPin className="h-3.5 w-3.5 text-slate-400" /> {projectLocation}</span>}
+                {projectLead && <span>Lead: <span className="font-semibold text-slate-700">{projectLead}</span></span>}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => onOpenLog(currentProject)}
+              className="shrink-0 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 transition hover:bg-slate-50"
+            >
+              Open latest log
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={() => onOpenLog(currentProject)}
-            className="hidden shrink-0 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 sm:inline-flex"
-          >
-            Open latest log
-          </button>
+          {/* Operational status — answers "what's pending right now" at a glance */}
+          <div className="grid grid-cols-2 gap-px border-t border-slate-100 bg-slate-100 sm:grid-cols-3">
+            <div className="bg-white px-5 py-3">
+              <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Last daily log</p>
+              <p className="mt-0.5 text-sm font-bold text-slate-800">{lastSubmittedAt ? `Submitted ${relativeTimeLabel(lastSubmittedAt)}` : "None submitted"}</p>
+            </div>
+            <div className="bg-white px-5 py-3">
+              <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Reports in review</p>
+              <p className="mt-0.5 text-sm font-bold text-slate-800">{reportsInReview} awaiting QC</p>
+            </div>
+            <div className="bg-white px-5 py-3">
+              <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Current timesheet</p>
+              <p className={`mt-0.5 text-sm font-bold ${timesheetStatus.tone}`}>{timesheetStatus.label}</p>
+            </div>
+          </div>
         </section>
       )}
 
