@@ -30,10 +30,14 @@ const authFlowType = authHashParams.get('type')
 if (authFlowType === 'invite' || authFlowType === 'recovery') {
   sessionStorage.setItem('qcore-auth-flow', authFlowType)
 }
-// Re-clicked or expired invite/recovery links arrive as an error hash; let
-// the login screen explain instead of failing silently.
-if (authHashParams.get('error_code') === 'otp_expired') {
-  sessionStorage.setItem('qcore-auth-error', 'otp_expired')
+// Re-clicked or expired invite/recovery links arrive as an error hash (there is
+// no token for the client to consume); record it for the login screen and strip
+// the noisy `#error=...` fragment so the user doesn't see a broken-looking URL.
+if (authHashParams.get('error') || authHashParams.get('error_code')) {
+  sessionStorage.setItem('qcore-auth-error', authHashParams.get('error_code') || 'link_error')
+  try {
+    window.history.replaceState(null, '', window.location.pathname + window.location.search)
+  } catch { /* history API unavailable — leave the hash as-is */ }
 }
 
 export const supabase = createClient(

@@ -13,9 +13,9 @@ function Login() {
   // A re-clicked or expired invite/recovery link lands here with an error
   // hash; explain it instead of showing a bare login form.
   const [notice, setNotice] = useState(() => {
-    if (sessionStorage.getItem("qcore-auth-error") === "otp_expired") {
+    if (sessionStorage.getItem("qcore-auth-error")) {
       sessionStorage.removeItem("qcore-auth-error");
-      return "That link has expired or was already used. Sign in with your password, or use “Forgot password?” to set a new one.";
+      return "That link has expired or was already used. Invitation and reset links work once — ask your admin to resend your invite, or use “Forgot password?” below to set a new password.";
     }
     return "";
   });

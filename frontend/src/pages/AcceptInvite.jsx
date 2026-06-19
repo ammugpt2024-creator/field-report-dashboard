@@ -1,6 +1,9 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { Eye, EyeOff, Check, Loader2, ShieldCheck, PartyPopper } from "lucide-react";
 import { supabase } from "../services/supabase";
 import { BRAND } from "../config/branding";
+import Logo from "../components/Logo";
+import loginBg from "../assets/login-bg.png";
 
 // Invite acceptance: the link in the invitation email signs the invitee in
 // with a one-time token and lands here so they can set their password and be
@@ -8,13 +11,31 @@ import { BRAND } from "../config/branding";
 function AcceptInvite() {
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
+  const [show, setShow] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [identity, setIdentity] = useState({ name: "", email: "" });
+
+  useEffect(() => {
+    let active = true;
+    // The one-time token already signed the invitee in, so the session carries
+    // their name (set on the invite) and email — use them to personalize.
+    supabase.auth.getUser().then(({ data }) => {
+      if (!active) return;
+      const user = data?.user;
+      setIdentity({ name: user?.user_metadata?.full_name || "", email: user?.email || "" });
+    });
+    return () => { active = false; };
+  }, []);
+
+  const longEnough = password.length >= 8;
+  const matches = confirm.length > 0 && password === confirm;
+  const firstName = identity.name ? identity.name.split(" ")[0] : "";
 
   async function handleSubmit(event) {
     event.preventDefault();
     setError("");
-    if (password.length < 8) {
+    if (!longEnough) {
       setError("Password must be at least 8 characters.");
       return;
     }
@@ -42,45 +63,87 @@ function AcceptInvite() {
     }
   }
 
+  const Requirement = ({ met, label }) => (
+    <span className={`inline-flex items-center gap-1.5 text-xs font-semibold ${met ? "text-emerald-600" : "text-slate-400"}`}>
+      <span className={`grid h-4 w-4 place-items-center rounded-full ${met ? "bg-emerald-100" : "bg-slate-100"}`}>
+        <Check className="h-3 w-3" />
+      </span>
+      {label}
+    </span>
+  );
+
   return (
-    <div className="flex min-h-screen w-full max-w-full items-center justify-center overflow-x-hidden bg-slate-100 px-4">
-      <div className="w-full max-w-[420px] rounded-2xl bg-white p-6 shadow-xl sm:p-10">
-        <div className="text-center mb-8">
-          <h1 className="text-4xl font-bold text-slate-950 mb-2">{BRAND.name}</h1>
-          <p className="text-xs font-semibold uppercase tracking-[0.28em] text-blue-700">{BRAND.tagline}</p>
-          <p className="mt-3 text-sm font-medium text-gray-500">
-            Welcome! Set a password to finish creating your account.
-          </p>
+    <div
+      className="flex min-h-screen w-full max-w-full items-center justify-center overflow-x-hidden bg-slate-50 bg-cover bg-center bg-no-repeat px-4 py-10"
+      style={{ backgroundImage: `url(${loginBg})` }}
+    >
+      <div className="w-full max-w-[440px] overflow-hidden rounded-3xl border border-white/60 bg-white/95 shadow-2xl shadow-navy-900/10 backdrop-blur-md">
+        {/* Brand logo — identical to the login screen */}
+        <div className="px-8 pt-8 text-center">
+          <Logo variant="full" className="mb-3" />
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#1c2f4a]">{BRAND.tagline}</p>
         </div>
 
-        <form onSubmit={handleSubmit}>
-          <input
-            type="password"
-            placeholder="Choose a password (min. 8 characters)"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            autoComplete="new-password"
-            className="w-full border border-gray-300 p-3 rounded-lg mb-4"
-          />
-          <input
-            type="password"
-            placeholder="Confirm password"
-            value={confirm}
-            onChange={(e) => setConfirm(e.target.value)}
-            autoComplete="new-password"
-            className="w-full border border-gray-300 p-3 rounded-lg mb-4"
-          />
-          {error && (
-            <p className="mb-4 rounded-lg bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700">{error}</p>
+        <div className="px-8 pb-8 pt-6">
+          <div className="flex items-center gap-2 text-blue-700">
+            <PartyPopper className="h-5 w-5" />
+            <span className="text-xs font-bold uppercase tracking-wide">You're invited</span>
+          </div>
+          <h2 className="mt-2 text-xl font-bold text-slate-900">
+            {firstName ? `Welcome, ${firstName}!` : "Welcome aboard!"}
+          </h2>
+          <p className="mt-1 text-sm font-medium text-slate-500">
+            Create a password to activate your account and get started.
+          </p>
+
+          {identity.email && (
+            <div className="mt-4 flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
+              <ShieldCheck className="h-4 w-4 shrink-0 text-slate-400" />
+              <span className="truncate text-sm font-semibold text-slate-700">{identity.email}</span>
+            </div>
           )}
-          <button
-            type="submit"
-            disabled={busy}
-            className="w-full rounded-lg bg-blue-700 p-3 text-sm font-bold text-white hover:bg-blue-600 disabled:opacity-50"
-          >
-            {busy ? "Setting up your account…" : "Set Password & Continue"}
-          </button>
-        </form>
+
+          <form onSubmit={handleSubmit} className="mt-5 space-y-3">
+            <div className="relative">
+              <input
+                type={show ? "text" : "password"}
+                placeholder="Choose a password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete="new-password"
+                className="min-h-12 w-full rounded-xl border border-slate-300 pl-3 pr-11 text-sm font-semibold outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+              />
+              <button type="button" onClick={() => setShow((v) => !v)} className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg p-2 text-slate-400 hover:text-slate-600" aria-label={show ? "Hide password" : "Show password"}>
+                {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
+            <input
+              type={show ? "text" : "password"}
+              placeholder="Confirm password"
+              value={confirm}
+              onChange={(e) => setConfirm(e.target.value)}
+              autoComplete="new-password"
+              className="min-h-12 w-full rounded-xl border border-slate-300 px-3 text-sm font-semibold outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+            />
+
+            <div className="flex flex-wrap gap-x-4 gap-y-1.5 pt-0.5">
+              <Requirement met={longEnough} label="At least 8 characters" />
+              <Requirement met={matches} label="Passwords match" />
+            </div>
+
+            {error && (
+              <p className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700">{error}</p>
+            )}
+
+            <button
+              type="submit"
+              disabled={busy || !longEnough || !matches}
+              className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-blue-700 text-sm font-bold text-white hover:bg-blue-800 disabled:opacity-50"
+            >
+              {busy ? <><Loader2 className="h-4 w-4 animate-spin" />Setting up your account…</> : "Create account & continue"}
+            </button>
+          </form>
+        </div>
       </div>
     </div>
   );

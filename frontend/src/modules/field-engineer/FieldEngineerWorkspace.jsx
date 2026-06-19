@@ -397,7 +397,7 @@ function ActionTimeCardRow({ card, onOpen }) {
 
 
 
-function DashboardOverview({ logCollections, timeCardCollections, onOpenLog, onOpenTimeCard, onCreateLog, navigate }) {
+function DashboardOverview({ logCollections, timeCardCollections, onOpenLog, onOpenTimeCard, onCreateLog, navigate, assignedProjects = [] }) {
   // Collapsed by default — expand on demand via the +/- control.
   const [activityCollapsed, setActivityCollapsed] = useState(true);
   const actionRequiredLogs = [...logCollections.returnedLogs, ...logCollections.draftLogs];
@@ -440,9 +440,19 @@ function DashboardOverview({ logCollections, timeCardCollections, onOpenLog, onO
     .sort((a, b) => new Date(b.at || 0) - new Date(a.at || 0))
     .slice(0, 50);
   const latestActivity = recentActivity.slice(0, 5);
-  // The project the technician is currently working in — the most recently
-  // touched daily log.
-  const currentProject = [...allLogs].sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0))[0] || null;
+  // The project the technician is currently working in. Prefer the projects the
+  // admin actually assigned them: a recent log on an assigned project wins;
+  // otherwise default to their first assigned project. Only fall back to a
+  // stray log (e.g. an old local draft) when nothing is assigned — this keeps a
+  // leftover "I-495 Expansion" draft from masking the real assigned project.
+  const assignedIds = new Set(assignedProjects.map((p) => String(p.id)));
+  const sortedLogs = [...allLogs].sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
+  const recentAssignedLog = sortedLogs.find((log) => assignedIds.has(String(log.projectId ?? log.project_id)));
+  const firstAssigned = assignedProjects[0];
+  const currentProject = recentAssignedLog
+    || (firstAssigned ? { projectId: firstAssigned.id, projectName: firstAssigned.name, projectNumber: firstAssigned.number } : null)
+    || sortedLogs[0]
+    || null;
   const currentProjectId = currentProject?.projectId || currentProject?.project_id || null;
   const currentProjectName = currentProject?.projectName || "—";
 
@@ -4157,9 +4167,17 @@ export default function FieldEngineerWorkspace({
   }
 
   function createLog() {
+    // Resolve a real project for the new log — the assigned one drives it.
+    const fallbackProject = projectOptions[0] || {};
+    const resolvedProjectId = defaultProjectId || fallbackProject.id || null;
+    const resolvedProjectLabel = projectLabel || fallbackProject.name || "";
+    if (!resolvedProjectId) {
+      window.alert("You don't have a project assigned yet. Ask your company admin to add you to a project before creating a daily log.");
+      return;
+    }
     const log = saveDailyLog(createDailyLog({
-      projectLabel,
-      defaultProjectId,
+      projectLabel: resolvedProjectLabel,
+      defaultProjectId: resolvedProjectId,
       technicianName: profile?.full_name || "Field Technician",
       companyId: profile?.company_id || profile?.organization_id || null,
       companyName,
@@ -4927,6 +4945,7 @@ export default function FieldEngineerWorkspace({
             profile={profile}
             logCollections={logCollections}
             timeCardCollections={timeCardCollections}
+            assignedProjects={projectOptions}
             onOpenLog={openLog}
             onOpenTimeCard={openTimeCard}
             onCreateLog={createLog}
@@ -4947,6 +4966,7 @@ export default function FieldEngineerWorkspace({
           ) : (
             <DailyLogEditor
               log={selectedDailyLog}
+              projectOptions={projectOptions}
               onChange={refreshLogs}
               onSubmitted={(submittedLog) => {
                 refreshLogs(submittedLog);

@@ -2026,18 +2026,25 @@ function ConcreteTestLog() {
             .from('projects')
             .select('*')
             .eq('id', projectId)
-            .single(),
+            .maybeSingle(),
           userId
             ? supabase
                 .from('profiles')
                 .select('full_name')
                 .eq('id', userId)
-                .single()
+                .maybeSingle()
             : Promise.resolve({ data: null, error: null })
         ]);
 
+        // The project is required to create a report; surface a precise reason.
         if (projectResponse.error) throw projectResponse.error;
-        if (profileResponse.error) throw profileResponse.error;
+        if (!projectResponse.data) {
+          throw new Error(`Project #${projectId} could not be found, or you don't have access to it.`);
+        }
+        // The profile is only used to prefill the technician name — never block on it.
+        if (profileResponse.error) {
+          console.warn('Field engineer profile could not be loaded; continuing without a prefilled name.', profileResponse.error);
+        }
 
           const nextProjectInfo = projectInfoFields.reduce((projectFields, field) => {
             const projectValue = field.sourceColumns
@@ -2192,7 +2199,7 @@ function ConcreteTestLog() {
           }
 	      } catch (error) {
         console.error('Concrete log initialization failed', error);
-        setErrors(['Project information or field engineer profile could not be loaded from Supabase.']);
+        setErrors([error?.message || 'Project information could not be loaded from Supabase.']);
       } finally {
         setLoading(false);
       }

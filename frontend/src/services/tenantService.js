@@ -321,18 +321,27 @@ export async function listCompanyReports(scope) {
 // Fire the Supabase Auth invitation email via the edge function (the service
 // role lives server-side). Fire-and-forget: the roster row is the source of
 // truth and links itself when the invitee first signs in.
-function sendInviteEmail(companyId, email, fullName = '') {
-  supabase.functions
-    .invoke('invite-company-user', {
-      // Origin only: it is already on the auth redirect allow-list, and the
-      // app routes invite-token landings to /welcome itself.
-      body: { companyId, email, fullName, redirectTo: window.location.origin }
-    })
-    .then(({ data, error }) => {
-      if (error) console.warn('Invite email could not be sent:', error.message);
-      else if (data?.alreadyExists) console.info('Invitee already has an account; they can sign in directly.');
-    })
-    .catch((error) => console.warn('Invite email could not be sent:', error?.message));
+async function sendInviteEmail(companyId, email, fullName = '') {
+  try {
+    const { data, error } = await supabase.functions.invoke('invite-company-user', {
+      // Land directly on /welcome so the invitee always reaches the set-password
+      // + claim-invite screen — regardless of whether the link was an invite
+      // (new user) or a magic link (existing user added to a new company). The
+      // /welcome path is covered by the auth redirect allow-list wildcard.
+      body: { companyId, email, fullName, redirectTo: `${window.location.origin}/welcome` }
+    });
+    if (error) {
+      // Surface the function's JSON error body when present (e.g. Resend issues).
+      let detail = error.message;
+      try { detail = (await error.context?.json())?.error || detail; } catch { /* keep message */ }
+      console.warn('Invite email could not be sent:', detail);
+      return { ok: false, error: detail };
+    }
+    return { ok: true, existing: Boolean(data?.existing) };
+  } catch (err) {
+    console.warn('Invite email could not be sent:', err?.message);
+    return { ok: false, error: err?.message || 'Email delivery failed.' };
+  }
 }
 
 // ── Company admin operations ────────────────────────────────────────────────
@@ -398,8 +407,23 @@ export async function inviteMember(companyId, { email, fullName, role }) {
     entityId: data.id,
     newValue: { email, role }
   });
-  sendInviteEmail(companyId, email, fullName);
-  return data;
+  const delivery = await sendInviteEmail(companyId, email, fullName);
+  return { ...data, emailSent: delivery.ok, emailError: delivery.error, existing: delivery.existing };
+}
+
+// Re-send the invitation email to an existing roster member (e.g. their link
+// expired). Does NOT create another roster row — it just generates a fresh
+// link and delivers it via Resend.
+export async function resendInvite(companyId, member) {
+  const delivery = await sendInviteEmail(companyId, member.invited_email, member.full_name);
+  logAuditEvent({
+    companyId,
+    action: 'user_invite_resent',
+    entityType: 'company_user',
+    entityId: member.id,
+    newValue: { email: member.invited_email }
+  });
+  return delivery;
 }
 
 export async function setMemberStatus(member, nextStatus) {
@@ -416,6 +440,113 @@ export async function setMemberStatus(member, nextStatus) {
     oldValue: { status: member.status },
     newValue: { status: nextStatus }
   });
+}
+
+// Edit an employee's basic details (name + role) in one call.
+export async function updateMemberDetails(member, { full_name, role }) {
+  const { error } = await supabase
+    .from('company_users')
+    .update({ full_name, role, updated_at: new Date().toISOString() })
+    .eq('id', member.id);
+  if (error) throw error;
+  logAuditEvent({
+    companyId: member.company_id,
+    action: 'user_updated',
+    entityType: 'company_user',
+    entityId: member.id,
+    oldValue: { full_name: member.full_name, role: member.role },
+    newValue: { full_name, role }
+  });
+}
+
+// Remove an employee from the company entirely: drop their project assignments
+// first, then the roster row. (Their auth account is left intact — they simply
+// lose access to this company.)
+export async function removeMember(member) {
+  if (member.user_id) {
+    await supabase.from('project_assignments').delete()
+      .eq('company_id', member.company_id).eq('user_id', member.user_id);
+  }
+  const { error } = await supabase.from('company_users').delete().eq('id', member.id);
+  if (error) throw error;
+  logAuditEvent({
+    companyId: member.company_id,
+    action: 'user_removed',
+    entityType: 'company_user',
+    entityId: member.id,
+    oldValue: { email: member.invited_email, role: member.role }
+  });
+}
+
+// Edit a project's core details.
+export async function updateProject(project, fields) {
+  const { error } = await supabase.from('projects').update(fields).eq('id', project.id);
+  if (error) throw error;
+  logAuditEvent({
+    companyId: project.company_id,
+    action: 'project_updated',
+    entityType: 'project',
+    entityId: project.id,
+    newValue: fields
+  });
+}
+
+// Delete a project — only when it carries no reports (daily logs / test logs
+// reference project_id without a cascade, so a hard delete would orphan them).
+// Otherwise the caller should archive (set status) instead.
+export async function deleteProject(project) {
+  // Server-side count — a company admin can't read technicians' daily_logs under
+  // RLS, so this must run with definer rights to be accurate.
+  const { data: reportCount, error: countError } = await supabase.rpc('project_report_count', { p_project_id: project.id });
+  if (countError) throw countError;
+  if ((reportCount || 0) > 0) {
+    throw new Error(`This project has ${reportCount} report(s). Archive it instead of deleting, to keep the records intact.`);
+  }
+  const { error } = await supabase.from('projects').delete().eq('id', project.id);
+  if (error) throw error;
+  logAuditEvent({
+    companyId: project.company_id,
+    action: 'project_deleted',
+    entityType: 'project',
+    entityId: project.id,
+    oldValue: { project_name: project.project_name, project_number: project.project_number }
+  });
+}
+
+// Project assignments for the whole company, joined with the project so the UI
+// can show "who is on what". Returns [] on error (e.g. RLS).
+export async function listProjectAssignments() {
+  const { data, error } = await supabase
+    .from('project_assignments')
+    .select('id, project_id, user_id, assignment_role, access_level, projects(project_name, project_number)');
+  if (error) {
+    console.warn('Project assignments could not be loaded.', error.message);
+    return [];
+  }
+  return data || [];
+}
+
+export async function assignUserToProject(companyId, projectId, userId, assignmentRole, accessLevel) {
+  const { data, error } = await supabase
+    .from('project_assignments')
+    .insert({ project_id: projectId, user_id: userId, assignment_role: assignmentRole, access_level: accessLevel })
+    .select('id, project_id, user_id, assignment_role, access_level, projects(project_name, project_number)')
+    .single();
+  if (error) throw error;
+  logAuditEvent({ companyId, action: 'project_assignment_added', entityType: 'project_assignment', entityId: data.id, newValue: { projectId, userId, accessLevel } });
+  return data;
+}
+
+export async function updateAssignmentAccess(companyId, assignmentId, accessLevel) {
+  const { error } = await supabase.from('project_assignments').update({ access_level: accessLevel }).eq('id', assignmentId);
+  if (error) throw error;
+  logAuditEvent({ companyId, action: 'project_assignment_updated', entityType: 'project_assignment', entityId: assignmentId, newValue: { accessLevel } });
+}
+
+export async function removeProjectAssignment(companyId, assignmentId) {
+  const { error } = await supabase.from('project_assignments').delete().eq('id', assignmentId);
+  if (error) throw error;
+  logAuditEvent({ companyId, action: 'project_assignment_removed', entityType: 'project_assignment', entityId: assignmentId });
 }
 
 // Generic company-scoped CRUD used by the Company Admin sections.

@@ -1,16 +1,25 @@
 import { useEffect, useState } from "react";
 import { useLocation } from "react-router-dom";
 import {
-  Building2, CreditCard, FileText, FolderKanban, Lock, Plus, ShieldCheck, Upload, Users, Wrench, X
+  Building2, CreditCard, FileText, FolderKanban, Lock, Plus, ShieldCheck, Upload, Users, Wrench, X,
+  Mail, Check, Loader2, UserPlus, AtSign, Settings2, Trash2, FolderPlus
 } from "lucide-react";
 import { supabase } from "../services/supabase";
 import {
   getMyCompanyContext,
   inviteMember,
+  resendInvite,
   insertCompanyRow,
   listCompanyRows,
-  setMemberRole,
   setMemberStatus,
+  updateMemberDetails,
+  removeMember,
+  listProjectAssignments,
+  assignUserToProject,
+  updateAssignmentAccess,
+  removeProjectAssignment,
+  updateProject,
+  deleteProject,
   updateCompanyProfile,
   updateCompanyRow,
   listSupportRequests,
@@ -26,6 +35,25 @@ import KeyValueList from "../components/mobile/KeyValueList";
 const COMPANY_ROLES = [
   "company_admin", "project_manager", "deputy_project_manager",
   "technician", "inspector", "lab_technician", "viewer"
+];
+// Friendly labels + one-line "what they can do" copy for the invite flow, so the
+// admin picks a role by meaning instead of a raw enum value.
+const ROLE_CATALOG = {
+  company_admin: { label: "Company Admin", blurb: "Full control — billing, team, projects, and every report." },
+  project_manager: { label: "Project Manager", blurb: "Runs projects, assigns teams, and approves reports." },
+  deputy_project_manager: { label: "Deputy Project Manager", blurb: "Supports PMs and manages assigned projects." },
+  technician: { label: "Technician", blurb: "Creates field daily logs and concrete test reports." },
+  inspector: { label: "Inspector", blurb: "Inspects sites and documents field conditions." },
+  lab_technician: { label: "Lab Technician", blurb: "Creates and manages laboratory reports." },
+  viewer: { label: "Viewer", blurb: "Read-only access to assigned projects and reports." }
+};
+const roleLabel = (r) => ROLE_CATALOG[r]?.label || r.replace(/_/g, " ");
+// What each assigned person can do on a project. The admin picks one per person.
+const ACCESS_LEVELS = [
+  { value: "full", label: "Full access", hint: "Manage project & team, create, approve, view all" },
+  { value: "review_approve", label: "Review & Approve", hint: "View all reports + approve / return" },
+  { value: "create_edit", label: "Create & Edit", hint: "Create / edit own logs & reports, submit" },
+  { value: "view_only", label: "View only", hint: "Read-only access to this project" }
 ];
 const CLIENT_TYPES = ["owner", "general_contractor", "agency", "utility", "developer", "other"];
 
@@ -112,11 +140,16 @@ export default function CompanyAdminDashboard() {
   const section = new URLSearchParams(location.search).get("section") || "overview";
   const [context, setContext] = useState({ company: null, subscription: null, settings: null, roster: [] });
   const [projects, setProjects] = useState([]);
+  const [assignments, setAssignments] = useState([]);
+  const [manageMember, setManageMember] = useState(null);
+  const [manageProject, setManageProject] = useState(null);
   const [clients, setClients] = useState([]);
   const [equipment, setEquipment] = useState([]);
   const [labReports, setLabReports] = useState([]);
   const [error, setError] = useState("");
   const [invite, setInvite] = useState(null);
+  const [inviteUi, setInviteUi] = useState({ busy: false, error: "", sentEmail: "" });
+  const [resendingId, setResendingId] = useState("");
   const [newClient, setNewClient] = useState(null);
   const [newEquipment, setNewEquipment] = useState(null);
   const [newProject, setNewProject] = useState(null);
@@ -128,14 +161,16 @@ export default function CompanyAdminDashboard() {
     try {
       const ctx = await getMyCompanyContext();
       setContext(ctx);
-      const [projectRows, clientRows, equipmentRows, labRows, supportRows] = await Promise.all([
+      const [projectRows, clientRows, equipmentRows, labRows, supportRows, assignmentRows] = await Promise.all([
         supabase.from("projects").select("*").order("project_name").then((r) => r.data || []),
         listCompanyRows("clients"),
         listCompanyRows("equipment"),
         listCompanyRows("lab_reports"),
-        listSupportRequests()
+        listSupportRequests(),
+        listProjectAssignments()
       ]);
       setProjects(projectRows);
+      setAssignments(assignmentRows);
       setClients(clientRows);
       setEquipment(equipmentRows);
       setLabReports(labRows);
@@ -162,6 +197,14 @@ export default function CompanyAdminDashboard() {
   }, []);
 
   const company = context.company;
+  // Only people with a linked account (claimed invite) can be assigned to a
+  // project — project_assignments.user_id and projects.project_manager_id both
+  // point at real users, not pending invite rows.
+  const assignableMembers = context.roster.filter((m) => m.user_id && m.status !== "disabled");
+  const pmCandidates = assignableMembers.filter((m) => ["company_admin", "project_manager"].includes(m.role));
+  const dpmCandidates = assignableMembers.filter((m) => ["company_admin", "project_manager", "deputy_project_manager"].includes(m.role));
+  const techCandidates = assignableMembers.filter((m) => ["technician", "inspector", "lab_technician"].includes(m.role));
+  const memberLabel = (m) => `${m.full_name || m.invited_email}${m.role ? ` · ${m.role.replace(/_/g, " ")}` : ""}`;
 
   async function saveProfile(event) {
     event.preventDefault();
@@ -187,11 +230,47 @@ export default function CompanyAdminDashboard() {
     await refresh();
   }
 
+  function openInvite() {
+    setInviteUi({ busy: false, error: "", sentEmail: "" });
+    setInvite({ email: "", fullName: "", role: "technician" });
+  }
+
+  async function handleResend(member) {
+    setResendingId(member.id);
+    try {
+      const delivery = await resendInvite(company.id, member);
+      window.alert(delivery.ok
+        ? `A fresh invitation was sent to ${member.invited_email}.`
+        : `Could not resend: ${delivery.error || "delivery failed"}`);
+    } catch (err) {
+      window.alert(err.message || "Could not resend the invitation.");
+    } finally {
+      setResendingId("");
+    }
+  }
+
   async function submitInvite(event) {
     event.preventDefault();
-    await inviteMember(company.id, invite);
-    setInvite(null);
-    await refresh();
+    const email = invite.email.trim().toLowerCase();
+    // Guard against re-inviting someone already on the roster.
+    if (context.roster.some((m) => (m.invited_email || "").toLowerCase() === email)) {
+      setInviteUi({ busy: false, error: "That email is already on your team.", sentEmail: "" });
+      return;
+    }
+    setInviteUi({ busy: true, error: "", sentEmail: "" });
+    try {
+      const result = await inviteMember(company.id, { ...invite, email });
+      await refresh();
+      if (result.emailSent === false) {
+        // The roster row was created, but the email itself failed to send.
+        setInviteUi({ busy: false, error: `Added to the team, but the email didn't send: ${result.emailError || "delivery failed"}. They can still sign in once their account is set up.`, sentEmail: "" });
+        return;
+      }
+      // Keep the modal open on a success screen so the admin can invite another.
+      setInviteUi({ busy: false, error: "", sentEmail: email });
+    } catch (err) {
+      setInviteUi({ busy: false, error: err.message || "The invitation could not be sent.", sentEmail: "" });
+    }
   }
 
   async function submitClient(event) {
@@ -210,11 +289,50 @@ export default function CompanyAdminDashboard() {
 
   async function submitProject(event) {
     event.preventDefault();
-    const { error: insertError } = await supabase.from("projects").insert(newProject);
+    // Pull the team selections out of the form state — they live on separate
+    // tables (projects.project_manager_* + project_assignments), not on projects' columns.
+    const { _pmUserId, _pmAccess, _dpmUserId, _dpmAccess, _technicianIds, _technicianAccess, ...projectFields } = newProject;
+    const pm = assignableMembers.find((m) => m.user_id === _pmUserId);
+    const payload = {
+      ...projectFields,
+      project_manager_id: pm?.user_id || null,
+      project_manager_name: pm?.full_name || null,
+      project_manager_email: pm?.invited_email || null
+    };
+
+    const { data: created, error: insertError } = await supabase
+      .from("projects")
+      .insert(payload)
+      .select()
+      .single();
     if (insertError) {
       setError(insertError.message);
       return;
     }
+
+    // Build the assignment roster: PM, DPM, and each technician, de-duplicated by
+    // user. Each carries the access level the admin chose for them.
+    const assignmentMap = new Map();
+    if (_pmUserId) assignmentMap.set(_pmUserId, { role: "project_manager", access: _pmAccess || "full" });
+    if (_dpmUserId) assignmentMap.set(_dpmUserId, { role: "deputy_project_manager", access: _dpmAccess || "full" });
+    (_technicianIds || []).forEach((uid) => {
+      if (!assignmentMap.has(uid)) assignmentMap.set(uid, { role: "technician", access: (_technicianAccess && _technicianAccess[uid]) || "create_edit" });
+    });
+    const assignments = Array.from(assignmentMap, ([user_id, v]) => ({
+      project_id: created.id,
+      user_id,
+      assignment_role: v.role,
+      access_level: v.access
+    }));
+    if (assignments.length) {
+      const { error: assignError } = await supabase.from("project_assignments").insert(assignments);
+      if (assignError) {
+        setError(`Project created, but team assignment failed: ${assignError.message}`);
+        await refresh();
+        return;
+      }
+    }
+
     setNewProject(null);
     await refresh();
   }
@@ -324,7 +442,7 @@ export default function CompanyAdminDashboard() {
             icon={Users}
             title="Employees"
             count={context.roster.length}
-            action={<SmallButton onClick={() => setInvite({ email: "", fullName: "", role: "technician" })}><Plus className="h-3.5 w-3.5" />Invite</SmallButton>}
+            action={<SmallButton onClick={openInvite}><UserPlus className="h-3.5 w-3.5" />Invite</SmallButton>}
           >
             <div className="-my-1 divide-y divide-slate-100">
               {context.roster.map((member) => (
@@ -335,17 +453,18 @@ export default function CompanyAdminDashboard() {
                       <p className="truncate text-sm font-bold text-slate-900">{member.full_name || member.invited_email || "—"}</p>
                       <RowStatus status={member.status} />
                     </div>
-                    <p className="truncate text-xs font-medium text-slate-400">{member.invited_email}</p>
+                    <p className="truncate text-xs font-medium text-slate-400">
+                      {roleLabel(member.role)} · {member.invited_email}
+                      {member.user_id ? ` · ${assignments.filter((a) => a.user_id === member.user_id).length} project(s)` : ""}
+                    </p>
                   </div>
-                  <select
-                    value={member.role}
-                    onChange={(event) => setMemberRole(member, event.target.value).then(refresh)}
-                    className="h-9 rounded-lg border border-slate-300 bg-white px-2 text-xs font-semibold capitalize text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                  >
-                    {COMPANY_ROLES.map((r) => <option key={r} value={r}>{r.replace(/_/g, " ")}</option>)}
-                  </select>
-                  <SmallButton onClick={() => setMemberStatus(member, member.status === "disabled" ? "active" : "disabled").then(refresh)} className={member.status === "disabled" ? "" : "border-rose-200 text-rose-700 hover:bg-rose-50"}>
-                    {member.status === "disabled" ? "Enable" : "Disable"}
+                  {member.status === "invited" && (
+                    <SmallButton onClick={() => handleResend(member)} disabled={resendingId === member.id} className="border-blue-200 text-blue-700 hover:bg-blue-50">
+                      {resendingId === member.id ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />Sending…</> : <><Mail className="h-3.5 w-3.5" />Resend</>}
+                    </SmallButton>
+                  )}
+                  <SmallButton onClick={() => setManageMember(member)} className="border-slate-300 text-slate-700">
+                    <Settings2 className="h-3.5 w-3.5" />Manage
                   </SmallButton>
                 </div>
               ))}
@@ -359,16 +478,20 @@ export default function CompanyAdminDashboard() {
             icon={FolderKanban}
             title="Projects"
             count={projects.length}
-            action={<SmallButton onClick={() => setNewProject({ project_name: "", project_number: "", client_name: "", project_location: "", status: "Active" })}><Plus className="h-3.5 w-3.5" />Add</SmallButton>}
+            action={<SmallButton onClick={() => setNewProject({ project_name: "", project_number: "", client_name: "", project_location: "", status: "Active", _pmUserId: "", _pmAccess: "full", _dpmUserId: "", _dpmAccess: "full", _technicianIds: [], _technicianAccess: {} })}><Plus className="h-3.5 w-3.5" />Add</SmallButton>}
           >
             <div className="-my-1 divide-y divide-slate-100">
               {projects.map((project) => (
                 <div key={project.id} className="flex items-center justify-between gap-3 py-3">
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-bold text-slate-900">{project.project_name}</p>
-                    <p className="truncate text-xs font-medium text-slate-400">#{project.project_number} · {project.client_name} · {project.project_location}</p>
-                  </div>
+                  <button type="button" onClick={() => setManageProject(project)} className="min-w-0 flex-1 text-left">
+                    <p className="truncate text-sm font-bold text-slate-900 hover:text-blue-700">{project.project_name}</p>
+                    <p className="truncate text-xs font-medium text-slate-400">
+                      #{project.project_number} · {project.client_name} · {project.project_location} · {assignments.filter((a) => a.project_id === project.id).length} on team
+                    </p>
+                    {project.project_manager_name && <p className="truncate text-xs font-semibold text-blue-700">PM: {project.project_manager_name}</p>}
+                  </button>
                   <RowStatus status={String(project.status || "active").toLowerCase()} />
+                  <SmallButton onClick={() => setManageProject(project)} className="border-slate-300 text-slate-700"><Settings2 className="h-3.5 w-3.5" />Manage</SmallButton>
                 </div>
               ))}
               {!projects.length && <p className="py-3 text-sm font-semibold text-slate-500">No projects yet.</p>}
@@ -478,24 +601,72 @@ export default function CompanyAdminDashboard() {
 
         {invite && (
           <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/60 sm:items-center sm:p-4">
-            <form onSubmit={submitInvite} className="w-full max-w-lg rounded-t-3xl bg-white p-4 shadow-2xl sm:rounded-3xl sm:p-6">
-              <div className="flex items-center justify-between"><h3 className="text-lg font-bold">Invite Employee</h3>
-                <button type="button" onClick={() => setInvite(null)} className="rounded-full border border-slate-200 p-2"><X className="h-4 w-4" /></button></div>
-              <div className="mt-3 space-y-3">
-                <label className="block"><span className="text-xs font-bold uppercase text-slate-500">Email *</span>
-                  <input type="email" required value={invite.email} onChange={(event) => setInvite({ ...invite, email: event.target.value })} className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 px-3 text-sm font-semibold" /></label>
-                <label className="block"><span className="text-xs font-bold uppercase text-slate-500">Full Name</span>
-                  <input value={invite.fullName} onChange={(event) => setInvite({ ...invite, fullName: event.target.value })} className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 px-3 text-sm font-semibold" /></label>
-                <label className="block"><span className="text-xs font-bold uppercase text-slate-500">Role</span>
-                  <select value={invite.role} onChange={(event) => setInvite({ ...invite, role: event.target.value })} className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 px-3 text-sm font-semibold">
-                    {COMPANY_ROLES.map((r) => <option key={r} value={r}>{r.replace(/_/g, " ")}</option>)}
-                  </select></label>
+            <div className="w-full max-w-lg rounded-t-3xl bg-white shadow-2xl sm:rounded-3xl">
+              {/* Header */}
+              <div className="flex items-start justify-between gap-3 border-b border-slate-100 p-5">
+                <div className="flex items-center gap-3">
+                  <div className="grid h-10 w-10 place-items-center rounded-xl bg-blue-50 text-blue-700"><UserPlus className="h-5 w-5" /></div>
+                  <div>
+                    <h3 className="text-lg font-bold text-slate-900">Invite a team member</h3>
+                    <p className="text-xs font-medium text-slate-500">They'll get an email to set a password and join {company.company_name || "your company"}.</p>
+                  </div>
+                </div>
+                <button type="button" onClick={() => setInvite(null)} className="rounded-full border border-slate-200 p-2 text-slate-500 hover:bg-slate-50"><X className="h-4 w-4" /></button>
               </div>
-              <div className="mt-4 grid grid-cols-2 gap-2">
-                <button type="button" onClick={() => setInvite(null)} className="min-h-11 rounded-xl border border-slate-300 text-sm font-bold text-slate-700">Cancel</button>
-                <button type="submit" className="min-h-11 rounded-xl bg-blue-700 text-sm font-bold text-white">Send Invite</button>
-              </div>
-            </form>
+
+              {inviteUi.sentEmail ? (
+                /* Success screen */
+                <div className="p-6 text-center">
+                  <div className="mx-auto grid h-12 w-12 place-items-center rounded-full bg-emerald-50 text-emerald-600"><Check className="h-6 w-6" /></div>
+                  <p className="mt-3 text-base font-bold text-slate-900">Invitation sent</p>
+                  <p className="mt-1 text-sm font-medium text-slate-500">We emailed <span className="font-semibold text-slate-700">{inviteUi.sentEmail}</span>. They'll show as <span className="font-semibold text-amber-600">Invited</span> until they accept and sign in.</p>
+                  <div className="mt-5 grid grid-cols-2 gap-2">
+                    <button type="button" onClick={openInvite} className="min-h-11 rounded-xl border border-slate-300 text-sm font-bold text-slate-700 hover:bg-slate-50">Invite another</button>
+                    <button type="button" onClick={() => setInvite(null)} className="min-h-11 rounded-xl bg-blue-700 text-sm font-bold text-white">Done</button>
+                  </div>
+                </div>
+              ) : (
+                /* Form */
+                <form onSubmit={submitInvite} className="p-5">
+                  <div className="space-y-4">
+                    <label className="block"><span className="text-xs font-bold uppercase tracking-wide text-slate-500">Full name</span>
+                      <input value={invite.fullName} onChange={(event) => setInvite({ ...invite, fullName: event.target.value })} placeholder="Jane Doe" className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 px-3 text-sm font-semibold outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" /></label>
+
+                    <label className="block"><span className="text-xs font-bold uppercase tracking-wide text-slate-500">Work email *</span>
+                      <div className="relative mt-1">
+                        <AtSign className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                        <input type="email" required value={invite.email} onChange={(event) => setInvite({ ...invite, email: event.target.value })} placeholder="jane@company.com" className="min-h-11 w-full rounded-xl border border-slate-300 pl-9 pr-3 text-sm font-semibold outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
+                      </div></label>
+
+                    <div className="block"><span className="text-xs font-bold uppercase tracking-wide text-slate-500">Role</span>
+                      <select value={invite.role} onChange={(event) => setInvite({ ...invite, role: event.target.value })} className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 px-3 text-sm font-semibold outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100">
+                        {COMPANY_ROLES.map((r) => <option key={r} value={r}>{roleLabel(r)}</option>)}
+                      </select>
+                      <p className="mt-1.5 flex items-start gap-1.5 text-xs font-medium text-slate-500">
+                        <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400" />
+                        {ROLE_CATALOG[invite.role]?.blurb}
+                      </p>
+                    </div>
+
+                    <div className="flex items-start gap-2 rounded-xl bg-slate-50 p-3 text-xs font-medium text-slate-500">
+                      <Mail className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" />
+                      <span>An invitation email is sent automatically. The role decides their company-wide permissions; project-level access is set when you assign them to a project.</span>
+                    </div>
+
+                    {inviteUi.error && (
+                      <p className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">{inviteUi.error}</p>
+                    )}
+                  </div>
+
+                  <div className="mt-5 grid grid-cols-2 gap-2">
+                    <button type="button" onClick={() => setInvite(null)} className="min-h-11 rounded-xl border border-slate-300 text-sm font-bold text-slate-700 hover:bg-slate-50">Cancel</button>
+                    <button type="submit" disabled={inviteUi.busy} className="flex min-h-11 items-center justify-center gap-2 rounded-xl bg-blue-700 text-sm font-bold text-white hover:bg-blue-800 disabled:opacity-60">
+                      {inviteUi.busy ? <><Loader2 className="h-4 w-4 animate-spin" />Sending…</> : <><Mail className="h-4 w-4" />Send invite</>}
+                    </button>
+                  </div>
+                </form>
+              )}
+            </div>
           </div>
         )}
 
@@ -553,6 +724,65 @@ export default function CompanyAdminDashboard() {
                   <label key={key} className="block"><span className="text-xs font-bold uppercase text-slate-500">{label}</span>
                     <input required={label.includes("*")} value={newProject[key]} onChange={(event) => setNewProject({ ...newProject, [key]: event.target.value })} className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 px-3 text-sm font-semibold" /></label>
                 ))}
+
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                  <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Project Team</p>
+                  <div className="mt-2 grid grid-cols-[1fr_auto] gap-2">
+                    <label className="block"><span className="text-xs font-semibold text-slate-600">Project Manager</span>
+                      <select value={newProject._pmUserId} onChange={(event) => setNewProject({ ...newProject, _pmUserId: event.target.value })} className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm font-semibold">
+                        <option value="">— Unassigned —</option>
+                        {pmCandidates.map((m) => <option key={m.user_id} value={m.user_id}>{memberLabel(m)}</option>)}
+                      </select></label>
+                    <label className="block"><span className="text-xs font-semibold text-slate-600">Access</span>
+                      <select disabled={!newProject._pmUserId} value={newProject._pmAccess} onChange={(event) => setNewProject({ ...newProject, _pmAccess: event.target.value })} className="mt-1 min-h-11 rounded-xl border border-slate-300 bg-white px-2 text-sm font-semibold disabled:opacity-40">
+                        {ACCESS_LEVELS.map((a) => <option key={a.value} value={a.value}>{a.label}</option>)}
+                      </select></label>
+                  </div>
+                  <div className="mt-2 grid grid-cols-[1fr_auto] gap-2">
+                    <label className="block"><span className="text-xs font-semibold text-slate-600">Deputy Project Manager</span>
+                      <select value={newProject._dpmUserId} onChange={(event) => setNewProject({ ...newProject, _dpmUserId: event.target.value })} className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm font-semibold">
+                        <option value="">— Unassigned —</option>
+                        {dpmCandidates.map((m) => <option key={m.user_id} value={m.user_id}>{memberLabel(m)}</option>)}
+                      </select></label>
+                    <label className="block"><span className="text-xs font-semibold text-slate-600">Access</span>
+                      <select disabled={!newProject._dpmUserId} value={newProject._dpmAccess} onChange={(event) => setNewProject({ ...newProject, _dpmAccess: event.target.value })} className="mt-1 min-h-11 rounded-xl border border-slate-300 bg-white px-2 text-sm font-semibold disabled:opacity-40">
+                        {ACCESS_LEVELS.map((a) => <option key={a.value} value={a.value}>{a.label}</option>)}
+                      </select></label>
+                  </div>
+                  <div className="mt-2">
+                    <span className="text-xs font-semibold text-slate-600">Technicians & Inspectors</span>
+                    <div className="mt-1 max-h-44 space-y-1 overflow-y-auto rounded-xl border border-slate-200 bg-white p-2">
+                      {techCandidates.length ? techCandidates.map((m) => {
+                        const checked = newProject._technicianIds.includes(m.user_id);
+                        return (
+                          <div key={m.user_id} className="flex items-center gap-2 rounded-lg px-1 py-1">
+                            <label className="flex flex-1 items-center gap-2 text-sm font-semibold text-slate-700">
+                              <input type="checkbox" checked={checked} onChange={(event) => setNewProject({
+                                ...newProject,
+                                _technicianIds: event.target.checked
+                                  ? [...newProject._technicianIds, m.user_id]
+                                  : newProject._technicianIds.filter((id) => id !== m.user_id),
+                                _technicianAccess: event.target.checked
+                                  ? { ...newProject._technicianAccess, [m.user_id]: newProject._technicianAccess[m.user_id] || "create_edit" }
+                                  : Object.fromEntries(Object.entries(newProject._technicianAccess).filter(([id]) => id !== m.user_id))
+                              })} className="h-4 w-4 rounded border-slate-300" />
+                              {memberLabel(m)}
+                            </label>
+                            {checked && (
+                              <select value={newProject._technicianAccess[m.user_id] || "create_edit"} onChange={(event) => setNewProject({
+                                ...newProject,
+                                _technicianAccess: { ...newProject._technicianAccess, [m.user_id]: event.target.value }
+                              })} className="min-h-9 rounded-lg border border-slate-300 bg-white px-2 text-xs font-semibold">
+                                {ACCESS_LEVELS.map((a) => <option key={a.value} value={a.value}>{a.label}</option>)}
+                              </select>
+                            )}
+                          </div>
+                        );
+                      }) : <p className="px-1 py-1 text-xs font-medium text-slate-400">No technicians on the roster yet — invite them first.</p>}
+                    </div>
+                  </div>
+                  {!assignableMembers.length && <p className="mt-2 text-xs font-medium text-amber-600">Team members appear here once they've accepted their invite and signed in.</p>}
+                </div>
               </div>
               <div className="mt-4 grid grid-cols-2 gap-2">
                 <button type="button" onClick={() => setNewProject(null)} className="min-h-11 rounded-xl border border-slate-300 text-sm font-bold text-slate-700">Cancel</button>
@@ -570,6 +800,314 @@ export default function CompanyAdminDashboard() {
           />
         )}
 
+        {manageMember && (
+          <ManageMemberModal
+            member={context.roster.find((m) => m.id === manageMember.id) || manageMember}
+            company={company}
+            projects={projects}
+            assignments={assignments.filter((a) => a.user_id === manageMember.user_id)}
+            onClose={() => setManageMember(null)}
+            onChanged={refresh}
+            onRemoved={() => { setManageMember(null); refresh(); }}
+          />
+        )}
+
+        {manageProject && (
+          <ManageProjectModal
+            project={projects.find((p) => p.id === manageProject.id) || manageProject}
+            company={company}
+            roster={context.roster}
+            assignments={assignments.filter((a) => a.project_id === manageProject.id)}
+            onClose={() => setManageProject(null)}
+            onChanged={refresh}
+            onRemoved={() => { setManageProject(null); refresh(); }}
+          />
+        )}
+
+      </div>
+    </div>
+  );
+}
+
+// Manage an existing project: edit its details, manage the team (PM / DPM /
+// technicians with per-person access), archive, or delete it.
+function ManageProjectModal({ project, company, roster, assignments, onClose, onChanged, onRemoved }) {
+  const [fields, setFields] = useState({
+    project_name: project.project_name || "",
+    project_number: project.project_number || "",
+    client_name: project.client_name || "",
+    project_location: project.project_location || "",
+    status: project.status || "Active"
+  });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [addUserId, setAddUserId] = useState("");
+  const [addRole, setAddRole] = useState("technician");
+  const [addAccess, setAddAccess] = useState("create_edit");
+
+  const memberById = (uid) => roster.find((m) => m.user_id === uid);
+  const assignedUserIds = new Set(assignments.map((a) => a.user_id));
+  const availableMembers = roster.filter((m) => m.user_id && m.status !== "disabled" && !assignedUserIds.has(m.user_id));
+  const isArchived = String(fields.status).toLowerCase() !== "active";
+
+  async function run(fn) {
+    setBusy(true); setError("");
+    try { await fn(); await onChanged(); }
+    catch (err) { setError(err.message || "Something went wrong."); }
+    finally { setBusy(false); }
+  }
+
+  async function saveDetails() { await run(() => updateProject(project, fields)); }
+
+  async function toggleArchive() {
+    const next = isArchived ? "Active" : "Inactive";
+    setFields((f) => ({ ...f, status: next }));
+    await run(() => updateProject(project, { status: next }));
+  }
+
+  async function addToTeam() {
+    if (!addUserId) return;
+    await run(async () => {
+      await assignUserToProject(company.id, project.id, addUserId, addRole, addAccess);
+      // Keep the denormalized PM on the project in sync for reports/PDFs.
+      if (addRole === "project_manager") {
+        const m = memberById(addUserId);
+        await updateProject(project, { project_manager_id: addUserId, project_manager_name: m?.full_name || null, project_manager_email: m?.invited_email || null });
+      }
+    });
+    setAddUserId("");
+  }
+
+  async function removeFromTeam(a) {
+    await run(async () => {
+      await removeProjectAssignment(company.id, a.id);
+      if (a.assignment_role === "project_manager" && project.project_manager_id === a.user_id) {
+        await updateProject(project, { project_manager_id: null, project_manager_name: null, project_manager_email: null });
+      }
+    });
+  }
+
+  async function remove() {
+    if (!window.confirm(`Delete "${project.project_name}"? This can't be undone.`)) return;
+    setBusy(true); setError("");
+    try { await deleteProject(project); onRemoved(); }
+    catch (err) { setError(err.message || "Could not delete this project."); setBusy(false); }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/60 sm:items-center sm:p-4">
+      <div className="flex max-h-[92vh] w-full max-w-lg flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl sm:rounded-3xl">
+        <div className="flex items-start justify-between gap-3 border-b border-slate-100 p-5">
+          <div className="flex items-center gap-3">
+            <div className="grid h-10 w-10 place-items-center rounded-xl bg-blue-50 text-blue-700"><FolderKanban className="h-5 w-5" /></div>
+            <div>
+              <h3 className="text-lg font-bold text-slate-900">{project.project_name}</h3>
+              <p className="text-xs font-medium text-slate-500">#{project.project_number} · <span className="capitalize">{fields.status}</span></p>
+            </div>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-full border border-slate-200 p-2 text-slate-500 hover:bg-slate-50"><X className="h-4 w-4" /></button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-5">
+          {error && <p className="mb-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">{error}</p>}
+
+          {/* Details */}
+          <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Details</p>
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            {[["project_name", "Project Name"], ["project_number", "Project Number"], ["client_name", "Client"], ["project_location", "Location"]].map(([key, label]) => (
+              <label key={key} className="block"><span className="text-xs font-semibold text-slate-600">{label}</span>
+                <input value={fields[key]} onChange={(e) => setFields({ ...fields, [key]: e.target.value })} className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 px-3 text-sm font-semibold outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" /></label>
+            ))}
+          </div>
+          <SmallButton onClick={saveDetails} disabled={busy} className="mt-2 border-blue-200 bg-blue-700 text-white hover:bg-blue-800">Save details</SmallButton>
+
+          {/* Team */}
+          <p className="mt-6 text-xs font-bold uppercase tracking-wide text-slate-500">Team</p>
+          <div className="mt-2 divide-y divide-slate-100 rounded-xl border border-slate-200">
+            {assignments.length ? assignments.map((a) => {
+              const m = memberById(a.user_id);
+              return (
+                <div key={a.id} className="flex items-center gap-2 px-3 py-2.5">
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-bold text-slate-900">{m?.full_name || m?.invited_email || "Member"}</p>
+                    <p className="truncate text-xs font-medium text-slate-400">{roleLabel(a.assignment_role)}</p>
+                  </div>
+                  <select value={a.access_level} disabled={busy} onChange={(e) => run(() => updateAssignmentAccess(company.id, a.id, e.target.value))} className="min-h-9 rounded-lg border border-slate-300 bg-white px-2 text-xs font-semibold">
+                    {ACCESS_LEVELS.map((lvl) => <option key={lvl.value} value={lvl.value}>{lvl.label}</option>)}
+                  </select>
+                  <button type="button" disabled={busy} onClick={() => removeFromTeam(a)} className="rounded-lg p-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600" aria-label="Remove from team"><Trash2 className="h-4 w-4" /></button>
+                </div>
+              );
+            }) : <p className="px-3 py-2.5 text-xs font-medium text-slate-400">No one on the team yet.</p>}
+          </div>
+
+          {/* Add to team */}
+          <div className="mt-3 grid grid-cols-2 gap-2 rounded-xl bg-slate-50 p-3">
+            <label className="col-span-2 block"><span className="text-xs font-semibold text-slate-600">Add person</span>
+              <select value={addUserId} onChange={(e) => setAddUserId(e.target.value)} className="mt-1 min-h-10 w-full rounded-lg border border-slate-300 bg-white px-2 text-sm font-semibold">
+                <option value="">Select a team member…</option>
+                {availableMembers.map((m) => <option key={m.user_id} value={m.user_id}>{m.full_name || m.invited_email} · {roleLabel(m.role)}</option>)}
+              </select></label>
+            <label className="block"><span className="text-xs font-semibold text-slate-600">On project as</span>
+              <select value={addRole} onChange={(e) => setAddRole(e.target.value)} className="mt-1 min-h-10 w-full rounded-lg border border-slate-300 bg-white px-2 text-sm font-semibold">
+                {["project_manager", "deputy_project_manager", "technician", "inspector"].map((r) => <option key={r} value={r}>{roleLabel(r)}</option>)}
+              </select></label>
+            <label className="block"><span className="text-xs font-semibold text-slate-600">Access</span>
+              <select value={addAccess} onChange={(e) => setAddAccess(e.target.value)} className="mt-1 min-h-10 w-full rounded-lg border border-slate-300 bg-white px-2 text-sm font-semibold">
+                {ACCESS_LEVELS.map((lvl) => <option key={lvl.value} value={lvl.value}>{lvl.label}</option>)}
+              </select></label>
+            <div className="col-span-2"><SmallButton onClick={addToTeam} disabled={busy || !addUserId} className="border-blue-200 text-blue-700 hover:bg-blue-50"><FolderPlus className="h-3.5 w-3.5" />Add to team</SmallButton></div>
+          </div>
+          {!availableMembers.length && <p className="mt-2 text-xs font-medium text-slate-400">Everyone on your roster is already on this team (or hasn't accepted their invite yet).</p>}
+
+          {/* Danger zone */}
+          <p className="mt-6 text-xs font-bold uppercase tracking-wide text-rose-500">Archive / Delete</p>
+          <div className="mt-2 space-y-2">
+            <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 px-3 py-2.5">
+              <span className="text-xs font-medium text-slate-600">{isArchived ? "Reactivate this project." : "Archive — hide from active lists, keep all records."}</span>
+              <SmallButton onClick={toggleArchive} disabled={busy}>{isArchived ? "Reactivate" : "Archive"}</SmallButton>
+            </div>
+            <div className="flex items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5">
+              <span className="text-xs font-medium text-rose-700">Permanently delete (only if it has no reports).</span>
+              <SmallButton onClick={remove} disabled={busy} className="border-rose-300 text-rose-700 hover:bg-rose-100"><Trash2 className="h-3.5 w-3.5" />Delete</SmallButton>
+            </div>
+          </div>
+        </div>
+
+        <div className="border-t border-slate-100 p-4">
+          <button type="button" onClick={onClose} className="min-h-11 w-full rounded-xl border border-slate-300 text-sm font-bold text-slate-700 hover:bg-slate-50">Done</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Full employee management: edit name/role, enable/disable, remove from the
+// company, and manage which projects they're on (with per-project access).
+function ManageMemberModal({ member, company, projects, assignments, onClose, onChanged, onRemoved }) {
+  const [name, setName] = useState(member.full_name || "");
+  const [role, setRole] = useState(member.role);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [addProjectId, setAddProjectId] = useState("");
+  const [addAccess, setAddAccess] = useState("create_edit");
+
+  const assignedProjectIds = new Set(assignments.map((a) => a.project_id));
+  const availableProjects = projects.filter((p) => !assignedProjectIds.has(p.id));
+
+  function deriveAssignmentRole(r) {
+    if (["company_admin", "project_manager"].includes(r)) return "project_manager";
+    if (r === "deputy_project_manager") return "deputy_project_manager";
+    return "technician";
+  }
+
+  async function run(fn) {
+    setBusy(true); setError("");
+    try { await fn(); await onChanged(); }
+    catch (err) { setError(err.message || "Something went wrong."); }
+    finally { setBusy(false); }
+  }
+
+  async function saveDetails() {
+    await run(() => updateMemberDetails(member, { full_name: name, role }));
+  }
+  async function toggleStatus() {
+    await run(() => setMemberStatus(member, member.status === "disabled" ? "active" : "disabled"));
+  }
+  async function remove() {
+    if (!window.confirm(`Remove ${member.full_name || member.invited_email} from ${company.company_name}? They'll lose access and all their project assignments.`)) return;
+    setBusy(true); setError("");
+    try { await removeMember(member); onRemoved(); }
+    catch (err) { setError(err.message || "Could not remove this member."); setBusy(false); }
+  }
+  async function addAssignment() {
+    if (!addProjectId) return;
+    await run(() => assignUserToProject(company.id, Number(addProjectId), member.user_id, deriveAssignmentRole(role), addAccess));
+    setAddProjectId("");
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/60 sm:items-center sm:p-4">
+      <div className="flex max-h-[92vh] w-full max-w-lg flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl sm:rounded-3xl">
+        <div className="flex items-start justify-between gap-3 border-b border-slate-100 p-5">
+          <div className="flex items-center gap-3">
+            <InitialAvatar name={member.full_name || member.invited_email} color={company.brand_color || "#1d4ed8"} className="h-10 w-10 text-sm" />
+            <div>
+              <h3 className="text-lg font-bold text-slate-900">{member.full_name || member.invited_email}</h3>
+              <p className="text-xs font-medium text-slate-500">{member.invited_email} · <span className="capitalize">{member.status}</span></p>
+            </div>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-full border border-slate-200 p-2 text-slate-500 hover:bg-slate-50"><X className="h-4 w-4" /></button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-5">
+          {error && <p className="mb-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">{error}</p>}
+
+          {/* Details */}
+          <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Details</p>
+          <div className="mt-2 grid grid-cols-[1fr_auto] gap-2">
+            <label className="block"><span className="text-xs font-semibold text-slate-600">Full name</span>
+              <input value={name} onChange={(e) => setName(e.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 px-3 text-sm font-semibold outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" /></label>
+            <label className="block"><span className="text-xs font-semibold text-slate-600">Role</span>
+              <select value={role} onChange={(e) => setRole(e.target.value)} className="mt-1 min-h-11 rounded-xl border border-slate-300 bg-white px-2 text-sm font-semibold">
+                {COMPANY_ROLES.map((r) => <option key={r} value={r}>{roleLabel(r)}</option>)}
+              </select></label>
+          </div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <SmallButton onClick={saveDetails} disabled={busy} className="border-blue-200 bg-blue-700 text-white hover:bg-blue-800">Save details</SmallButton>
+            <SmallButton onClick={toggleStatus} disabled={busy} className={member.status === "disabled" ? "" : "border-amber-200 text-amber-700 hover:bg-amber-50"}>
+              {member.status === "disabled" ? "Enable" : "Disable"}
+            </SmallButton>
+          </div>
+
+          {/* Project assignments */}
+          <p className="mt-6 text-xs font-bold uppercase tracking-wide text-slate-500">Project access</p>
+          {!member.user_id ? (
+            <p className="mt-2 rounded-xl bg-slate-50 px-3 py-2.5 text-xs font-medium text-slate-500">Project access can be set once {member.full_name || "they"} accept the invite and sign in.</p>
+          ) : (
+            <>
+              <div className="mt-2 divide-y divide-slate-100 rounded-xl border border-slate-200">
+                {assignments.length ? assignments.map((a) => (
+                  <div key={a.id} className="flex items-center gap-2 px-3 py-2.5">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-bold text-slate-900">{a.projects?.project_name || `Project #${a.project_id}`}</p>
+                      <p className="truncate text-xs font-medium text-slate-400">#{a.projects?.project_number || a.project_id}</p>
+                    </div>
+                    <select value={a.access_level} disabled={busy} onChange={(e) => run(() => updateAssignmentAccess(company.id, a.id, e.target.value))} className="min-h-9 rounded-lg border border-slate-300 bg-white px-2 text-xs font-semibold">
+                      {ACCESS_LEVELS.map((lvl) => <option key={lvl.value} value={lvl.value}>{lvl.label}</option>)}
+                    </select>
+                    <button type="button" disabled={busy} onClick={() => run(() => removeProjectAssignment(company.id, a.id))} className="rounded-lg p-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600" aria-label="Remove from project"><Trash2 className="h-4 w-4" /></button>
+                  </div>
+                )) : <p className="px-3 py-2.5 text-xs font-medium text-slate-400">Not assigned to any projects yet.</p>}
+              </div>
+
+              {/* Add to a project */}
+              <div className="mt-3 flex flex-wrap items-end gap-2 rounded-xl bg-slate-50 p-3">
+                <label className="min-w-[140px] flex-1"><span className="text-xs font-semibold text-slate-600">Add to project</span>
+                  <select value={addProjectId} onChange={(e) => setAddProjectId(e.target.value)} className="mt-1 min-h-10 w-full rounded-lg border border-slate-300 bg-white px-2 text-sm font-semibold">
+                    <option value="">Select a project…</option>
+                    {availableProjects.map((p) => <option key={p.id} value={p.id}>{p.project_name}</option>)}
+                  </select></label>
+                <label><span className="text-xs font-semibold text-slate-600">Access</span>
+                  <select value={addAccess} onChange={(e) => setAddAccess(e.target.value)} className="mt-1 min-h-10 rounded-lg border border-slate-300 bg-white px-2 text-sm font-semibold">
+                    {ACCESS_LEVELS.map((lvl) => <option key={lvl.value} value={lvl.value}>{lvl.label}</option>)}
+                  </select></label>
+                <SmallButton onClick={addAssignment} disabled={busy || !addProjectId} className="border-blue-200 text-blue-700 hover:bg-blue-50"><FolderPlus className="h-3.5 w-3.5" />Add</SmallButton>
+              </div>
+            </>
+          )}
+
+          {/* Danger zone */}
+          <p className="mt-6 text-xs font-bold uppercase tracking-wide text-rose-500">Remove</p>
+          <div className="mt-2 flex items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5">
+            <span className="text-xs font-medium text-rose-700">Remove this person from {company.company_name}.</span>
+            <SmallButton onClick={remove} disabled={busy} className="border-rose-300 text-rose-700 hover:bg-rose-100"><Trash2 className="h-3.5 w-3.5" />Remove</SmallButton>
+          </div>
+        </div>
+
+        <div className="border-t border-slate-100 p-4">
+          <button type="button" onClick={onClose} className="min-h-11 w-full rounded-xl border border-slate-300 text-sm font-bold text-slate-700 hover:bg-slate-50">Done</button>
+        </div>
       </div>
     </div>
   );

@@ -78,11 +78,13 @@ export function getFieldEngineerCollections(reports) {
 }
 
 export function getDefaultProjectId(reports) {
-  return reports.find((report) => report.project_id)?.project_id || 1;
+  // No hardcoded fallback project — the technician's assigned project drives the
+  // default. Returns null when they have no reports yet.
+  return reports.find((report) => report.project_id)?.project_id || null;
 }
 
 export function getCurrentProjectLabel(reports) {
-  return reports.find((report) => report.projectLabel)?.projectLabel || "I-495 Expansion";
+  return reports.find((report) => report.projectLabel)?.projectLabel || "";
 }
 
 export function getGreeting(date = new Date()) {

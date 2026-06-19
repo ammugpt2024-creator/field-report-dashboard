@@ -72,8 +72,16 @@ function TechnicianDashboard() {
   }, [profile?.full_name, session?.user?.id]);
 
   const enrichedReports = useMemo(() => enrichFieldReports(reports), [reports]);
-  const defaultProjectId = getDefaultProjectId(enrichedReports);
-  const projectLabel = getCurrentProjectLabel(enrichedReports);
+  // The default project is the technician's assigned one: prefer a project they
+  // have reports on, else the first active project they can see (RLS already
+  // scopes this to their assignments). Never a hardcoded fallback.
+  const firstActiveProject = useMemo(
+    () => projects.find((p) => String(p.status || "Active").toLowerCase() === "active") || projects[0] || null,
+    [projects]
+  );
+  const defaultProjectId = getDefaultProjectId(enrichedReports) || firstActiveProject?.id || null;
+  const projectLabel = getCurrentProjectLabel(enrichedReports)
+    || firstActiveProject?.project_name || firstActiveProject?.name || "";
   const assignedProjects = useMemo(() => {
     const map = new Map();
     // Active projects from the projects table are the source of truth.

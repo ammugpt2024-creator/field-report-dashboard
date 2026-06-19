@@ -29,15 +29,6 @@ import { logAuditEvent } from "../../services/auditLogService";
 import { sendDailyLogReviewEmail } from "../../services/notificationService";
 import DailyLogSubmitPanel from "./DailyLogSubmitPanel";
 
-const PROJECT_OPTIONS = [
-  {
-    id: 1,
-    projectNumber: "200100",
-    projectName: "DC Water Potomac Tunnel",
-    projectLocation: "Washington, DC"
-  }
-];
-
 const DAILY_LOG_ATTACHMENT_BUCKET = "daily-log-attachments";
 const DAILY_LOG_ATTACHMENT_FALLBACK_BUCKET = "report-attachments";
 
@@ -488,7 +479,15 @@ async function createUploadReadyAttachment(file, attachmentType, context) {
   };
 }
 
-export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateConcreteReport, onOpenConcreteReport, onCreateCompactionReport, onOpenCompactionReport, onCreateAsphaltReport, onOpenAsphaltReport, onCreateInfiltrationReport, onOpenInfiltrationReport, onCreateProctorReport, onOpenProctorReport, onCreateSamplesReport, onOpenSamplesReport }) {
+export default function DailyLogEditor({ log, projectOptions = [], onChange, onSubmitted, onCreateConcreteReport, onOpenConcreteReport, onCreateCompactionReport, onOpenCompactionReport, onCreateAsphaltReport, onOpenAsphaltReport, onCreateInfiltrationReport, onOpenInfiltrationReport, onCreateProctorReport, onOpenProctorReport, onCreateSamplesReport, onOpenSamplesReport }) {
+  // The real projects the technician is assigned to (normalized to this editor's
+  // shape). Falls back to nothing — never the old hardcoded placeholder.
+  const projectChoices = (projectOptions.length ? projectOptions : []).map((p) => ({
+    id: p.id,
+    projectNumber: p.projectNumber || p.number || "",
+    projectName: p.projectName || p.name || "",
+    projectLocation: p.projectLocation || p.location || ""
+  }));
   const [lastAutosavedAt, setLastAutosavedAt] = useState("");
   const [reportPickerActivityId, setReportPickerActivityId] = useState("");
   const [reportSectionError, setReportSectionError] = useState("");
@@ -591,7 +590,7 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
   }
 
   function selectProject(projectId) {
-    const selectedProject = PROJECT_OPTIONS.find((project) => String(project.id) === String(projectId));
+    const selectedProject = projectChoices.find((project) => String(project.id) === String(projectId));
     if (!selectedProject) return;
     updateLog({
       projectId: selectedProject.id,
@@ -1286,7 +1285,10 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
                 onChange={(event) => selectProject(event.target.value)}
                 className="mt-1 min-h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-bold text-slate-950 outline-none focus:border-blue-700 focus:ring-4 focus:ring-blue-100"
               >
-              {PROJECT_OPTIONS.map((project) => (
+              {!projectChoices.some((project) => String(project.id) === String(log.projectId)) && (
+                <option value={log.projectId || ""}>{log.projectName || "Select a project"}</option>
+              )}
+              {projectChoices.map((project) => (
                 <option key={project.id} value={project.id}>{project.projectName}</option>
               ))}
               </select>
