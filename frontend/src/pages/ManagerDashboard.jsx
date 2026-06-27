@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { supabase } from "../services/supabase";
 import { useAuth } from "../context/AuthContext";
+import { isUnscoped, meetsLevel } from "../utils/moduleAccess";
 import { MODULE_NAMES } from "../config/branding";
 import { sendTimesheetDecisionEmail } from "../services/notificationService";
 import { logAuditEvent } from "../services/auditLogService";
@@ -505,7 +506,7 @@ function ManagerDashboard() {
   const navigate = useNavigate();
   // Approval emails deep-link to a specific timesheet via ?timesheet=TS-….
   const highlightedTimesheet = new URLSearchParams(window.location.search).get("timesheet") || "";
-  const { profile } = useAuth();
+  const { profile, companyRole, isPlatformAdmin, modulePermissions } = useAuth();
   const [projects, setProjects] = useState([]);
   const [dailyLogs, setDailyLogs] = useState([]);
   const [timeCards, setTimeCards] = useState([]);
@@ -555,18 +556,25 @@ function ManagerDashboard() {
     loadWorkspace();
   }, []);
 
-  // Top managers oversee every log; an individual reviewer sees the logs routed
-  // to them plus any not yet routed to a specific person.
-  const seesAllLogs = ["qc_manager", "admin", "company_admin"].includes(String(profile?.role || "").toLowerCase());
+  // Visibility follows the access level the admin granted: approve+ on a
+  // project's Daily Logs = oversight (see all on that project); otherwise the
+  // viewer sees only logs routed to them or that they submitted.
+  const myId = profile?.id;
+  const canSeeLog = (log) =>
+    isUnscoped(companyRole, isPlatformAdmin) ||
+    meetsLevel(modulePermissions?.[String(log.project_id)]?.daily_logs, "approve") ||
+    log.reviewer_user_id === myId ||
+    log.technician_id === myId;
   const describedLogs = useMemo(() => (
     dailyLogs
-      .filter((log) => seesAllLogs || !log.reviewer_user_id || log.reviewer_user_id === profile?.id)
+      .filter(canSeeLog)
       .map(describeDailyLogRow)
       .map((log) => ({ ...log, bucket: logStatusBucket(log.status) }))
       .filter((log) => log.bucket)
       // Most recent first: newest log date, then most recent submission.
       .sort((a, b) => String(b.logDate).localeCompare(String(a.logDate)) || a.agingHours - b.agingHours)
-  ), [dailyLogs, seesAllLogs, profile?.id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  ), [dailyLogs, companyRole, isPlatformAdmin, modulePermissions, myId]);
 
   const logCounts = useMemo(() => {
     const pending = describedLogs.filter((log) => log.bucket === "pending").length;

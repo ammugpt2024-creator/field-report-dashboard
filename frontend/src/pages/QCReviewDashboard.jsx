@@ -13,6 +13,7 @@ import {
 import { supabase } from '../services/supabase';
 import { useAuth } from '../context/AuthContext';
 import { isQcRole, ROLES } from '../utils/permissions';
+import { isUnscoped, meetsLevel } from '../utils/moduleAccess';
 import StatusBadge from '../components/StatusBadge';
 import ReportActions from '../components/ReportActions';
 import {
@@ -99,7 +100,7 @@ function QCReviewDashboard() {
   const { projectId } = useParams();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { role, session, profile } = useAuth();
+  const { role, session, profile, companyRole, isPlatformAdmin, modulePermissions } = useAuth();
   const [reports, setReports] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -135,9 +136,8 @@ function QCReviewDashboard() {
           query = query.eq('project_id', Number(projectId));
         }
 
-        if (!isManagerView && session?.user?.id) {
-          query = query.or(`qc_assigned_to.eq.${session.user.id},qc_assigned_to.is.null`);
-        }
+        // Fetch the company's queue; visibility is scoped client-side by the
+        // admin-set access level (see matchesAccess), not by role.
 
         const { data, error: fetchError } = await query.order('submitted_at', { ascending: true, nullsFirst: false });
         if (fetchError) throw fetchError;
@@ -283,7 +283,18 @@ function QCReviewDashboard() {
     const matchesDateFrom = !dateFrom || submittedDate >= dateFrom;
     const matchesDateTo = !dateTo || submittedDate <= dateTo;
 
-    return matchesText && matchesStatus && matchesProject && matchesTechnician && matchesDateFrom && matchesDateTo;
+    // Visibility by the admin-set access level: approve+ on this project's Field
+    // Test Reports = oversight (see all); otherwise only reports routed to me or
+    // that I submitted.
+    const mine = session?.user?.id;
+    const matchesAccess =
+      isUnscoped(companyRole, isPlatformAdmin) ||
+      meetsLevel(modulePermissions?.[String(report.project_id)]?.field_test_reports, 'approve') ||
+      report.qc_assigned_to === mine ||
+      report.submitted_by === mine ||
+      report.created_by === mine;
+
+    return matchesAccess && matchesText && matchesStatus && matchesProject && matchesTechnician && matchesDateFrom && matchesDateTo;
   });
 
   const notifications = enrichedReports
