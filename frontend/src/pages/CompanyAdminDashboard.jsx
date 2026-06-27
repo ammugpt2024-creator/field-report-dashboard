@@ -1162,7 +1162,7 @@ function ManageProjectModal({ project, company, roster, roles, assignments, onCl
   }
 
   async function addToTeam() {
-    if (!addUserId) return;
+    if (!addUserId) { setError("Select a user first, then click Add to team."); return; }
     const member = memberById(addUserId);
     const assignmentRole = deriveAssignmentRole(member?.role);
     await run(async () => {
@@ -1294,7 +1294,7 @@ function ManageProjectModal({ project, company, roster, roles, assignments, onCl
               <span className="text-xs font-semibold text-slate-600">Project permissions</span>
               <div className="mt-1"><ModulePermsGrid permissions={addPerms} onChange={(next) => { setAddPerms(next); setAddTemplateId(""); }} /></div>
             </div>
-            <div className="col-span-2"><SmallButton onClick={addToTeam} disabled={busy || !addUserId} className="border-blue-200 text-blue-700 hover:bg-blue-50"><FolderPlus className="h-3.5 w-3.5" />Add to team</SmallButton></div>
+            <div className="col-span-2"><SmallButton onClick={addToTeam} disabled={busy} className="border-blue-200 text-blue-700 hover:bg-blue-50"><FolderPlus className="h-3.5 w-3.5" />Add to team</SmallButton></div>
           </div>
           {!availableMembers.length && <p className="mt-2 text-xs font-medium text-slate-400">Everyone on your roster is already on this team (or hasn't accepted their invite yet).</p>}
 
@@ -1355,7 +1355,7 @@ function ManageMemberModal({ member, company, projects, roles, assignments, onCl
     catch (err) { setError(err.message || "Could not remove this member."); setBusy(false); }
   }
   async function addAssignment() {
-    if (!addProjectId) return;
+    if (!addProjectId) { setError("Select a project first, then click Add."); return; }
     await run(() => assignUserToProject(company.id, Number(addProjectId), member.user_id, deriveAssignmentRole(role), headlineAccessLevel(addPerms), addPerms));
     setAddProjectId(""); setAddTemplateId(""); setAddPerms(defaultPermsForRole(member.role));
   }
@@ -1451,7 +1451,7 @@ function ManageMemberModal({ member, company, projects, roles, assignments, onCl
                   <div className="mt-2"><span className="text-xs font-semibold text-slate-600">Project permissions</span>
                     <div className="mt-1"><ModulePermsGrid permissions={addPerms} onChange={(next) => { setAddPerms(next); setAddTemplateId(""); }} /></div>
                   </div>
-                  <div className="mt-2"><SmallButton onClick={addAssignment} disabled={busy || !addProjectId} className="border-blue-200 text-blue-700 hover:bg-blue-50"><FolderPlus className="h-3.5 w-3.5" />Add</SmallButton></div>
+                  <div className="mt-2"><SmallButton onClick={addAssignment} disabled={busy} className="border-blue-200 text-blue-700 hover:bg-blue-50"><FolderPlus className="h-3.5 w-3.5" />Add</SmallButton></div>
                 </div>
               )}
             </>
