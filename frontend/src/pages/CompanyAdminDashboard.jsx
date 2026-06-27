@@ -16,7 +16,7 @@ import {
   removeMember,
   listProjectAssignments,
   assignUserToProject,
-  updateAssignmentAccess,
+  updateAssignmentPermissions,
   removeProjectAssignment,
   updateProject,
   deleteProject,
@@ -77,6 +77,69 @@ const MODULE_LEVELS = [
   { value: "manage", label: "Manage" }
 ];
 const moduleLevelLabel = (v) => MODULE_LEVELS.find((l) => l.value === v)?.label || "None";
+const LEVEL_ORDER = ["none", "view", "create_edit", "approve", "manage"];
+
+// A permissions object covering every module (missing modules default to none).
+function fullPerms(partial = {}) {
+  return MODULES.reduce((acc, m) => ({ ...acc, [m.key]: partial[m.key] || "none" }), {});
+}
+// Map a legacy single access level to a uniform per-module permissions object.
+function permsFromAccessLevel(level) {
+  const lvl = { full: "manage", review_approve: "approve", create_edit: "create_edit", view_only: "view" }[level] || "view";
+  return MODULES.reduce((acc, m) => ({ ...acc, [m.key]: lvl }), {});
+}
+// Short "Daily Logs: Create & Edit · …" summary, omitting None modules.
+function summarizePerms(perms = {}) {
+  const parts = MODULES.filter((m) => (perms[m.key] || "none") !== "none")
+    .map((m) => `${m.label}: ${moduleLevelLabel(perms[m.key])}`);
+  return parts.length ? parts.join(" · ") : "No module access";
+}
+// Legacy single access_level mirror, derived from the highest module level, so
+// older code/paths that still read access_level keep working.
+function headlineAccessLevel(perms = {}) {
+  const max = Object.values(perms).reduce((a, b) => (LEVEL_ORDER.indexOf(b) > LEVEL_ORDER.indexOf(a) ? b : a), "none");
+  return { manage: "full", approve: "review_approve", create_edit: "create_edit", view: "view_only", none: "view_only" }[max];
+}
+
+// Compact per-module level grid, used wherever an assignment's access is edited.
+function ModulePermsGrid({ permissions, onChange, disabled }) {
+  return (
+    <div className="divide-y divide-slate-100 rounded-xl border border-slate-200">
+      {MODULES.map((m) => (
+        <div key={m.key} className="flex items-center justify-between gap-3 px-3 py-2">
+          <span className="text-sm font-semibold text-slate-700">{m.label}</span>
+          <select
+            disabled={disabled}
+            value={permissions[m.key] || "none"}
+            onChange={(e) => onChange({ ...permissions, [m.key]: e.target.value })}
+            className="min-h-9 rounded-lg border border-slate-300 bg-white px-2 text-xs font-semibold disabled:opacity-50"
+          >
+            {MODULE_LEVELS.map((lvl) => <option key={lvl.value} value={lvl.value}>{lvl.label}</option>)}
+          </select>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Role-template dropdown that, on pick, returns the template's permissions.
+function RoleTemplatePicker({ roles, value, onPick, label = "Apply role template" }) {
+  return (
+    <label className="block"><span className="text-xs font-semibold text-slate-600">{label}</span>
+      <select
+        value={value || ""}
+        onChange={(e) => {
+          const role = roles.find((r) => r.id === e.target.value);
+          onPick(e.target.value, role ? fullPerms(role.permissions) : null);
+        }}
+        className="mt-1 min-h-10 w-full rounded-lg border border-slate-300 bg-white px-2 text-sm font-semibold"
+      >
+        <option value="">Custom…</option>
+        {roles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+      </select>
+    </label>
+  );
+}
 
 // Section panel with a header band (icon + uppercase label + count badge) to
 // match the Platform Admin console.
@@ -368,7 +431,10 @@ export default function CompanyAdminDashboard() {
       project_id: created.id,
       user_id,
       assignment_role: v.role,
-      access_level: v.access
+      access_level: v.access,
+      // Store per-module permissions too (uniform from the chosen access level);
+      // the admin can fine-tune them per module later in Manage Project.
+      permissions: permsFromAccessLevel(v.access)
     }));
     if (assignments.length) {
       const { error: assignError } = await supabase.from("project_assignments").insert(assignments);
@@ -882,6 +948,7 @@ export default function CompanyAdminDashboard() {
             member={context.roster.find((m) => m.id === manageMember.id) || manageMember}
             company={company}
             projects={projects}
+            roles={roles}
             assignments={assignments.filter((a) => a.user_id === manageMember.user_id)}
             onClose={() => setManageMember(null)}
             onChanged={refresh}
@@ -902,6 +969,7 @@ export default function CompanyAdminDashboard() {
             project={projects.find((p) => p.id === manageProject.id) || manageProject}
             company={company}
             roster={context.roster}
+            roles={roles}
             assignments={assignments.filter((a) => a.project_id === manageProject.id)}
             onClose={() => setManageProject(null)}
             onChanged={refresh}
@@ -978,7 +1046,7 @@ function RoleEditorModal({ role, onClose, onSave }) {
 
 // Manage an existing project: edit its details, manage the team (PM / DPM /
 // technicians with per-person access), archive, or delete it.
-function ManageProjectModal({ project, company, roster, assignments, onClose, onChanged, onRemoved }) {
+function ManageProjectModal({ project, company, roster, roles, assignments, onClose, onChanged, onRemoved }) {
   const [fields, setFields] = useState({
     project_name: project.project_name || "",
     project_number: project.project_number || "",
@@ -990,7 +1058,9 @@ function ManageProjectModal({ project, company, roster, assignments, onClose, on
   const [error, setError] = useState("");
   const [addUserId, setAddUserId] = useState("");
   const [addRole, setAddRole] = useState("technician");
-  const [addAccess, setAddAccess] = useState("create_edit");
+  const [addRoleId, setAddRoleId] = useState("");
+  const [addPerms, setAddPerms] = useState(() => fullPerms());
+  const [editingId, setEditingId] = useState("");
 
   const memberById = (uid) => roster.find((m) => m.user_id === uid);
   const assignedUserIds = new Set(assignments.map((a) => a.user_id));
@@ -1015,14 +1085,14 @@ function ManageProjectModal({ project, company, roster, assignments, onClose, on
   async function addToTeam() {
     if (!addUserId) return;
     await run(async () => {
-      await assignUserToProject(company.id, project.id, addUserId, addRole, addAccess);
+      await assignUserToProject(company.id, project.id, addUserId, addRole, headlineAccessLevel(addPerms), addPerms);
       // Keep the denormalized PM on the project in sync for reports/PDFs.
       if (addRole === "project_manager") {
         const m = memberById(addUserId);
         await updateProject(project, { project_manager_id: addUserId, project_manager_name: m?.full_name || null, project_manager_email: m?.invited_email || null });
       }
     });
-    setAddUserId("");
+    setAddUserId(""); setAddRoleId(""); setAddPerms(fullPerms());
   }
 
   async function removeFromTeam(a) {
@@ -1073,16 +1143,23 @@ function ManageProjectModal({ project, company, roster, assignments, onClose, on
           <div className="mt-2 divide-y divide-slate-100 rounded-xl border border-slate-200">
             {assignments.length ? assignments.map((a) => {
               const m = memberById(a.user_id);
+              const perms = fullPerms(a.permissions);
+              const open = editingId === a.id;
               return (
-                <div key={a.id} className="flex items-center gap-2 px-3 py-2.5">
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-bold text-slate-900">{m?.full_name || m?.invited_email || "Member"}</p>
-                    <p className="truncate text-xs font-medium text-slate-400">{roleLabel(a.assignment_role)}</p>
+                <div key={a.id} className="px-3 py-2.5">
+                  <div className="flex items-center gap-2">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-bold text-slate-900">{m?.full_name || m?.invited_email || "Member"}</p>
+                      <p className="truncate text-xs font-medium text-slate-400">{roleLabel(a.assignment_role)} · {summarizePerms(perms)}</p>
+                    </div>
+                    <SmallButton onClick={() => setEditingId(open ? "" : a.id)} className="border-slate-300 text-slate-700">{open ? "Close" : "Access"}</SmallButton>
+                    <button type="button" disabled={busy} onClick={() => removeFromTeam(a)} className="rounded-lg p-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600" aria-label="Remove from team"><Trash2 className="h-4 w-4" /></button>
                   </div>
-                  <select value={a.access_level} disabled={busy} onChange={(e) => run(() => updateAssignmentAccess(company.id, a.id, e.target.value))} className="min-h-9 rounded-lg border border-slate-300 bg-white px-2 text-xs font-semibold">
-                    {ACCESS_LEVELS.map((lvl) => <option key={lvl.value} value={lvl.value}>{lvl.label}</option>)}
-                  </select>
-                  <button type="button" disabled={busy} onClick={() => removeFromTeam(a)} className="rounded-lg p-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600" aria-label="Remove from team"><Trash2 className="h-4 w-4" /></button>
+                  {open && (
+                    <div className="mt-2">
+                      <ModulePermsGrid permissions={perms} disabled={busy} onChange={(next) => run(() => updateAssignmentPermissions(company.id, a.id, next))} />
+                    </div>
+                  )}
                 </div>
               );
             }) : <p className="px-3 py-2.5 text-xs font-medium text-slate-400">No one on the team yet.</p>}
@@ -1099,10 +1176,11 @@ function ManageProjectModal({ project, company, roster, assignments, onClose, on
               <select value={addRole} onChange={(e) => setAddRole(e.target.value)} className="mt-1 min-h-10 w-full rounded-lg border border-slate-300 bg-white px-2 text-sm font-semibold">
                 {["project_manager", "deputy_project_manager", "technician", "inspector"].map((r) => <option key={r} value={r}>{roleLabel(r)}</option>)}
               </select></label>
-            <label className="block"><span className="text-xs font-semibold text-slate-600">Access</span>
-              <select value={addAccess} onChange={(e) => setAddAccess(e.target.value)} className="mt-1 min-h-10 w-full rounded-lg border border-slate-300 bg-white px-2 text-sm font-semibold">
-                {ACCESS_LEVELS.map((lvl) => <option key={lvl.value} value={lvl.value}>{lvl.label}</option>)}
-              </select></label>
+            <div className="block"><RoleTemplatePicker roles={roles} value={addRoleId} onPick={(id, perms) => { setAddRoleId(id); if (perms) setAddPerms(perms); }} /></div>
+            <div className="col-span-2">
+              <span className="text-xs font-semibold text-slate-600">Module access (override per project)</span>
+              <div className="mt-1"><ModulePermsGrid permissions={addPerms} onChange={setAddPerms} /></div>
+            </div>
             <div className="col-span-2"><SmallButton onClick={addToTeam} disabled={busy || !addUserId} className="border-blue-200 text-blue-700 hover:bg-blue-50"><FolderPlus className="h-3.5 w-3.5" />Add to team</SmallButton></div>
           </div>
           {!availableMembers.length && <p className="mt-2 text-xs font-medium text-slate-400">Everyone on your roster is already on this team (or hasn't accepted their invite yet).</p>}
@@ -1131,13 +1209,15 @@ function ManageProjectModal({ project, company, roster, assignments, onClose, on
 
 // Full employee management: edit name/role, enable/disable, remove from the
 // company, and manage which projects they're on (with per-project access).
-function ManageMemberModal({ member, company, projects, assignments, onClose, onChanged, onRemoved }) {
+function ManageMemberModal({ member, company, projects, roles, assignments, onClose, onChanged, onRemoved }) {
   const [name, setName] = useState(member.full_name || "");
   const [role, setRole] = useState(member.role);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [addProjectId, setAddProjectId] = useState("");
-  const [addAccess, setAddAccess] = useState("create_edit");
+  const [addRoleId, setAddRoleId] = useState("");
+  const [addPerms, setAddPerms] = useState(() => fullPerms());
+  const [editingId, setEditingId] = useState("");
 
   const assignedProjectIds = new Set(assignments.map((a) => a.project_id));
   const availableProjects = projects.filter((p) => !assignedProjectIds.has(p.id));
@@ -1169,8 +1249,8 @@ function ManageMemberModal({ member, company, projects, assignments, onClose, on
   }
   async function addAssignment() {
     if (!addProjectId) return;
-    await run(() => assignUserToProject(company.id, Number(addProjectId), member.user_id, deriveAssignmentRole(role), addAccess));
-    setAddProjectId("");
+    await run(() => assignUserToProject(company.id, Number(addProjectId), member.user_id, deriveAssignmentRole(role), headlineAccessLevel(addPerms), addPerms));
+    setAddProjectId(""); setAddRoleId(""); setAddPerms(fullPerms());
   }
 
   return (
@@ -1214,32 +1294,43 @@ function ManageMemberModal({ member, company, projects, assignments, onClose, on
           ) : (
             <>
               <div className="mt-2 divide-y divide-slate-100 rounded-xl border border-slate-200">
-                {assignments.length ? assignments.map((a) => (
-                  <div key={a.id} className="flex items-center gap-2 px-3 py-2.5">
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-bold text-slate-900">{a.projects?.project_name || `Project #${a.project_id}`}</p>
-                      <p className="truncate text-xs font-medium text-slate-400">#{a.projects?.project_number || a.project_id}</p>
+                {assignments.length ? assignments.map((a) => {
+                  const perms = fullPerms(a.permissions);
+                  const open = editingId === a.id;
+                  return (
+                    <div key={a.id} className="px-3 py-2.5">
+                      <div className="flex items-center gap-2">
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-bold text-slate-900">{a.projects?.project_name || `Project #${a.project_id}`}</p>
+                          <p className="truncate text-xs font-medium text-slate-400">{summarizePerms(perms)}</p>
+                        </div>
+                        <SmallButton onClick={() => setEditingId(open ? "" : a.id)} className="border-slate-300 text-slate-700">{open ? "Close" : "Access"}</SmallButton>
+                        <button type="button" disabled={busy} onClick={() => run(() => removeProjectAssignment(company.id, a.id))} className="rounded-lg p-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600" aria-label="Remove from project"><Trash2 className="h-4 w-4" /></button>
+                      </div>
+                      {open && (
+                        <div className="mt-2">
+                          <ModulePermsGrid permissions={perms} disabled={busy} onChange={(next) => run(() => updateAssignmentPermissions(company.id, a.id, next))} />
+                        </div>
+                      )}
                     </div>
-                    <select value={a.access_level} disabled={busy} onChange={(e) => run(() => updateAssignmentAccess(company.id, a.id, e.target.value))} className="min-h-9 rounded-lg border border-slate-300 bg-white px-2 text-xs font-semibold">
-                      {ACCESS_LEVELS.map((lvl) => <option key={lvl.value} value={lvl.value}>{lvl.label}</option>)}
-                    </select>
-                    <button type="button" disabled={busy} onClick={() => run(() => removeProjectAssignment(company.id, a.id))} className="rounded-lg p-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600" aria-label="Remove from project"><Trash2 className="h-4 w-4" /></button>
-                  </div>
-                )) : <p className="px-3 py-2.5 text-xs font-medium text-slate-400">Not assigned to any projects yet.</p>}
+                  );
+                }) : <p className="px-3 py-2.5 text-xs font-medium text-slate-400">Not assigned to any projects yet.</p>}
               </div>
 
               {/* Add to a project */}
-              <div className="mt-3 flex flex-wrap items-end gap-2 rounded-xl bg-slate-50 p-3">
-                <label className="min-w-[140px] flex-1"><span className="text-xs font-semibold text-slate-600">Add to project</span>
-                  <select value={addProjectId} onChange={(e) => setAddProjectId(e.target.value)} className="mt-1 min-h-10 w-full rounded-lg border border-slate-300 bg-white px-2 text-sm font-semibold">
-                    <option value="">Select a project…</option>
-                    {availableProjects.map((p) => <option key={p.id} value={p.id}>{p.project_name}</option>)}
-                  </select></label>
-                <label><span className="text-xs font-semibold text-slate-600">Access</span>
-                  <select value={addAccess} onChange={(e) => setAddAccess(e.target.value)} className="mt-1 min-h-10 rounded-lg border border-slate-300 bg-white px-2 text-sm font-semibold">
-                    {ACCESS_LEVELS.map((lvl) => <option key={lvl.value} value={lvl.value}>{lvl.label}</option>)}
-                  </select></label>
-                <SmallButton onClick={addAssignment} disabled={busy || !addProjectId} className="border-blue-200 text-blue-700 hover:bg-blue-50"><FolderPlus className="h-3.5 w-3.5" />Add</SmallButton>
+              <div className="mt-3 rounded-xl bg-slate-50 p-3">
+                <div className="grid grid-cols-2 gap-2">
+                  <label className="block"><span className="text-xs font-semibold text-slate-600">Add to project</span>
+                    <select value={addProjectId} onChange={(e) => setAddProjectId(e.target.value)} className="mt-1 min-h-10 w-full rounded-lg border border-slate-300 bg-white px-2 text-sm font-semibold">
+                      <option value="">Select a project…</option>
+                      {availableProjects.map((p) => <option key={p.id} value={p.id}>{p.project_name}</option>)}
+                    </select></label>
+                  <div className="block"><RoleTemplatePicker roles={roles} value={addRoleId} onPick={(id, perms) => { setAddRoleId(id); if (perms) setAddPerms(perms); }} /></div>
+                </div>
+                <div className="mt-2"><span className="text-xs font-semibold text-slate-600">Module access (override per project)</span>
+                  <div className="mt-1"><ModulePermsGrid permissions={addPerms} onChange={setAddPerms} /></div>
+                </div>
+                <div className="mt-2"><SmallButton onClick={addAssignment} disabled={busy || !addProjectId} className="border-blue-200 text-blue-700 hover:bg-blue-50"><FolderPlus className="h-3.5 w-3.5" />Add</SmallButton></div>
               </div>
             </>
           )}
