@@ -515,7 +515,7 @@ export async function deleteProject(project) {
 
 // Project assignments for the whole company, joined with the project so the UI
 // can show "who is on what". Returns [] on error (e.g. RLS).
-const ASSIGNMENT_SELECT = 'id, project_id, user_id, assignment_role, access_level, permissions, projects(project_name, project_number)';
+const ASSIGNMENT_SELECT = 'id, project_id, user_id, assignment_role, access_level, permissions, reviewer_user_id, projects(project_name, project_number)';
 
 export async function listProjectAssignments() {
   const { data, error } = await supabase
@@ -557,6 +557,15 @@ export async function removeProjectAssignment(companyId, assignmentId) {
   const { error } = await supabase.from('project_assignments').delete().eq('id', assignmentId);
   if (error) throw error;
   logAuditEvent({ companyId, action: 'project_assignment_removed', entityType: 'project_assignment', entityId: assignmentId });
+}
+
+// Set who reviews this assignee's submitted work on the project (a teammate's
+// user_id, or null to fall back to the company default reviewer).
+export async function updateAssignmentReviewer(companyId, assignmentId, reviewerUserId) {
+  const { error } = await supabase.from('project_assignments')
+    .update({ reviewer_user_id: reviewerUserId || null }).eq('id', assignmentId);
+  if (error) throw error;
+  logAuditEvent({ companyId, action: 'project_assignment_updated', entityType: 'project_assignment', entityId: assignmentId, newValue: { reviewerUserId } });
 }
 
 // ── Role templates (company-level reusable permission presets) ───────────────

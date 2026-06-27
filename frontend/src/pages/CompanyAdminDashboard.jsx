@@ -17,6 +17,7 @@ import {
   listProjectAssignments,
   assignUserToProject,
   updateAssignmentPermissions,
+  updateAssignmentReviewer,
   removeProjectAssignment,
   updateProject,
   deleteProject,
@@ -1069,6 +1070,11 @@ function ManageProjectModal({ project, company, roster, roles, assignments, onCl
   const assignedUserIds = new Set(assignments.map((a) => a.user_id));
   const availableMembers = roster.filter((m) => m.user_id && m.status !== "disabled" && !assignedUserIds.has(m.user_id));
   const isArchived = String(fields.status).toLowerCase() !== "active";
+  // People on this project who can be a reviewer (PM / deputy PM / inspector).
+  const reviewerCandidates = assignments
+    .filter((a) => ["project_manager", "deputy_project_manager", "inspector"].includes(a.assignment_role))
+    .map((a) => ({ user_id: a.user_id, name: memberById(a.user_id)?.full_name || memberById(a.user_id)?.invited_email || "Member" }));
+  const reviewerName = (uid) => reviewerCandidates.find((r) => r.user_id === uid)?.name || memberById(uid)?.full_name || null;
 
   async function run(fn) {
     setBusy(true); setError("");
@@ -1153,14 +1159,28 @@ function ManageProjectModal({ project, company, roster, roles, assignments, onCl
                   <div className="flex items-center gap-2">
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-bold text-slate-900">{m?.full_name || m?.invited_email || "Member"}</p>
-                      <p className="truncate text-xs font-medium text-slate-400">{roleLabel(a.assignment_role)} · {summarizePerms(perms)}</p>
+                      <p className="truncate text-xs font-medium text-slate-400">
+                        {roleLabel(a.assignment_role)} · {summarizePerms(perms)}{a.reviewer_user_id ? ` · Reviewed by ${reviewerName(a.reviewer_user_id) || "—"}` : ""}
+                      </p>
                     </div>
                     <SmallButton onClick={() => setEditingId(open ? "" : a.id)} className="border-slate-300 text-slate-700">{open ? "Close" : "Access"}</SmallButton>
                     <button type="button" disabled={busy} onClick={() => removeFromTeam(a)} className="rounded-lg p-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600" aria-label="Remove from team"><Trash2 className="h-4 w-4" /></button>
                   </div>
                   {open && (
-                    <div className="mt-2">
+                    <div className="mt-2 space-y-2">
                       <ModulePermsGrid permissions={perms} disabled={busy} onChange={(next) => run(() => updateAssignmentPermissions(company.id, a.id, next))} />
+                      <label className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 px-3 py-2">
+                        <span className="text-sm font-semibold text-slate-700">Reviewed by</span>
+                        <select
+                          value={a.reviewer_user_id || ""}
+                          disabled={busy}
+                          onChange={(e) => run(() => updateAssignmentReviewer(company.id, a.id, e.target.value))}
+                          className="min-h-9 rounded-lg border border-slate-300 bg-white px-2 text-xs font-semibold"
+                        >
+                          <option value="">Company default</option>
+                          {reviewerCandidates.filter((r) => r.user_id !== a.user_id).map((r) => <option key={r.user_id} value={r.user_id}>{r.name}</option>)}
+                        </select>
+                      </label>
                     </div>
                   )}
                 </div>
