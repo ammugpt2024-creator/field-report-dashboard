@@ -126,7 +126,7 @@ function ModulePermsGrid({ permissions, onChange, disabled }) {
 }
 
 // Role-template dropdown that, on pick, returns the template's permissions.
-function RoleTemplatePicker({ roles, value, onPick, label = "Apply role template" }) {
+function RoleTemplatePicker({ roles, value, onPick, label = "Start from preset" }) {
   return (
     <label className="block"><span className="text-xs font-semibold text-slate-600">{label}</span>
       <select
@@ -1278,11 +1278,12 @@ function ManageMemberModal({ member, company, projects, roles, assignments, onCl
           <div className="mt-2 grid grid-cols-[1fr_auto] gap-2">
             <label className="block"><span className="text-xs font-semibold text-slate-600">Full name</span>
               <input value={name} onChange={(e) => setName(e.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 px-3 text-sm font-semibold outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" /></label>
-            <label className="block"><span className="text-xs font-semibold text-slate-600">Role</span>
+            <label className="block"><span className="text-xs font-semibold text-slate-600">Company role</span>
               <select value={role} onChange={(e) => setRole(e.target.value)} className="mt-1 min-h-11 rounded-xl border border-slate-300 bg-white px-2 text-sm font-semibold">
                 {COMPANY_ROLES.map((r) => <option key={r} value={r}>{roleLabel(r)}</option>)}
               </select></label>
           </div>
+          <p className="mt-1.5 text-xs font-medium text-slate-400">Their job across the company (decides which app they sign in to). Per-project module access is set separately below.</p>
           <div className="mt-2 flex flex-wrap gap-2">
             <button type="button" onClick={saveDetails} disabled={busy} className="inline-flex min-h-9 items-center rounded-lg bg-blue-700 px-3 text-xs font-bold text-white hover:bg-blue-800 disabled:opacity-60">Save details</button>
             <SmallButton onClick={toggleStatus} disabled={busy} className={member.status === "disabled" ? "" : "border-amber-200 text-amber-700 hover:bg-amber-50"}>
@@ -1325,8 +1326,9 @@ function ManageMemberModal({ member, company, projects, roles, assignments, onCl
 
               {/* Add to a project */}
               <div className="mt-3 rounded-xl bg-slate-50 p-3">
+                <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">Add to another project</p>
                 <div className="grid grid-cols-2 gap-2">
-                  <label className="block"><span className="text-xs font-semibold text-slate-600">Add to project</span>
+                  <label className="block"><span className="text-xs font-semibold text-slate-600">Project</span>
                     <select value={addProjectId} onChange={(e) => setAddProjectId(e.target.value)} className="mt-1 min-h-10 w-full rounded-lg border border-slate-300 bg-white px-2 text-sm font-semibold">
                       <option value="">Select a project…</option>
                       {availableProjects.map((p) => <option key={p.id} value={p.id}>{p.project_name}</option>)}
