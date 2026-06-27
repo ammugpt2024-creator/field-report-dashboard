@@ -555,14 +555,18 @@ function ManagerDashboard() {
     loadWorkspace();
   }, []);
 
+  // Top managers oversee every log; an individual reviewer sees the logs routed
+  // to them plus any not yet routed to a specific person.
+  const seesAllLogs = ["qc_manager", "admin", "company_admin"].includes(String(profile?.role || "").toLowerCase());
   const describedLogs = useMemo(() => (
     dailyLogs
+      .filter((log) => seesAllLogs || !log.reviewer_user_id || log.reviewer_user_id === profile?.id)
       .map(describeDailyLogRow)
       .map((log) => ({ ...log, bucket: logStatusBucket(log.status) }))
       .filter((log) => log.bucket)
       // Most recent first: newest log date, then most recent submission.
       .sort((a, b) => String(b.logDate).localeCompare(String(a.logDate)) || a.agingHours - b.agingHours)
-  ), [dailyLogs]);
+  ), [dailyLogs, seesAllLogs, profile?.id]);
 
   const logCounts = useMemo(() => {
     const pending = describedLogs.filter((log) => log.bucket === "pending").length;
