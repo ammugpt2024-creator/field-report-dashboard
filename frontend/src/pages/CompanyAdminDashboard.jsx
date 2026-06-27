@@ -1345,21 +1345,27 @@ function ManageMemberModal({ member, company, projects, roles, assignments, onCl
               </div>
 
               {/* Add to a project */}
-              <div className="mt-3 rounded-xl bg-slate-50 p-3">
-                <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">Add to another project</p>
-                <div className="grid grid-cols-2 gap-2">
-                  <label className="block"><span className="text-xs font-semibold text-slate-600">Project</span>
-                    <select value={addProjectId} onChange={(e) => setAddProjectId(e.target.value)} className="mt-1 min-h-10 w-full rounded-lg border border-slate-300 bg-white px-2 text-sm font-semibold">
-                      <option value="">Select a project…</option>
-                      {availableProjects.map((p) => <option key={p.id} value={p.id}>{p.project_name}</option>)}
-                    </select></label>
-                  <div className="block"><RoleTemplatePicker roles={roles} value={addRoleId} onPick={(id, perms) => { setAddRoleId(id); if (perms) setAddPerms(perms); }} /></div>
+              {availableProjects.length === 0 ? (
+                <p className="mt-3 rounded-xl bg-slate-50 px-3 py-2.5 text-xs font-medium text-slate-500">
+                  {projects.length ? "Already on every project — adjust access above, or create a new project to add them to." : "No projects yet — create a project first."}
+                </p>
+              ) : (
+                <div className="mt-3 rounded-xl bg-slate-50 p-3">
+                  <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">Add to another project</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="block"><span className="text-xs font-semibold text-slate-600">Project</span>
+                      <select value={addProjectId} onChange={(e) => setAddProjectId(e.target.value)} className="mt-1 min-h-10 w-full rounded-lg border border-slate-300 bg-white px-2 text-sm font-semibold">
+                        <option value="">Select a project…</option>
+                        {availableProjects.map((p) => <option key={p.id} value={p.id}>{p.project_name}</option>)}
+                      </select></label>
+                    <div className="block"><RoleTemplatePicker roles={roles} value={addRoleId} onPick={(id, perms) => { setAddRoleId(id); if (perms) setAddPerms(perms); }} /></div>
+                  </div>
+                  <div className="mt-2"><span className="text-xs font-semibold text-slate-600">Module access (override per project)</span>
+                    <div className="mt-1"><ModulePermsGrid permissions={addPerms} onChange={setAddPerms} /></div>
+                  </div>
+                  <div className="mt-2"><SmallButton onClick={addAssignment} disabled={busy || !addProjectId} className="border-blue-200 text-blue-700 hover:bg-blue-50"><FolderPlus className="h-3.5 w-3.5" />Add</SmallButton></div>
                 </div>
-                <div className="mt-2"><span className="text-xs font-semibold text-slate-600">Module access (override per project)</span>
-                  <div className="mt-1"><ModulePermsGrid permissions={addPerms} onChange={setAddPerms} /></div>
-                </div>
-                <div className="mt-2"><SmallButton onClick={addAssignment} disabled={busy || !addProjectId} className="border-blue-200 text-blue-700 hover:bg-blue-50"><FolderPlus className="h-3.5 w-3.5" />Add</SmallButton></div>
-              </div>
+              )}
             </>
           )}
 
