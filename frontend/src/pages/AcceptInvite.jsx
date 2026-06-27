@@ -15,16 +15,37 @@ function AcceptInvite() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [identity, setIdentity] = useState({ name: "", email: "" });
+  // loading → checking the link; form → new invitee may set a password;
+  // expired → no valid session (stale/expired link).
+  const [phase, setPhase] = useState("loading");
 
   useEffect(() => {
     let active = true;
-    // The one-time token already signed the invitee in, so the session carries
-    // their name (set on the invite) and email — use them to personalize.
-    supabase.auth.getUser().then(({ data }) => {
-      if (!active) return;
+    (async () => {
+      const { data } = await supabase.auth.getUser();
       const user = data?.user;
-      setIdentity({ name: user?.user_metadata?.full_name || "", email: user?.email || "" });
-    });
+      if (!active) return;
+
+      // No session means the link is expired or already used — don't offer a
+      // password form for a dead link.
+      if (!user) { setPhase("expired"); return; }
+
+      // If the account is already set up (a profile exists), an old invite link
+      // must NOT let anyone re-create the password. Attach any still-pending
+      // invite, then drop them into the app instead of the set-password screen.
+      const { data: profile } = await supabase
+        .from("profiles").select("id").eq("id", user.id).maybeSingle();
+      if (!active) return;
+      if (profile) {
+        try { await supabase.rpc("claim_company_invite"); } catch { /* already linked */ }
+        window.location.replace("/");
+        return;
+      }
+
+      // Genuinely new invitee with a valid link — let them set a password.
+      setIdentity({ name: user.user_metadata?.full_name || "", email: user.email || "" });
+      setPhase("form");
+    })();
     return () => { active = false; };
   }, []);
 
@@ -85,6 +106,30 @@ function AcceptInvite() {
         </div>
 
         <div className="px-8 pb-8 pt-6">
+          {phase === "loading" && (
+            <div className="flex items-center justify-center gap-2 py-10 text-sm font-semibold text-slate-500">
+              <Loader2 className="h-5 w-5 animate-spin" /> Checking your invitation…
+            </div>
+          )}
+
+          {phase === "expired" && (
+            <div className="py-4 text-center">
+              <h2 className="text-xl font-bold text-slate-900">This invitation can't be opened</h2>
+              <p className="mt-2 text-sm font-medium text-slate-500">
+                The link has expired or was already used. Invitation links work once — ask your company admin to resend your invite.
+              </p>
+              <button
+                type="button"
+                onClick={() => window.location.replace("/")}
+                className="mt-5 min-h-12 w-full rounded-xl bg-blue-700 text-sm font-bold text-white hover:bg-blue-800"
+              >
+                Go to sign in
+              </button>
+            </div>
+          )}
+
+          {phase === "form" && (
+          <>
           <div className="flex items-center gap-2 text-blue-700">
             <PartyPopper className="h-5 w-5" />
             <span className="text-xs font-bold uppercase tracking-wide">You're invited</span>
@@ -143,6 +188,8 @@ function AcceptInvite() {
               {busy ? <><Loader2 className="h-4 w-4 animate-spin" />Setting up your account…</> : "Create account & continue"}
             </button>
           </form>
+          </>
+          )}
         </div>
       </div>
     </div>
