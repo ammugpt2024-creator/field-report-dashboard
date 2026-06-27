@@ -78,6 +78,9 @@ const MODULE_LEVELS = [
 ];
 const moduleLevelLabel = (v) => MODULE_LEVELS.find((l) => l.value === v)?.label || "None";
 const LEVEL_ORDER = ["none", "view", "create_edit", "approve", "manage"];
+// A member only truly counts as active once they've claimed their invite (have a
+// linked account). Until then they're "invited" regardless of the status column.
+const displayStatus = (member) => (member.user_id ? member.status : "invited");
 
 // A permissions object covering every module (missing modules default to none).
 function fullPerms(partial = {}) {
@@ -563,14 +566,14 @@ export default function CompanyAdminDashboard() {
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <p className="truncate text-sm font-bold text-slate-900">{member.full_name || member.invited_email || "—"}</p>
-                      <RowStatus status={member.status} />
+                      <RowStatus status={displayStatus(member)} />
                     </div>
                     <p className="truncate text-xs font-medium text-slate-400">
                       {roleLabel(member.role)} · {member.invited_email}
                       {member.user_id ? ` · ${assignments.filter((a) => a.user_id === member.user_id).length} project(s)` : ""}
                     </p>
                   </div>
-                  {member.status === "invited" && (
+                  {!member.user_id && (
                     <SmallButton onClick={() => handleResend(member)} disabled={resendingId === member.id} className="border-blue-200 text-blue-700 hover:bg-blue-50">
                       {resendingId === member.id ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />Sending…</> : <><Mail className="h-3.5 w-3.5" />Resend</>}
                     </SmallButton>
@@ -1136,7 +1139,7 @@ function ManageProjectModal({ project, company, roster, roles, assignments, onCl
                 <input value={fields[key]} onChange={(e) => setFields({ ...fields, [key]: e.target.value })} className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 px-3 text-sm font-semibold outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" /></label>
             ))}
           </div>
-          <SmallButton onClick={saveDetails} disabled={busy} className="mt-2 border-blue-200 bg-blue-700 text-white hover:bg-blue-800">Save details</SmallButton>
+          <button type="button" onClick={saveDetails} disabled={busy} className="mt-2 inline-flex min-h-9 items-center rounded-lg bg-blue-700 px-3 text-xs font-bold text-white hover:bg-blue-800 disabled:opacity-60">Save details</button>
 
           {/* Team */}
           <p className="mt-6 text-xs font-bold uppercase tracking-wide text-slate-500">Team</p>
@@ -1261,7 +1264,7 @@ function ManageMemberModal({ member, company, projects, roles, assignments, onCl
             <InitialAvatar name={member.full_name || member.invited_email} color={company.brand_color || "#1d4ed8"} className="h-10 w-10 text-sm" />
             <div>
               <h3 className="text-lg font-bold text-slate-900">{member.full_name || member.invited_email}</h3>
-              <p className="text-xs font-medium text-slate-500">{member.invited_email} · <span className="capitalize">{member.status}</span></p>
+              <p className="text-xs font-medium text-slate-500">{member.invited_email} · <span className="capitalize">{displayStatus(member)}</span></p>
             </div>
           </div>
           <button type="button" onClick={onClose} className="rounded-full border border-slate-200 p-2 text-slate-500 hover:bg-slate-50"><X className="h-4 w-4" /></button>
@@ -1281,7 +1284,7 @@ function ManageMemberModal({ member, company, projects, roles, assignments, onCl
               </select></label>
           </div>
           <div className="mt-2 flex flex-wrap gap-2">
-            <SmallButton onClick={saveDetails} disabled={busy} className="border-blue-200 bg-blue-700 text-white hover:bg-blue-800">Save details</SmallButton>
+            <button type="button" onClick={saveDetails} disabled={busy} className="inline-flex min-h-9 items-center rounded-lg bg-blue-700 px-3 text-xs font-bold text-white hover:bg-blue-800 disabled:opacity-60">Save details</button>
             <SmallButton onClick={toggleStatus} disabled={busy} className={member.status === "disabled" ? "" : "border-amber-200 text-amber-700 hover:bg-amber-50"}>
               {member.status === "disabled" ? "Enable" : "Disable"}
             </SmallButton>
@@ -1290,7 +1293,10 @@ function ManageMemberModal({ member, company, projects, roles, assignments, onCl
           {/* Project assignments */}
           <p className="mt-6 text-xs font-bold uppercase tracking-wide text-slate-500">Project access</p>
           {!member.user_id ? (
-            <p className="mt-2 rounded-xl bg-slate-50 px-3 py-2.5 text-xs font-medium text-slate-500">Project access can be set once {member.full_name || "they"} accept the invite and sign in.</p>
+            <div className="mt-2 flex items-center justify-between gap-3 rounded-xl bg-amber-50 px-3 py-2.5">
+              <span className="text-xs font-medium text-amber-700">{member.full_name || "They"} haven't accepted the invite yet, so they have no account to assign. Project access unlocks once they sign in.</span>
+              <SmallButton onClick={() => run(() => resendInvite(company.id, member))} disabled={busy} className="shrink-0 border-amber-200 text-amber-700 hover:bg-amber-100"><Mail className="h-3.5 w-3.5" />Resend</SmallButton>
+            </div>
           ) : (
             <>
               <div className="mt-2 divide-y divide-slate-100 rounded-xl border border-slate-200">
