@@ -332,6 +332,11 @@ export default function CompanyAdminDashboard() {
     return m?.full_name || m?.invited_email || "Member";
   };
 
+  async function setReviewer(assignmentId, reviewerId) {
+    try { await updateAssignmentReviewer(company.id, assignmentId, reviewerId || null); await refresh(); }
+    catch (err) { window.alert(err.message || "Could not set the reviewer."); }
+  }
+
   async function saveProfile(event) {
     event.preventDefault();
     await updateCompanyProfile(company.id, profileDraft, {
@@ -682,41 +687,41 @@ export default function CompanyAdminDashboard() {
 
         {(showAll || section === "org") && (
           <SectionCard icon={Network} title="Reporting Structure" count={projects.length}>
-            <p className="mb-3 text-xs font-medium text-slate-400">Who reviews whose work, per project. Set the reviewer in Projects → Manage → a person's Access panel.</p>
+            <p className="mb-3 text-xs font-medium text-slate-400">Set who reviews each person's work, per project — pick their lead in the “Reviewed by” column. Unassigned people fall back to the company default reviewer.</p>
             <div className="space-y-4">
               {projects.map((project) => {
                 const team = assignments.filter((a) => a.project_id === project.id);
                 if (!team.length) return null;
-                const isLead = (a) => ["project_manager", "deputy_project_manager"].includes(a.assignment_role);
-                const leads = team.filter(isLead);
-                const members = team.filter((a) => !isLead(a));
-                const reportsTo = (uid) => members.filter((m) => m.reviewer_user_id === uid);
-                const unassigned = members.filter((m) => !m.reviewer_user_id);
+                const leadRoles = ["project_manager", "deputy_project_manager", "inspector"];
+                const leadCandidates = team.filter((a) => leadRoles.includes(a.assignment_role));
                 return (
                   <div key={project.id} className="rounded-2xl border border-slate-200 p-3">
                     <p className="flex items-center gap-2 text-sm font-bold text-slate-900"><FolderKanban className="h-4 w-4 text-slate-400" />{project.project_name}</p>
-                    <div className="mt-2 space-y-3">
-                      {leads.length ? leads.map((lead) => (
-                        <div key={lead.id} className="rounded-xl bg-blue-50/60 p-2.5">
-                          <p className="text-sm font-bold text-blue-800">{nameOf(lead.user_id)} <span className="text-xs font-medium text-blue-500">· {roleLabel(lead.assignment_role)} (lead){lead.reviewer_user_id ? ` · reports to ${nameOf(lead.reviewer_user_id)}` : ""}</span></p>
-                          <div className="mt-1 space-y-0.5 border-l-2 border-blue-200 pl-3">
-                            {reportsTo(lead.user_id).length ? reportsTo(lead.user_id).map((m) => (
-                              <p key={m.id} className="text-sm font-semibold text-slate-700">{nameOf(m.user_id)} <span className="text-xs font-medium text-slate-400">· {roleLabel(m.assignment_role)}</span></p>
-                            )) : <p className="text-xs font-medium text-slate-400">No one reports to them yet.</p>}
+                    <div className="mt-2 divide-y divide-slate-100">
+                      {team.map((a) => {
+                        const isLead = leadRoles.includes(a.assignment_role);
+                        return (
+                          <div key={a.id} className="flex items-center justify-between gap-3 py-2">
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-semibold text-slate-800">{nameOf(a.user_id)} {isLead && <span className="rounded-full bg-blue-50 px-1.5 py-0.5 text-[10px] font-bold text-blue-700">LEAD</span>}</p>
+                              <p className="truncate text-xs font-medium text-slate-400">{roleLabel(a.assignment_role)}</p>
+                            </div>
+                            <label className="flex shrink-0 items-center gap-2">
+                              <span className="text-[11px] font-semibold text-slate-500">Reviewed by</span>
+                              <select
+                                value={a.reviewer_user_id || ""}
+                                onChange={(e) => setReviewer(a.id, e.target.value)}
+                                className="min-h-9 rounded-lg border border-slate-300 bg-white px-2 text-xs font-semibold"
+                              >
+                                <option value="">Company default</option>
+                                {leadCandidates.filter((l) => l.user_id !== a.user_id).map((l) => (
+                                  <option key={l.user_id} value={l.user_id}>{nameOf(l.user_id)}</option>
+                                ))}
+                              </select>
+                            </label>
                           </div>
-                        </div>
-                      )) : <p className="rounded-xl bg-slate-50 px-3 py-2 text-xs font-medium text-slate-500">No project manager assigned to this project yet.</p>}
-                      {unassigned.length > 0 && (
-                        <div className="rounded-xl border border-amber-200 bg-amber-50 p-2.5">
-                          <p className="text-xs font-bold text-amber-700">Not yet assigned a reviewer</p>
-                          <div className="mt-1 space-y-0.5 border-l-2 border-amber-200 pl-3">
-                            {unassigned.map((m) => (
-                              <p key={m.id} className="text-sm font-semibold text-slate-700">{nameOf(m.user_id)} <span className="text-xs font-medium text-slate-400">· {roleLabel(m.assignment_role)}</span></p>
-                            ))}
-                          </div>
-                          <p className="mt-1.5 text-[11px] font-medium text-amber-600">Set “Reviewed by” on each person's Access panel to put them under a lead. Until then their reports go to the company default reviewer.</p>
-                        </div>
-                      )}
+                        );
+                      })}
                     </div>
                   </div>
                 );
