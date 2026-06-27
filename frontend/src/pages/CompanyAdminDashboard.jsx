@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useLocation } from "react-router-dom";
 import {
   Building2, CreditCard, FileText, FolderKanban, Lock, Plus, ShieldCheck, Upload, Users, Wrench, X,
-  Mail, Check, Loader2, UserPlus, AtSign, Settings2, Trash2, FolderPlus
+  Mail, Check, Loader2, UserPlus, AtSign, Settings2, Trash2, FolderPlus, Network
 } from "lucide-react";
 import { supabase } from "../services/supabase";
 import {
@@ -297,6 +297,10 @@ export default function CompanyAdminDashboard() {
   const dpmCandidates = assignableMembers.filter((m) => ["company_admin", "project_manager", "deputy_project_manager"].includes(m.role));
   const techCandidates = assignableMembers.filter((m) => ["technician", "inspector", "lab_technician"].includes(m.role));
   const memberLabel = (m) => `${m.full_name || m.invited_email}${m.role ? ` · ${m.role.replace(/_/g, " ")}` : ""}`;
+  const nameOf = (uid) => {
+    const m = context.roster.find((r) => r.user_id === uid);
+    return m?.full_name || m?.invited_email || "Member";
+  };
 
   async function saveProfile(event) {
     event.preventDefault();
@@ -642,6 +646,56 @@ export default function CompanyAdminDashboard() {
                 </div>
               ))}
               {!roles.length && <p className="py-3 text-sm font-semibold text-slate-500">No role templates yet.</p>}
+            </div>
+          </SectionCard>
+        )}
+
+        {(showAll || section === "org") && (
+          <SectionCard icon={Network} title="Reporting Structure" count={projects.length}>
+            <p className="mb-3 text-xs font-medium text-slate-400">Who reviews whose work, per project. Set the reviewer in Projects → Manage → a person's Access panel.</p>
+            <div className="space-y-4">
+              {projects.map((project) => {
+                const team = assignments.filter((a) => a.project_id === project.id);
+                if (!team.length) return null;
+                const byReviewer = new Map();
+                const unrouted = [];
+                team.forEach((a) => {
+                  if (a.reviewer_user_id) {
+                    if (!byReviewer.has(a.reviewer_user_id)) byReviewer.set(a.reviewer_user_id, []);
+                    byReviewer.get(a.reviewer_user_id).push(a);
+                  } else {
+                    unrouted.push(a);
+                  }
+                });
+                return (
+                  <div key={project.id} className="rounded-2xl border border-slate-200 p-3">
+                    <p className="flex items-center gap-2 text-sm font-bold text-slate-900"><FolderKanban className="h-4 w-4 text-slate-400" />{project.project_name}</p>
+                    <div className="mt-2 space-y-3">
+                      {Array.from(byReviewer.entries()).map(([reviewerId, reports]) => (
+                        <div key={reviewerId} className="rounded-xl bg-slate-50 p-2.5">
+                          <p className="text-xs font-bold text-blue-700">{nameOf(reviewerId)} <span className="font-medium text-slate-400">reviews</span></p>
+                          <div className="mt-1 space-y-0.5 border-l-2 border-slate-200 pl-3">
+                            {reports.map((a) => (
+                              <p key={a.id} className="text-sm font-semibold text-slate-700">{nameOf(a.user_id)} <span className="text-xs font-medium text-slate-400">· {roleLabel(a.assignment_role)}</span></p>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                      {unrouted.length > 0 && (
+                        <div className="rounded-xl bg-slate-50 p-2.5">
+                          <p className="text-xs font-bold text-slate-500">Company default reviewer <span className="font-medium text-slate-400">reviews</span></p>
+                          <div className="mt-1 space-y-0.5 border-l-2 border-slate-200 pl-3">
+                            {unrouted.map((a) => (
+                              <p key={a.id} className="text-sm font-semibold text-slate-700">{nameOf(a.user_id)} <span className="text-xs font-medium text-slate-400">· {roleLabel(a.assignment_role)}</span></p>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+              {!assignments.length && <p className="py-3 text-sm font-semibold text-slate-500">No project assignments yet — add people to projects to build the reporting structure.</p>}
             </div>
           </SectionCard>
         )}
