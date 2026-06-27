@@ -135,7 +135,7 @@ function ModulePermsGrid({ permissions, onChange, disabled }) {
 }
 
 // Role-template dropdown that, on pick, returns the template's permissions.
-function RoleTemplatePicker({ roles, value, onPick, label = "Start from preset" }) {
+function RoleTemplatePicker({ roles, value, onPick, label = "Quick-fill access from" }) {
   return (
     <label className="block"><span className="text-xs font-semibold text-slate-600">{label}</span>
       <select
@@ -149,6 +149,7 @@ function RoleTemplatePicker({ roles, value, onPick, label = "Start from preset" 
         <option value="">Custom…</option>
         {roles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
       </select>
+      <span className="mt-1 block text-[11px] font-medium text-slate-400">Only fills the access levels below — doesn't change their role.</span>
     </label>
   );
 }
