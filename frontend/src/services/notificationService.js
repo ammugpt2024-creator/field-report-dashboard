@@ -181,6 +181,28 @@ export async function resolveManagerForProject(projectId) {
   return null;
 }
 
+// Resolve the reviewer the admin set for this submitter on this project
+// (project_assignments.reviewer_user_id). Returns { email, name } or null so
+// the caller falls back to the company default QC recipient.
+export async function resolveAssignmentReviewer(projectId, submitterUserId) {
+  if (!projectId || !submitterUserId) return null;
+  const { data: asg } = await supabase
+    .from('project_assignments')
+    .select('reviewer_user_id')
+    .eq('project_id', projectId)
+    .eq('user_id', submitterUserId)
+    .maybeSingle();
+  const reviewerId = asg?.reviewer_user_id;
+  if (!reviewerId) return null;
+  const { data: prof } = await supabase
+    .from('profiles').select('email, full_name').eq('id', reviewerId).maybeSingle();
+  if (prof?.email) return { id: reviewerId, email: prof.email, name: prof.full_name || 'Reviewer' };
+  const { data: cu } = await supabase
+    .from('company_users').select('invited_email, full_name').eq('user_id', reviewerId).maybeSingle();
+  if (cu?.invited_email) return { id: reviewerId, email: cu.invited_email, name: cu.full_name || 'Reviewer' };
+  return { id: reviewerId, email: '', name: 'Reviewer' };
+}
+
 // Org-level fallback when a project has no manager assigned.
 export async function resolveFallbackManager() {
   const { data: managerProfiles } = await supabase
@@ -394,12 +416,23 @@ export async function sendDailyLogReviewEmail(log, { pdfBlob = null, pdfUrl = ''
   const { subject, html } = buildDailyLogReviewEmail({ log, reviewUrl, pdfUrl });
   const projectPart = String(log.projectNumber || log.project_number || 'project').replace(/[^a-zA-Z0-9_.-]/g, '_');
   const datePart = String(log.date || '').replace(/[^0-9-]/g, '') || 'date';
+
+  // Route to the reviewer the admin assigned to this submitter on this project;
+  // fall back to the company QC recipient when none is set.
+  let toEmail = recipientEmail;
+  if (!toEmail) {
+    const { data: auth } = await supabase.auth.getUser();
+    const submitterId = log.technicianId || log.technician_id || auth?.user?.id;
+    const reviewer = await resolveAssignmentReviewer(log.projectId || log.project_id, submitterId);
+    if (reviewer?.email) toEmail = reviewer.email;
+  }
+
   return queueAndSendNotification({
     reportId: null,
-    recipientEmail,
-    // The QC reviewer is the project manager — resolved from the profiles
-    // table by role at send time rather than hardcoded here.
-    recipientRole: 'qc_manager',
+    recipientEmail: toEmail,
+    // Only fall back to the role-based QC recipient when no specific reviewer
+    // was resolved for this submitter/project.
+    recipientRole: toEmail ? '' : 'qc_manager',
     subject,
     html,
     notificationType: 'daily_log_review_request',

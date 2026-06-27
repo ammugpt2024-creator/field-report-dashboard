@@ -34,7 +34,7 @@ import { workflow_validation } from '../configs/concreteTestLogValidation';
 import { scanConcreteTicket } from '../services/ticketScanner';
 import { getDailyWeatherSummary } from '../services/weatherService';
 import { addReviewHistory } from '../services/auditService';
-import { buildQcReviewEmail, queueAndSendNotification } from '../services/notificationService';
+import { buildQcReviewEmail, queueAndSendNotification, resolveAssignmentReviewer } from '../services/notificationService';
 import { attachConcreteReportToActivity } from '../services/dailyLogService';
 import DigitalSignaturePad from '../components/SignaturePad';
 import StatusBadge from '../components/StatusBadge';
@@ -2901,16 +2901,21 @@ function ConcreteTestLog() {
         .from('profiles')
         .select('*')
         .in('role', ['qc', 'qc_approver', 'qc_manager', 'admin']);
+      // Prefer the reviewer the admin set for this technician on this project;
+      // otherwise fall back to a QC role holder.
+      const projectReviewer = await resolveAssignmentReviewer(projectId, session?.user?.id);
       const assignedReviewer = (qcProfiles || []).find((item) => item.role === 'qc_approver') ||
         (qcProfiles || []).find((item) => item.role === 'qc') ||
         (qcProfiles || []).find((item) => item.role === 'qc_manager') ||
         (qcProfiles || [])[0] ||
         null;
+      const reviewerId = projectReviewer?.id || assignedReviewer?.id || null;
+      const reviewerEmail = projectReviewer?.email || assignedReviewer?.email || null;
       await runMutationWithColumnFallback(
         {
           status: submittingStatus,
           is_locked: true,
-          qc_assigned_to: assignedReviewer?.id || null,
+          qc_assigned_to: reviewerId,
           technician_signature_url: signatureUrl,
           technician_signature_storage_path: signaturePath,
           submitted_at: submittedAt,
@@ -2951,7 +2956,7 @@ function ConcreteTestLog() {
       });
       await queueAndSendNotification({
         reportId: logId,
-        recipientEmail: assignedReviewer?.email || qcRecipients[0] || 'ammugpt2024@gmail.com',
+        recipientEmail: reviewerEmail || qcRecipients[0] || 'ammugpt2024@gmail.com',
         subject: qcEmail.subject,
         html: qcEmail.html,
         notificationType: 'qc_review_required',
