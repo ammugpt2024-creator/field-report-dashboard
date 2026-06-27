@@ -74,12 +74,15 @@ export function AuthProvider({ children }) {
   const [company, setCompany] = useState(null);
   const [companyRole, setCompanyRole] = useState("");
   const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
+  // Per-project module permissions for the signed-in user: { [projectId]: {module: level} }
+  const [modulePermissions, setModulePermissions] = useState({});
 
   const loadTenantContext = useCallback(async (userId) => {
     if (!userId) {
       setCompany(null);
       setCompanyRole("");
       setIsPlatformAdmin(false);
+      setModulePermissions({});
       return;
     }
     try {
@@ -93,6 +96,12 @@ export function AuthProvider({ children }) {
       ]);
       setCompanyRole(membershipRes.data?.role || "");
       setIsPlatformAdmin(Boolean(platformRes.data));
+      // Load this user's per-project module permissions for app-side gating.
+      const { data: asg } = await supabase
+        .from("project_assignments").select("project_id, permissions").eq("user_id", userId);
+      const permMap = {};
+      (asg || []).forEach((a) => { permMap[String(a.project_id)] = a.permissions || {}; });
+      setModulePermissions(permMap);
       if (membershipRes.data?.company_id) {
         const { data: companyRow } = await supabase
           .from("companies")
@@ -213,6 +222,7 @@ export function AuthProvider({ children }) {
         companyId: company?.id || profile?.company_id || null,
         companyRole,
         isPlatformAdmin,
+        modulePermissions,
         companyName,
         companyBranding,
         loading

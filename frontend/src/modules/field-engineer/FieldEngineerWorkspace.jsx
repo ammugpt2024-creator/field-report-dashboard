@@ -51,6 +51,8 @@ import {
   TIME_CARD_STATUS
 } from "../../services/timeCardService";
 import { supabase } from "../../services/supabase";
+import { useAuth } from "../../context/AuthContext";
+import { canAccessModule, moduleLevelForProject, meetsLevel } from "../../utils/moduleAccess";
 import { formatDateTime } from "./fieldEngineerData";
 import { fetchTimesheetStatusUpdates, fetchTimesheetsForTechnician } from "../../services/timesheetSyncService";
 import {
@@ -397,7 +399,7 @@ function ActionTimeCardRow({ card, onOpen }) {
 
 
 
-function DashboardOverview({ logCollections, timeCardCollections, onOpenLog, onOpenTimeCard, onCreateLog, navigate, assignedProjects = [] }) {
+function DashboardOverview({ logCollections, timeCardCollections, onOpenLog, onOpenTimeCard, onCreateLog, navigate, assignedProjects = [], canCreateDailyLog = true, canCreateTimesheet = true }) {
   // Collapsed by default — expand on demand via the +/- control.
   const [activityCollapsed, setActivityCollapsed] = useState(true);
   const actionRequiredLogs = [...logCollections.returnedLogs, ...logCollections.draftLogs];
@@ -493,20 +495,24 @@ function DashboardOverview({ logCollections, timeCardCollections, onOpenLog, onO
           <h1 className="text-xl font-bold tracking-tight text-slate-900 sm:text-2xl">Dashboard</h1>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={onCreateLog}
-            className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-accent-500 px-3 text-sm font-semibold text-white transition hover:bg-accent-600"
-          >
-            <Plus className="h-4 w-4" /> Daily Log
-          </button>
-          <button
-            type="button"
-            onClick={() => navigate("/timesheets")}
-            className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-          >
-            <Plus className="h-4 w-4" /> Timesheet
-          </button>
+          {canCreateDailyLog && (
+            <button
+              type="button"
+              onClick={onCreateLog}
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-accent-500 px-3 text-sm font-semibold text-white transition hover:bg-accent-600"
+            >
+              <Plus className="h-4 w-4" /> Daily Log
+            </button>
+          )}
+          {canCreateTimesheet && (
+            <button
+              type="button"
+              onClick={() => navigate("/timesheets")}
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+            >
+              <Plus className="h-4 w-4" /> Timesheet
+            </button>
+          )}
         </div>
       </section>
 
@@ -632,13 +638,15 @@ function DashboardOverview({ logCollections, timeCardCollections, onOpenLog, onO
                 <span className="h-2 w-2 rounded-full bg-emerald-500" />
                 You're all caught up — no Daily Logs or Timesheets need your action.
               </p>
-              <button
-                type="button"
-                onClick={onCreateLog}
-                className="text-[13px] font-semibold text-blue-700 hover:text-blue-800"
-              >
-                Start today's Daily Log →
-              </button>
+              {canCreateDailyLog && (
+                <button
+                  type="button"
+                  onClick={onCreateLog}
+                  className="text-[13px] font-semibold text-blue-700 hover:text-blue-800"
+                >
+                  Start today's Daily Log →
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -4002,6 +4010,9 @@ export default function FieldEngineerWorkspace({
   error,
   navigate
 }) {
+  const { companyRole, isPlatformAdmin, modulePermissions } = useAuth();
+  const canCreateDailyLog = canAccessModule(modulePermissions, companyRole, isPlatformAdmin, "daily_logs", "create_edit");
+  const canCreateTimesheet = canAccessModule(modulePermissions, companyRole, isPlatformAdmin, "timesheets", "create_edit");
   const [dailyLogs, setDailyLogs] = useState([]);
   const [activeLog, setActiveLog] = useState(null);
   const [timeCards, setTimeCards] = useState([]);
@@ -4167,12 +4178,15 @@ export default function FieldEngineerWorkspace({
   }
 
   function createLog() {
-    // Resolve a real project for the new log — the assigned one drives it.
-    const fallbackProject = projectOptions[0] || {};
-    const resolvedProjectId = defaultProjectId || fallbackProject.id || null;
-    const resolvedProjectLabel = projectLabel || fallbackProject.name || "";
+    // Only offer projects where the user may create daily logs.
+    const dailyLogProjects = projectOptions.filter((p) =>
+      meetsLevel(moduleLevelForProject(modulePermissions, companyRole, isPlatformAdmin, p.id, "daily_logs"), "create_edit"));
+    const fallbackProject = dailyLogProjects[0] || {};
+    const defaultAllowed = dailyLogProjects.some((p) => String(p.id) === String(defaultProjectId));
+    const resolvedProjectId = (defaultAllowed && defaultProjectId) || fallbackProject.id || null;
+    const resolvedProjectLabel = (defaultAllowed && projectLabel) || fallbackProject.name || "";
     if (!resolvedProjectId) {
-      window.alert("You don't have a project assigned yet. Ask your company admin to add you to a project before creating a daily log.");
+      window.alert("You don't have create access to Daily Logs on any assigned project. Ask your company admin for access.");
       return;
     }
     const log = saveDailyLog(createDailyLog({
@@ -4946,6 +4960,8 @@ export default function FieldEngineerWorkspace({
             logCollections={logCollections}
             timeCardCollections={timeCardCollections}
             assignedProjects={projectOptions}
+            canCreateDailyLog={canCreateDailyLog}
+            canCreateTimesheet={canCreateTimesheet}
             onOpenLog={openLog}
             onOpenTimeCard={openTimeCard}
             onCreateLog={createLog}

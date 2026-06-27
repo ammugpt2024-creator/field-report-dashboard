@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { isQcRole, ROLES } from "../utils/permissions";
+import { canAccessModule } from "../utils/moduleAccess";
 import { MODULE_NAMES } from "../config/branding";
 import { FIELD_ENGINEER_NAV } from "../modules/field-engineer/fieldEngineerConfig";
 
@@ -122,9 +123,13 @@ function toGroups(navItems) {
 }
 
 function Sidebar() {
-  const { role, isPlatformAdmin, companyRole } = useAuth();
+  const { role, isPlatformAdmin, companyRole, modulePermissions } = useAuth();
   const location = useLocation();
-  const navItems = navByRole[getNavKey(role, { isPlatformAdmin, companyRole })] || navByRole.client;
+  const rawNav = navByRole[getNavKey(role, { isPlatformAdmin, companyRole })] || navByRole.client;
+  // Hide nav entries for modules the user has no access to on any project
+  // (section headers carry a module too, so an empty group disappears cleanly).
+  const navItems = rawNav.filter((item) =>
+    !item.module || canAccessModule(modulePermissions, companyRole, isPlatformAdmin, item.module, "view"));
   const groups = toGroups(navItems);
   const [collapsed, setCollapsed] = useState(() => new Set());
 
