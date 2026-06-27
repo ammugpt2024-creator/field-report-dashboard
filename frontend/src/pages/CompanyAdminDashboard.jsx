@@ -82,6 +82,14 @@ const LEVEL_ORDER = ["none", "view", "create_edit", "approve", "manage"];
 // A member only truly counts as active once they've claimed their invite (have a
 // linked account). Until then they're "invited" regardless of the status column.
 const displayStatus = (member) => (member.user_id ? member.status : "invited");
+// A person's role on a project follows their company role — no separate
+// per-project role to avoid contradicting it.
+function deriveAssignmentRole(companyRole) {
+  if (["company_admin", "project_manager"].includes(companyRole)) return "project_manager";
+  if (companyRole === "deputy_project_manager") return "deputy_project_manager";
+  if (companyRole === "inspector") return "inspector";
+  return "technician";
+}
 
 // A permissions object covering every module (missing modules default to none).
 function fullPerms(partial = {}) {
@@ -1111,7 +1119,6 @@ function ManageProjectModal({ project, company, roster, roles, assignments, onCl
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [addUserId, setAddUserId] = useState("");
-  const [addRole, setAddRole] = useState("technician");
   const [addRoleId, setAddRoleId] = useState("");
   const [addPerms, setAddPerms] = useState(() => fullPerms());
   const [editingId, setEditingId] = useState("");
@@ -1143,12 +1150,13 @@ function ManageProjectModal({ project, company, roster, roles, assignments, onCl
 
   async function addToTeam() {
     if (!addUserId) return;
+    const member = memberById(addUserId);
+    const assignmentRole = deriveAssignmentRole(member?.role);
     await run(async () => {
-      await assignUserToProject(company.id, project.id, addUserId, addRole, headlineAccessLevel(addPerms), addPerms);
+      await assignUserToProject(company.id, project.id, addUserId, assignmentRole, headlineAccessLevel(addPerms), addPerms);
       // Keep the denormalized PM on the project in sync for reports/PDFs.
-      if (addRole === "project_manager") {
-        const m = memberById(addUserId);
-        await updateProject(project, { project_manager_id: addUserId, project_manager_name: m?.full_name || null, project_manager_email: m?.invited_email || null });
+      if (assignmentRole === "project_manager") {
+        await updateProject(project, { project_manager_id: addUserId, project_manager_name: member?.full_name || null, project_manager_email: member?.invited_email || null });
       }
     });
     setAddUserId(""); setAddRoleId(""); setAddPerms(fullPerms());
@@ -1240,15 +1248,13 @@ function ManageProjectModal({ project, company, roster, roles, assignments, onCl
 
           {/* Add to team */}
           <div className="mt-3 grid grid-cols-2 gap-2 rounded-xl bg-slate-50 p-3">
-            <label className="col-span-2 block"><span className="text-xs font-semibold text-slate-600">Add person</span>
+            <label className="block"><span className="text-xs font-semibold text-slate-600">Add person</span>
               <select value={addUserId} onChange={(e) => setAddUserId(e.target.value)} className="mt-1 min-h-10 w-full rounded-lg border border-slate-300 bg-white px-2 text-sm font-semibold">
                 <option value="">Select a team member…</option>
                 {availableMembers.map((m) => <option key={m.user_id} value={m.user_id}>{m.full_name || m.invited_email} · {roleLabel(m.role)}</option>)}
-              </select></label>
-            <label className="block"><span className="text-xs font-semibold text-slate-600">On project as</span>
-              <select value={addRole} onChange={(e) => setAddRole(e.target.value)} className="mt-1 min-h-10 w-full rounded-lg border border-slate-300 bg-white px-2 text-sm font-semibold">
-                {["project_manager", "deputy_project_manager", "technician", "inspector"].map((r) => <option key={r} value={r}>{roleLabel(r)}</option>)}
-              </select></label>
+              </select>
+              <span className="mt-1 block text-[11px] font-medium text-slate-400">Joins as their company role{addUserId ? `: ${roleLabel(deriveAssignmentRole(memberById(addUserId)?.role))}` : ""}.</span>
+            </label>
             <div className="block"><RoleTemplatePicker roles={roles} value={addRoleId} onPick={(id, perms) => { setAddRoleId(id); if (perms) setAddPerms(perms); }} /></div>
             <div className="col-span-2">
               <span className="text-xs font-semibold text-slate-600">Module access (override per project)</span>
@@ -1294,12 +1300,6 @@ function ManageMemberModal({ member, company, projects, roles, assignments, onCl
 
   const assignedProjectIds = new Set(assignments.map((a) => a.project_id));
   const availableProjects = projects.filter((p) => !assignedProjectIds.has(p.id));
-
-  function deriveAssignmentRole(r) {
-    if (["company_admin", "project_manager"].includes(r)) return "project_manager";
-    if (r === "deputy_project_manager") return "deputy_project_manager";
-    return "technician";
-  }
 
   async function run(fn) {
     setBusy(true); setError("");
