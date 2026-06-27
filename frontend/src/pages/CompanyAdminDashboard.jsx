@@ -657,38 +657,34 @@ export default function CompanyAdminDashboard() {
               {projects.map((project) => {
                 const team = assignments.filter((a) => a.project_id === project.id);
                 if (!team.length) return null;
-                const byReviewer = new Map();
-                const unrouted = [];
-                team.forEach((a) => {
-                  if (a.reviewer_user_id) {
-                    if (!byReviewer.has(a.reviewer_user_id)) byReviewer.set(a.reviewer_user_id, []);
-                    byReviewer.get(a.reviewer_user_id).push(a);
-                  } else {
-                    unrouted.push(a);
-                  }
-                });
+                const isLead = (a) => ["project_manager", "deputy_project_manager"].includes(a.assignment_role);
+                const leads = team.filter(isLead);
+                const members = team.filter((a) => !isLead(a));
+                const reportsTo = (uid) => members.filter((m) => m.reviewer_user_id === uid);
+                const unassigned = members.filter((m) => !m.reviewer_user_id);
                 return (
                   <div key={project.id} className="rounded-2xl border border-slate-200 p-3">
                     <p className="flex items-center gap-2 text-sm font-bold text-slate-900"><FolderKanban className="h-4 w-4 text-slate-400" />{project.project_name}</p>
                     <div className="mt-2 space-y-3">
-                      {Array.from(byReviewer.entries()).map(([reviewerId, reports]) => (
-                        <div key={reviewerId} className="rounded-xl bg-slate-50 p-2.5">
-                          <p className="text-xs font-bold text-blue-700">{nameOf(reviewerId)} <span className="font-medium text-slate-400">reviews</span></p>
-                          <div className="mt-1 space-y-0.5 border-l-2 border-slate-200 pl-3">
-                            {reports.map((a) => (
-                              <p key={a.id} className="text-sm font-semibold text-slate-700">{nameOf(a.user_id)} <span className="text-xs font-medium text-slate-400">· {roleLabel(a.assignment_role)}</span></p>
-                            ))}
+                      {leads.length ? leads.map((lead) => (
+                        <div key={lead.id} className="rounded-xl bg-blue-50/60 p-2.5">
+                          <p className="text-sm font-bold text-blue-800">{nameOf(lead.user_id)} <span className="text-xs font-medium text-blue-500">· {roleLabel(lead.assignment_role)} (lead){lead.reviewer_user_id ? ` · reports to ${nameOf(lead.reviewer_user_id)}` : ""}</span></p>
+                          <div className="mt-1 space-y-0.5 border-l-2 border-blue-200 pl-3">
+                            {reportsTo(lead.user_id).length ? reportsTo(lead.user_id).map((m) => (
+                              <p key={m.id} className="text-sm font-semibold text-slate-700">{nameOf(m.user_id)} <span className="text-xs font-medium text-slate-400">· {roleLabel(m.assignment_role)}</span></p>
+                            )) : <p className="text-xs font-medium text-slate-400">No one reports to them yet.</p>}
                           </div>
                         </div>
-                      ))}
-                      {unrouted.length > 0 && (
-                        <div className="rounded-xl bg-slate-50 p-2.5">
-                          <p className="text-xs font-bold text-slate-500">Company default reviewer <span className="font-medium text-slate-400">reviews</span></p>
-                          <div className="mt-1 space-y-0.5 border-l-2 border-slate-200 pl-3">
-                            {unrouted.map((a) => (
-                              <p key={a.id} className="text-sm font-semibold text-slate-700">{nameOf(a.user_id)} <span className="text-xs font-medium text-slate-400">· {roleLabel(a.assignment_role)}</span></p>
+                      )) : <p className="rounded-xl bg-slate-50 px-3 py-2 text-xs font-medium text-slate-500">No project manager assigned to this project yet.</p>}
+                      {unassigned.length > 0 && (
+                        <div className="rounded-xl border border-amber-200 bg-amber-50 p-2.5">
+                          <p className="text-xs font-bold text-amber-700">Not yet assigned a reviewer</p>
+                          <div className="mt-1 space-y-0.5 border-l-2 border-amber-200 pl-3">
+                            {unassigned.map((m) => (
+                              <p key={m.id} className="text-sm font-semibold text-slate-700">{nameOf(m.user_id)} <span className="text-xs font-medium text-slate-400">· {roleLabel(m.assignment_role)}</span></p>
                             ))}
                           </div>
+                          <p className="mt-1.5 text-[11px] font-medium text-amber-600">Set “Reviewed by” on each person's Access panel to put them under a lead. Until then their reports go to the company default reviewer.</p>
                         </div>
                       )}
                     </div>
