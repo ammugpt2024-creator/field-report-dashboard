@@ -20,6 +20,10 @@ import {
   removeProjectAssignment,
   updateProject,
   deleteProject,
+  listRoles,
+  createRole,
+  updateRole,
+  deleteRole,
   updateCompanyProfile,
   updateCompanyRow,
   listSupportRequests,
@@ -56,6 +60,23 @@ const ACCESS_LEVELS = [
   { value: "view_only", label: "View only", hint: "Read-only access to this project" }
 ];
 const CLIENT_TYPES = ["owner", "general_contractor", "agency", "utility", "developer", "other"];
+
+// The modules a role/assignment can grant access to, and the access ladder per
+// module. Used by the Roles editor and (next) per-project assignment overrides.
+const MODULES = [
+  { key: "daily_logs", label: "Daily Logs", icon: FileText },
+  { key: "timesheets", label: "Timesheets", icon: FileText },
+  { key: "field_test_reports", label: "Field Test Reports", icon: FileText },
+  { key: "lab_reports", label: "Lab Reports", icon: FileText }
+];
+const MODULE_LEVELS = [
+  { value: "none", label: "None" },
+  { value: "view", label: "View" },
+  { value: "create_edit", label: "Create & Edit" },
+  { value: "approve", label: "Approve" },
+  { value: "manage", label: "Manage" }
+];
+const moduleLevelLabel = (v) => MODULE_LEVELS.find((l) => l.value === v)?.label || "None";
 
 // Section panel with a header band (icon + uppercase label + count badge) to
 // match the Platform Admin console.
@@ -141,8 +162,10 @@ export default function CompanyAdminDashboard() {
   const [context, setContext] = useState({ company: null, subscription: null, settings: null, roster: [] });
   const [projects, setProjects] = useState([]);
   const [assignments, setAssignments] = useState([]);
+  const [roles, setRoles] = useState([]);
   const [manageMember, setManageMember] = useState(null);
   const [manageProject, setManageProject] = useState(null);
+  const [editRole, setEditRole] = useState(null);
   const [clients, setClients] = useState([]);
   const [equipment, setEquipment] = useState([]);
   const [labReports, setLabReports] = useState([]);
@@ -161,16 +184,18 @@ export default function CompanyAdminDashboard() {
     try {
       const ctx = await getMyCompanyContext();
       setContext(ctx);
-      const [projectRows, clientRows, equipmentRows, labRows, supportRows, assignmentRows] = await Promise.all([
+      const [projectRows, clientRows, equipmentRows, labRows, supportRows, assignmentRows, roleRows] = await Promise.all([
         supabase.from("projects").select("*").order("project_name").then((r) => r.data || []),
         listCompanyRows("clients"),
         listCompanyRows("equipment"),
         listCompanyRows("lab_reports"),
         listSupportRequests(),
-        listProjectAssignments()
+        listProjectAssignments(),
+        listRoles()
       ]);
       setProjects(projectRows);
       setAssignments(assignmentRows);
+      setRoles(roleRows);
       setClients(clientRows);
       setEquipment(equipmentRows);
       setLabReports(labRows);
@@ -233,6 +258,27 @@ export default function CompanyAdminDashboard() {
   function openInvite() {
     setInviteUi({ busy: false, error: "", sentEmail: "" });
     setInvite({ email: "", fullName: "", role: "technician" });
+  }
+
+  function openRoleEditor(role) {
+    setEditRole(role || {
+      name: "",
+      description: "",
+      permissions: MODULES.reduce((acc, m) => ({ ...acc, [m.key]: "none" }), {})
+    });
+  }
+
+  async function saveRole(draft) {
+    if (draft.id) await updateRole(company.id, draft.id, draft);
+    else await createRole(company.id, draft);
+    setEditRole(null);
+    await refresh();
+  }
+
+  async function removeRoleFn(role) {
+    if (!window.confirm(`Delete the "${role.name}" role template?`)) return;
+    try { await deleteRole(company.id, role.id); await refresh(); }
+    catch (err) { window.alert(err.message); }
   }
 
   async function handleResend(member) {
@@ -495,6 +541,37 @@ export default function CompanyAdminDashboard() {
                 </div>
               ))}
               {!projects.length && <p className="py-3 text-sm font-semibold text-slate-500">No projects yet.</p>}
+            </div>
+          </SectionCard>
+        )}
+
+        {(showAll || section === "roles") && (
+          <SectionCard
+            icon={ShieldCheck}
+            title="Roles & Permissions"
+            count={roles.length}
+            action={<SmallButton onClick={() => openRoleEditor(null)}><Plus className="h-3.5 w-3.5" />New role</SmallButton>}
+          >
+            <p className="mb-2 text-xs font-medium text-slate-400">Reusable templates that set what each module a person can access. Apply them when assigning people to a project (and override per project there).</p>
+            <div className="-my-1 divide-y divide-slate-100">
+              {roles.map((role) => (
+                <div key={role.id} className="flex items-center justify-between gap-3 py-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <p className="truncate text-sm font-bold text-slate-900">{role.name}</p>
+                      {role.is_system && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-500">Default</span>}
+                    </div>
+                    <p className="truncate text-xs font-medium text-slate-400">
+                      {MODULES.map((m) => `${m.label}: ${moduleLevelLabel(role.permissions?.[m.key] || "none")}`).join(" · ")}
+                    </p>
+                  </div>
+                  <SmallButton onClick={() => openRoleEditor(role)} className="border-slate-300 text-slate-700"><Settings2 className="h-3.5 w-3.5" />Edit</SmallButton>
+                  {!role.is_system && (
+                    <button type="button" onClick={() => removeRoleFn(role)} className="rounded-lg p-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600" aria-label="Delete role"><Trash2 className="h-4 w-4" /></button>
+                  )}
+                </div>
+              ))}
+              {!roles.length && <p className="py-3 text-sm font-semibold text-slate-500">No role templates yet.</p>}
             </div>
           </SectionCard>
         )}
@@ -812,6 +889,14 @@ export default function CompanyAdminDashboard() {
           />
         )}
 
+        {editRole && (
+          <RoleEditorModal
+            role={editRole}
+            onClose={() => setEditRole(null)}
+            onSave={saveRole}
+          />
+        )}
+
         {manageProject && (
           <ManageProjectModal
             project={projects.find((p) => p.id === manageProject.id) || manageProject}
@@ -825,6 +910,68 @@ export default function CompanyAdminDashboard() {
         )}
 
       </div>
+    </div>
+  );
+}
+
+// Create / edit a reusable role template: a name + a per-module access level.
+function RoleEditorModal({ role, onClose, onSave }) {
+  const [name, setName] = useState(role.name || "");
+  const [description, setDescription] = useState(role.description || "");
+  const [permissions, setPermissions] = useState(() =>
+    MODULES.reduce((acc, m) => ({ ...acc, [m.key]: role.permissions?.[m.key] || "none" }), {}));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  async function submit(event) {
+    event.preventDefault();
+    if (!name.trim()) { setError("Give the role a name."); return; }
+    setBusy(true); setError("");
+    try { await onSave({ ...role, name: name.trim(), description, permissions }); }
+    catch (err) { setError(err.message || "Could not save the role."); setBusy(false); }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/60 sm:items-center sm:p-4">
+      <form onSubmit={submit} className="flex max-h-[92vh] w-full max-w-lg flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl sm:rounded-3xl">
+        <div className="flex items-start justify-between gap-3 border-b border-slate-100 p-5">
+          <div className="flex items-center gap-3">
+            <div className="grid h-10 w-10 place-items-center rounded-xl bg-blue-50 text-blue-700"><ShieldCheck className="h-5 w-5" /></div>
+            <div>
+              <h3 className="text-lg font-bold text-slate-900">{role.id ? "Edit role" : "New role"}</h3>
+              <p className="text-xs font-medium text-slate-500">Set what this role can do in each module.</p>
+            </div>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-full border border-slate-200 p-2 text-slate-500 hover:bg-slate-50"><X className="h-4 w-4" /></button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-5">
+          {error && <p className="mb-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">{error}</p>}
+          <label className="block"><span className="text-xs font-semibold text-slate-600">Role name</span>
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Senior Technician" className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 px-3 text-sm font-semibold outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" /></label>
+          <label className="mt-3 block"><span className="text-xs font-semibold text-slate-600">Description</span>
+            <input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What this role is for" className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 px-3 text-sm font-semibold outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" /></label>
+
+          <p className="mt-5 text-xs font-bold uppercase tracking-wide text-slate-500">Module access</p>
+          <div className="mt-2 divide-y divide-slate-100 rounded-xl border border-slate-200">
+            {MODULES.map((m) => (
+              <div key={m.key} className="flex items-center justify-between gap-3 px-3 py-2.5">
+                <span className="text-sm font-semibold text-slate-700">{m.label}</span>
+                <select value={permissions[m.key]} onChange={(e) => setPermissions({ ...permissions, [m.key]: e.target.value })} className="min-h-9 rounded-lg border border-slate-300 bg-white px-2 text-xs font-semibold">
+                  {MODULE_LEVELS.map((lvl) => <option key={lvl.value} value={lvl.value}>{lvl.label}</option>)}
+                </select>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2 border-t border-slate-100 p-4">
+          <button type="button" onClick={onClose} className="min-h-11 rounded-xl border border-slate-300 text-sm font-bold text-slate-700 hover:bg-slate-50">Cancel</button>
+          <button type="submit" disabled={busy} className="flex min-h-11 items-center justify-center gap-2 rounded-xl bg-blue-700 text-sm font-bold text-white hover:bg-blue-800 disabled:opacity-60">
+            {busy ? <><Loader2 className="h-4 w-4 animate-spin" />Saving…</> : "Save role"}
+          </button>
+        </div>
+      </form>
     </div>
   );
 }

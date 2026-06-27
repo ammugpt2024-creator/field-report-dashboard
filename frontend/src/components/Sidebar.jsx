@@ -68,6 +68,7 @@ const navByRole = {
     { label: "Company Dashboard", path: "/company-admin", icon: LayoutDashboard },
     { label: "Projects", path: "/company-admin?section=projects", icon: FolderKanban },
     { label: "Employees", path: "/company-admin?section=employees", icon: Users },
+    { label: "Roles & Permissions", path: "/company-admin?section=roles", icon: ShieldCheck },
     { label: "Clients", path: "/company-admin?section=clients", icon: Building2 },
     { label: "Reports", path: "/manager/dashboard", icon: FileCheck2 },
     { label: "Timesheets", path: "/timesheets", icon: FileClock },

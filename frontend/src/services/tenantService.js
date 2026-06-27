@@ -515,10 +515,12 @@ export async function deleteProject(project) {
 
 // Project assignments for the whole company, joined with the project so the UI
 // can show "who is on what". Returns [] on error (e.g. RLS).
+const ASSIGNMENT_SELECT = 'id, project_id, user_id, assignment_role, access_level, permissions, projects(project_name, project_number)';
+
 export async function listProjectAssignments() {
   const { data, error } = await supabase
     .from('project_assignments')
-    .select('id, project_id, user_id, assignment_role, access_level, projects(project_name, project_number)');
+    .select(ASSIGNMENT_SELECT);
   if (error) {
     console.warn('Project assignments could not be loaded.', error.message);
     return [];
@@ -526,15 +528,23 @@ export async function listProjectAssignments() {
   return data || [];
 }
 
-export async function assignUserToProject(companyId, projectId, userId, assignmentRole, accessLevel) {
+export async function assignUserToProject(companyId, projectId, userId, assignmentRole, accessLevel, permissions = {}) {
   const { data, error } = await supabase
     .from('project_assignments')
-    .insert({ project_id: projectId, user_id: userId, assignment_role: assignmentRole, access_level: accessLevel })
-    .select('id, project_id, user_id, assignment_role, access_level, projects(project_name, project_number)')
+    .insert({ project_id: projectId, user_id: userId, assignment_role: assignmentRole, access_level: accessLevel, permissions })
+    .select(ASSIGNMENT_SELECT)
     .single();
   if (error) throw error;
-  logAuditEvent({ companyId, action: 'project_assignment_added', entityType: 'project_assignment', entityId: data.id, newValue: { projectId, userId, accessLevel } });
+  logAuditEvent({ companyId, action: 'project_assignment_added', entityType: 'project_assignment', entityId: data.id, newValue: { projectId, userId, permissions } });
   return data;
+}
+
+// Update a single module's access level on an assignment (merges into the
+// existing permissions map).
+export async function updateAssignmentPermissions(companyId, assignmentId, permissions) {
+  const { error } = await supabase.from('project_assignments').update({ permissions }).eq('id', assignmentId);
+  if (error) throw error;
+  logAuditEvent({ companyId, action: 'project_assignment_updated', entityType: 'project_assignment', entityId: assignmentId, newValue: { permissions } });
 }
 
 export async function updateAssignmentAccess(companyId, assignmentId, accessLevel) {
@@ -547,6 +557,36 @@ export async function removeProjectAssignment(companyId, assignmentId) {
   const { error } = await supabase.from('project_assignments').delete().eq('id', assignmentId);
   if (error) throw error;
   logAuditEvent({ companyId, action: 'project_assignment_removed', entityType: 'project_assignment', entityId: assignmentId });
+}
+
+// ── Role templates (company-level reusable permission presets) ───────────────
+export async function listRoles() {
+  const { data, error } = await supabase.from('roles').select('*').order('name');
+  if (error) { console.warn('Roles could not be loaded.', error.message); return []; }
+  return data || [];
+}
+
+export async function createRole(companyId, { name, description, permissions }) {
+  const { data, error } = await supabase
+    .from('roles').insert({ name, description: description || '', permissions: permissions || {} })
+    .select().single();
+  if (error) throw error;
+  logAuditEvent({ companyId, action: 'role_created', entityType: 'role', entityId: data.id, newValue: { name, permissions } });
+  return data;
+}
+
+export async function updateRole(companyId, roleId, { name, description, permissions }) {
+  const { error } = await supabase
+    .from('roles').update({ name, description: description || '', permissions: permissions || {} })
+    .eq('id', roleId);
+  if (error) throw error;
+  logAuditEvent({ companyId, action: 'role_updated', entityType: 'role', entityId: roleId, newValue: { name, permissions } });
+}
+
+export async function deleteRole(companyId, roleId) {
+  const { error } = await supabase.from('roles').delete().eq('id', roleId);
+  if (error) throw error;
+  logAuditEvent({ companyId, action: 'role_deleted', entityType: 'role', entityId: roleId });
 }
 
 // Generic company-scoped CRUD used by the Company Admin sections.
