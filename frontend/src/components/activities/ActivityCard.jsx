@@ -37,6 +37,7 @@ export default function ActivityCard({
   onAddAsphaltReport,
   onAddInfiltrationReport,
   onAddProctorReport,
+  onAddSamplesReport,
   onViewConcreteReport,
   onEditConcreteReport,
   onRemoveConcreteReport
@@ -110,6 +111,7 @@ export default function ActivityCard({
                   onAddAsphaltReport={onAddAsphaltReport}
                   onAddInfiltrationReport={onAddInfiltrationReport}
                   onAddProctorReport={onAddProctorReport}
+                  onAddSamplesReport={onAddSamplesReport}
                 />
               )}
               {!showReportPicker && (

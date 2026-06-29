@@ -5,7 +5,7 @@ import { saveTimeCard, WEEK_DAYS, getRowTotal } from "./timeCardService.js";
 import { getStorageConfigError, logStorageStep } from "./storageDiagnosticsService.js";
 
 const TIME_CARD_PDF_BUCKET = "timesheet-pdfs";
-const COMPANY_NAME = "Dulles Engineering, Inc.";
+import { getCompanyBranding } from "./brandingService";
 
 // Session-only cache of generated PDFs. Data URLs are too large for localStorage
 // (a handful of timesheets exceeds the quota), so the durable copy lives in
@@ -136,7 +136,7 @@ export function generateTimeCardPdfBlob(card) {
   const totalRegular = card.totalRegularHours || card.total_regular_hours || "0.00";
   const totalOvertime = card.totalOvertimeHours || card.total_overtime_hours || "0.00";
   const totalHours = card.totalHours || card.total_hours || "0.00";
-  const company = card.companyName || card.company_name || COMPANY_NAME;
+  const company = card.companyName || card.company_name || getCompanyBranding().name;
   // Approval details only belong on the post-approval version of the document;
   // the technician's submitted copy shows just the employee certification.
   const isApproved = ["approved", "completed"].includes(String(card.status || "").toLowerCase());

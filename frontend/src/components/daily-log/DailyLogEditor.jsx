@@ -6,6 +6,7 @@ import CompactionReportInlineContent from "../reports/CompactionReportInlineCont
 import AsphaltCompactionReportInlineContent from "../reports/AsphaltCompactionReportInlineContent";
 import SurfaceInfiltrationReportInlineContent from "../reports/SurfaceInfiltrationReportInlineContent";
 import ProctorReportInlineContent from "../reports/ProctorReportInlineContent";
+import SamplesCollectionReportInlineContent from "../reports/SamplesCollectionReportInlineContent";
 import BottomActionBar from "../mobile/BottomActionBar";
 import SignatureModal from "../SignatureModal";
 import PhotosAttachmentsSection, { isAllowedDailyLogAttachment } from "./PhotosAttachmentsSection";
@@ -24,17 +25,9 @@ import {
   updateDailyLogPdfMetadataInSupabase
 } from "../../services/dailyLogService";
 import { createDailyLogPdfSignedUrl, generateHydratedDailyLogPdfBlob, regenerateDailyLogPdf } from "../../services/dailyLogPdfService";
+import { logAuditEvent } from "../../services/auditLogService";
 import { sendDailyLogReviewEmail } from "../../services/notificationService";
 import DailyLogSubmitPanel from "./DailyLogSubmitPanel";
-
-const PROJECT_OPTIONS = [
-  {
-    id: 1,
-    projectNumber: "200100",
-    projectName: "DC Water Potomac Tunnel",
-    projectLocation: "Washington, DC"
-  }
-];
 
 const DAILY_LOG_ATTACHMENT_BUCKET = "daily-log-attachments";
 const DAILY_LOG_ATTACHMENT_FALLBACK_BUCKET = "report-attachments";
@@ -325,11 +318,36 @@ function isProctorReportSubmitReady(report = {}) {
   return records.some(r => String(r.percentCompaction || "").trim() !== "");
 }
 
+function isSamplesReport(report = {}) {
+  const type = String(report.type || report.reportType || report.report_type || "").toLowerCase();
+  return type.includes("sample");
+}
+
+function hasSamplesReportContent(report = {}) {
+  return Boolean(
+    String(report.sampleType || "").trim() ||
+    String(report.castDate || report.cast_date || "").trim() ||
+    String(report.specimenCount || report.specimen_count || "").trim() ||
+    String(report.comments || "").trim()
+  );
+}
+
+function isSamplesReportSubmitReady(report = {}) {
+  const reportStatus = String(report.status || "").toLowerCase();
+  if (["completed", "submitted", "approved", "finalized"].includes(reportStatus)) return true;
+  return Boolean(
+    String(report.sampleType || "").trim() &&
+    String(report.castDate || report.cast_date || "").trim() &&
+    String(report.specimenCount || report.specimen_count || "").trim()
+  );
+}
+
 function isAttachedReportSubmitReady(report = {}) {
   if (isAsphaltReport(report)) return isAsphaltReportSubmitReady(report);
   if (isCompactionReport(report)) return isCompactionReportSubmitReady(report);
   if (isInfiltrationReport(report)) return isInfiltrationReportSubmitReady(report);
   if (isProctorReport(report)) return isProctorReportSubmitReady(report);
+  if (isSamplesReport(report)) return isSamplesReportSubmitReady(report);
   return isConcreteReportSubmitReady(report);
 }
 
@@ -461,7 +479,15 @@ async function createUploadReadyAttachment(file, attachmentType, context) {
   };
 }
 
-export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateConcreteReport, onOpenConcreteReport, onCreateCompactionReport, onOpenCompactionReport, onCreateAsphaltReport, onOpenAsphaltReport, onCreateInfiltrationReport, onOpenInfiltrationReport, onCreateProctorReport, onOpenProctorReport }) {
+export default function DailyLogEditor({ log, projectOptions = [], onChange, onSubmitted, onCreateConcreteReport, onOpenConcreteReport, onCreateCompactionReport, onOpenCompactionReport, onCreateAsphaltReport, onOpenAsphaltReport, onCreateInfiltrationReport, onOpenInfiltrationReport, onCreateProctorReport, onOpenProctorReport, onCreateSamplesReport, onOpenSamplesReport }) {
+  // The real projects the technician is assigned to (normalized to this editor's
+  // shape). Falls back to nothing — never the old hardcoded placeholder.
+  const projectChoices = (projectOptions.length ? projectOptions : []).map((p) => ({
+    id: p.id,
+    projectNumber: p.projectNumber || p.number || "",
+    projectName: p.projectName || p.name || "",
+    projectLocation: p.projectLocation || p.location || ""
+  }));
   const [lastAutosavedAt, setLastAutosavedAt] = useState("");
   const [reportPickerActivityId, setReportPickerActivityId] = useState("");
   const [reportSectionError, setReportSectionError] = useState("");
@@ -564,7 +590,7 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
   }
 
   function selectProject(projectId) {
-    const selectedProject = PROJECT_OPTIONS.find((project) => String(project.id) === String(projectId));
+    const selectedProject = projectChoices.find((project) => String(project.id) === String(projectId));
     if (!selectedProject) return;
     updateLog({
       projectId: selectedProject.id,
@@ -692,6 +718,27 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
       setReportPickerActivityId("");
     } catch (error) {
       console.error("Proctor report section failed", error);
+      setReportSectionError("Unable to load report section. Please try again.");
+    }
+  }
+
+  function addSamplesReport(activityId) {
+    try {
+      setReportSectionError("");
+      const activity = (log.activities || []).find((item) => item.id === activityId);
+      if (getActivityAttachedReports(activity).length >= 1) {
+        setReportSectionError("Only one report can be attached to each activity.");
+        setReportPickerActivityId("");
+        return;
+      }
+      const createdReport = onCreateSamplesReport?.(log, activityId);
+      if (!createdReport) {
+        setReportSectionError("Unable to load report section. Please try again.");
+        return;
+      }
+      setReportPickerActivityId("");
+    } catch (error) {
+      console.error("Samples collection report section failed", error);
       setReportSectionError("Unable to load report section. Please try again.");
     }
   }
@@ -916,6 +963,13 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
         submittedAt,
         submitted_at: submittedAt
       };
+
+      logAuditEvent({
+        action: "report_submitted",
+        entityType: "daily_report",
+        entityId: latestLog.id,
+        newValue: { projectNumber: latestLog.projectNumber, date: latestLog.date }
+      });
 
       let persistedSubmission;
       try {
@@ -1180,10 +1234,10 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
   return (
     <div className="pb-24 lg:pb-0">
       {/* Sticky header — stays pinned while activities scroll */}
-      <div className="sticky top-0 z-20 overflow-hidden rounded-3xl border border-slate-700 bg-gradient-to-r from-slate-950 via-slate-900 to-blue-950 px-4 py-3 shadow-lg sm:px-6">
+      <div className="sticky top-0 z-20 overflow-hidden rounded-3xl border-b-4 border-accent-500 bg-gradient-to-br from-navy-800 via-navy-900 to-navy-950 px-4 py-3 shadow-lg sm:px-6">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
-            <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">Field Operations</p>
+            <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-300">Field Operations</p>
             <h1 className="mt-0.5 truncate text-xl font-bold text-white sm:text-2xl">
               Daily Field Log
               {log.projectName ? <span className="ml-2 text-base font-semibold text-slate-300">· {log.projectName}</span> : null}
@@ -1197,7 +1251,7 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
             <span className="inline-flex items-center rounded-full border border-amber-400/40 bg-amber-400/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-amber-300">
               {String(log.status || "draft").replace(/_/g, " ")}
             </span>
-            <button type="button" onClick={saveDraft} className="inline-flex min-h-9 items-center gap-1.5 rounded-xl border border-slate-700 bg-transparent px-3 text-xs font-bold text-white hover:bg-slate-800">
+            <button type="button" onClick={saveDraft} className="inline-flex min-h-9 items-center gap-1.5 rounded-xl border border-white/25 bg-white/10 px-3 text-xs font-bold text-white transition hover:bg-white/20">
               <Save className="h-3.5 w-3.5" /> Save Draft
             </button>
             <button
@@ -1205,7 +1259,7 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
               onClick={submitLog}
               disabled={!canSubmit}
               title={canSubmit ? "" : "Add at least one completed activity to submit."}
-              className="inline-flex min-h-9 items-center gap-1.5 rounded-xl bg-blue-600 px-3 text-xs font-bold text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"
+              className="inline-flex min-h-9 items-center gap-1.5 rounded-xl bg-accent-500 px-3 text-xs font-bold text-white shadow-lg shadow-accent-950/30 transition hover:bg-accent-600 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"
             >
               <Send className="h-3.5 w-3.5" /> Submit
             </button>
@@ -1231,7 +1285,10 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
                 onChange={(event) => selectProject(event.target.value)}
                 className="mt-1 min-h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-bold text-slate-950 outline-none focus:border-blue-700 focus:ring-4 focus:ring-blue-100"
               >
-              {PROJECT_OPTIONS.map((project) => (
+              {!projectChoices.some((project) => String(project.id) === String(log.projectId)) && (
+                <option value={log.projectId || ""}>{log.projectName || "Select a project"}</option>
+              )}
+              {projectChoices.map((project) => (
                 <option key={project.id} value={project.id}>{project.projectName}</option>
               ))}
               </select>
@@ -1396,6 +1453,7 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
                   const compaction = !asphalt && isCompactionReport(report);
                   const infiltration = !asphalt && !compaction && isInfiltrationReport(report);
                   const proctor = !asphalt && !compaction && !infiltration && isProctorReport(report);
+                  const samples = !asphalt && !compaction && !infiltration && !proctor && isSamplesReport(report);
                   const shouldShowReportContent = asphalt
                     ? hasAsphaltReportContent(report)
                     : compaction
@@ -1404,7 +1462,9 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
                         ? hasInfiltrationReportContent(report)
                         : proctor
                           ? hasProctorReportContent(report)
-                          : isAttachedReportSubmitReady(report);
+                          : samples
+                            ? hasSamplesReportContent(report)
+                            : isAttachedReportSubmitReady(report);
                   visibleReportOrdinal += 1;
                   const reportLabel = `Report ${visibleReportOrdinal}`;
                   const displayReportType = asphalt
@@ -1415,7 +1475,9 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
                         ? "Surface Infiltration Rate Report"
                         : proctor
                           ? "One-Point Proctor Report"
-                          : "Concrete Report";
+                          : samples
+                            ? "Samples Collection Report"
+                            : "Concrete Report";
 
                   return (
                     <div key={report.id} className="mt-3 rounded-2xl border border-slate-200 bg-white p-4">
@@ -1442,7 +1504,9 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
                                     ? onOpenInfiltrationReport?.(log, activity.id, report.id, { mode: "edit" })
                                     : proctor
                                       ? onOpenProctorReport?.(log, activity.id, report.id, { mode: "edit" })
-                                      : onOpenConcreteReport?.(log, activity.id, report.id, { mode: "edit" })
+                                      : samples
+                                        ? onOpenSamplesReport?.(log, activity.id, report.id, { mode: "edit" })
+                                        : onOpenConcreteReport?.(log, activity.id, report.id, { mode: "edit" })
                             )}
                             className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-slate-950 px-3 text-xs font-bold text-white"
                           >
@@ -1461,7 +1525,9 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
                               ? <SurfaceInfiltrationReportInlineContent report={report} reportLabel={reportLabel} />
                               : proctor
                                 ? <ProctorReportInlineContent report={report} reportLabel={reportLabel} />
-                                : <ConcreteReportInlineContent report={report} reportLabel={reportLabel} />
+                                : samples
+                                  ? <SamplesCollectionReportInlineContent report={report} reportLabel={reportLabel} />
+                                  : <ConcreteReportInlineContent report={report} reportLabel={reportLabel} />
                       )}
                     </div>
                   );
@@ -1497,6 +1563,7 @@ export default function DailyLogEditor({ log, onChange, onSubmitted, onCreateCon
                       onAddAsphaltReport={() => addAsphaltReport(activity.id)}
                       onAddInfiltrationReport={() => addInfiltrationReport(activity.id)}
                       onAddProctorReport={() => addProctorReport(activity.id)}
+                      onAddSamplesReport={() => addSamplesReport(activity.id)}
                     />
                   </div>
                 )}

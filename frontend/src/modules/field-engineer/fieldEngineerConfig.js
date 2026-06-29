@@ -2,26 +2,40 @@ import {
   AlertTriangle,
   Bell,
   Camera,
+  CheckCircle2,
   ClipboardCheck,
   ClipboardList,
+  Clock,
   FileText,
   Gauge,
   HardHat,
   Layers3,
   Mic,
   PenLine,
+  SendHorizontal,
   ShieldAlert,
+  Undo2,
   User,
   Upload,
   Wrench
 } from "lucide-react";
 
 export const FIELD_ENGINEER_NAV = [
-  { label: "Command Center", path: "/technician/dashboard", icon: Gauge },
-  { label: "Daily Logs", path: "/technician/dashboard?view=reports-home", icon: ClipboardList },
-  { label: "Timesheets", path: "/technician/dashboard?view=time-cards", icon: FileText },
-  { label: "Profile", path: "/technician/dashboard?view=profile", icon: User },
-  { label: "Notifications", path: "/technician/dashboard?view=notifications", icon: Bell }
+  { label: "Dashboard", path: "/technician/dashboard", icon: Gauge },
+  { section: "Operations", module: "daily_logs" },
+  { label: "Daily Logs", path: "/technician/dashboard?view=reports-home", icon: ClipboardList, module: "daily_logs" },
+  { label: "Drafts", path: "/technician/dashboard?view=daily-logs", icon: PenLine, nested: true, module: "daily_logs" },
+  { label: "Submitted", path: "/technician/dashboard?view=submitted-logs", icon: SendHorizontal, nested: true, module: "daily_logs" },
+  { label: "Returned", path: "/technician/dashboard?view=returned-logs", icon: Undo2, nested: true, module: "daily_logs" },
+  { label: "Approved", path: "/technician/dashboard?view=approved-logs", icon: CheckCircle2, nested: true, module: "daily_logs" },
+  { section: "Workforce", module: "timesheets" },
+  { label: "Timesheets", path: "/technician/dashboard?view=time-cards", icon: FileText, module: "timesheets" },
+  { label: "Current", path: "/timesheets", icon: Clock, nested: true, module: "timesheets" },
+  { label: "Submitted", path: "/technician/dashboard?view=submitted-time-cards", icon: SendHorizontal, nested: true, module: "timesheets" },
+  { label: "Approved", path: "/technician/dashboard?view=approved-time-cards", icon: CheckCircle2, nested: true, module: "timesheets" },
+  { section: "Account" },
+  { label: "Notifications", path: "/technician/dashboard?view=notifications", icon: Bell },
+  { label: "Profile", path: "/technician/dashboard?view=profile", icon: User }
 ];
 
 export const INSPECTION_TEMPLATES = [

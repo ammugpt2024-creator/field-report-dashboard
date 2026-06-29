@@ -6,7 +6,11 @@ import { supabase } from "./supabase.js";
 import { saveDailyLog } from "./dailyLogService.js";
 import { getStorageConfigError, logStorageStep } from "./storageDiagnosticsService.js";
 
-const COMPANY_LOGO_URL = "https://img1.wsimg.com/isteam/ip/5d283b38-0950-4c46-838b-44766d9a75d2/DULLES%20ENGINEERING_new%20logo.png/%3A/rs%3Dh%3A78%2Ccg%3Atrue%2Cm/qt%3Dq%3A95";
+import { getCompanyBranding } from "./brandingService";
+
+// Branding resolves from the caller's company (multi-tenant); these getters
+// fall back to the historic defaults inside brandingService.
+const COMPANY_LOGO_URL = { get current() { return getCompanyBranding().logoUrl; } };
 const REPORT_FONT_FAMILY = "Inter";
 let reportFontsRegistered = false;
 const PDF_COLORS = {
@@ -1165,7 +1169,7 @@ function getRecordValue(record, keys) {
 }
 
 async function renderReferenceDailyLogHeader(doc, log, y) {
-  const logoSource = await sourceToDataUrl(log.companyLogoUrl || log.company_logo_url || COMPANY_LOGO_URL) || getDullesLogoDataUrl();
+  const logoSource = await sourceToDataUrl(log.companyLogoUrl || log.company_logo_url || COMPANY_LOGO_URL.current) || getDullesLogoDataUrl();
   const pageWidth = getPageWidth(doc);
   const headerX = PAGE_MARGIN;
   const headerWidth = getContentWidth(doc);
@@ -1540,6 +1544,7 @@ function getReportKind(report) {
   if (num.startsWith("CDR-") || (!num.startsWith("ACR-") && (type.includes("compaction") || type.includes("density") || type.includes("nuclear")))) return "compaction";
   if (type.includes("infiltration") || num.startsWith("SIR-")) return "infiltration";
   if (type.includes("proctor") || num.startsWith("OPP-")) return "proctor";
+  if (type.includes("sample")) return "samples";
   return "concrete";
 }
 
@@ -2097,6 +2102,28 @@ async function renderReferenceProctorReportBlock(doc, report, reportIndex, y, ac
   return y + 6;
 }
 
+async function renderReferenceSamplesReportBlock(doc, report, reportIndex, y, activity, log) {
+  y = ensurePage(doc, y, 140);
+  y = renderReferenceSectionBar(doc, `Samples Collection Report ${reportIndex + 1}`, y, {
+    afterGap: 10,
+    rightText: formatStatus(report.status || "Draft")
+  });
+
+  y = renderReferenceCardGrid(doc, [
+    { label: "Project Name", value: pdfValue(report.projectName || report.project_name) },
+    { label: "Project Number", value: pdfValue(report.projectNumber || report.project_number) },
+    { label: "Sample Type", value: pdfValue(report.sampleType) },
+    { label: "Cast Date", value: pdfValue(report.castDate || report.cast_date) },
+    { label: "Samples / Specimens", value: pdfValue(report.specimenCount || report.specimen_count) },
+    { label: "Date Collected", value: pdfValue(report.date) }
+  ], y, { columns: 3, afterGap: 10 });
+
+  y = renderReferenceTextBox(doc, "Comments", sentenceCase(report.comments || "No comments recorded."), y);
+
+  y = await renderReferenceAttachmentContent(doc, getReportAttachments(report, activity, log), y, `Samples Collection Report ${reportIndex + 1} Attachments`);
+  return y + 6;
+}
+
 async function renderReferenceConcreteReportBlock(doc, report, reportIndex, y, activity, log) {
   y = ensurePage(doc, y, 160);
   y = renderReferenceSectionBar(doc, `Concrete Report ${reportIndex + 1} — ${getReportDfrNumber(report)}`, y, {
@@ -2174,6 +2201,8 @@ async function renderReferenceActivityDetails(doc, log, y) {
         y = await renderReferenceInfiltrationReportBlock(doc, report, reportIndex, y, activity, log);
       } else if (kind === "proctor") {
         y = await renderReferenceProctorReportBlock(doc, report, reportIndex, y, activity, log);
+      } else if (kind === "samples") {
+        y = await renderReferenceSamplesReportBlock(doc, report, reportIndex, y, activity, log);
       } else {
         y = await renderReferenceConcreteReportBlock(doc, report, reportIndex, y, activity, log);
       }
@@ -2514,6 +2543,62 @@ export async function generateProctorStandalonePdf(report, { download = true } =
 
   // ── Output ────────────────────────────────────────────────────────────────
   const fileName = `${report.projectNumber || report.project_number || "Proctor-Report"}.pdf`;
+  if (download) {
+    doc.save(fileName);
+    return null;
+  }
+  return doc.output("blob");
+}
+
+export async function generateSamplesStandalonePdf(report, { download = true } = {}) {
+  const doc = new JsPDFConstructor({ orientation: "portrait", unit: "pt", format: "letter", compress: true });
+  await registerReportFonts(doc);
+  const fontFamily = reportFontsRegistered ? REPORT_FONT_FAMILY : "helvetica";
+  const pageW = getPageWidth(doc);
+  const cw = getContentWidth(doc);
+
+  let y = PAGE_TOP_MARGIN;
+
+  // Header bar
+  doc.setFillColor(...PDF_COLORS.navy);
+  doc.roundedRect(PAGE_MARGIN, y, cw, 54, 4, 4, "F");
+  doc.setFont(fontFamily, "bold");
+  doc.setFontSize(13);
+  doc.setTextColor(...PDF_COLORS.white);
+  doc.text("SAMPLES COLLECTION REPORT", PAGE_MARGIN + 14, y + 20);
+  doc.setFont(fontFamily, "normal");
+  doc.setFontSize(8.5);
+  doc.text("Field Sampling Record", PAGE_MARGIN + 14, y + 35);
+  doc.setFont(fontFamily, "bold");
+  doc.setFontSize(9.5);
+  doc.text(pdfValue(report.projectNumber || report.project_number || ""), pageW - PAGE_MARGIN - 10, y + 28, { align: "right" });
+  y += 66;
+
+  // Report meta grid
+  y = renderReferenceCardGrid(doc, [
+    { label: "Project Name",        value: pdfValue(report.projectName || report.project_name) },
+    { label: "Project Number",      value: pdfValue(report.projectNumber || report.project_number) },
+    { label: "Sample Type",         value: pdfValue(report.sampleType) },
+    { label: "Cast Date",           value: pdfValue(report.castDate || report.cast_date) },
+    { label: "Samples / Specimens", value: pdfValue(report.specimenCount || report.specimen_count) },
+    { label: "Date Collected",      value: pdfValue(report.date) },
+  ], y, { columns: 3, afterGap: 14 });
+
+  // Comments
+  y = renderReferenceTextBox(doc, "Comments", sentenceCase(report.comments || "No comments recorded."), y);
+
+  // Signature line
+  y = ensurePage(doc, y, 60);
+  doc.setDrawColor(...PDF_COLORS.line);
+  doc.setLineWidth(0.5);
+  const half = (cw - 16) / 2;
+  doc.line(PAGE_MARGIN, y + 38, PAGE_MARGIN + half, y + 38);
+  doc.line(PAGE_MARGIN + half + 16, y + 38, PAGE_MARGIN + cw, y + 38);
+  setReportFont(doc, "regular", 8, PDF_COLORS.muted);
+  doc.text("Technician Signature", PAGE_MARGIN, y + 48);
+  doc.text("Date", PAGE_MARGIN + half + 16, y + 48);
+
+  const fileName = `${report.projectNumber || report.project_number || "Samples-Collection-Report"}.pdf`;
   if (download) {
     doc.save(fileName);
     return null;

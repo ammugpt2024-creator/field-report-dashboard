@@ -13,6 +13,7 @@ import {
 import { supabase } from '../services/supabase';
 import { useAuth } from '../context/AuthContext';
 import { isQcRole, ROLES } from '../utils/permissions';
+import { isUnscoped, meetsLevel } from '../utils/moduleAccess';
 import StatusBadge from '../components/StatusBadge';
 import ReportActions from '../components/ReportActions';
 import {
@@ -99,7 +100,7 @@ function QCReviewDashboard() {
   const { projectId } = useParams();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { role, session, profile } = useAuth();
+  const { role, session, profile, companyRole, isPlatformAdmin, modulePermissions } = useAuth();
   const [reports, setReports] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -135,9 +136,8 @@ function QCReviewDashboard() {
           query = query.eq('project_id', Number(projectId));
         }
 
-        if (!isManagerView && session?.user?.id) {
-          query = query.or(`qc_assigned_to.eq.${session.user.id},qc_assigned_to.is.null`);
-        }
+        // Fetch the company's queue; visibility is scoped client-side by the
+        // admin-set access level (see matchesAccess), not by role.
 
         const { data, error: fetchError } = await query.order('submitted_at', { ascending: true, nullsFirst: false });
         if (fetchError) throw fetchError;
@@ -283,7 +283,18 @@ function QCReviewDashboard() {
     const matchesDateFrom = !dateFrom || submittedDate >= dateFrom;
     const matchesDateTo = !dateTo || submittedDate <= dateTo;
 
-    return matchesText && matchesStatus && matchesProject && matchesTechnician && matchesDateFrom && matchesDateTo;
+    // Visibility by the admin-set access level: approve+ on this project's Field
+    // Test Reports = oversight (see all); otherwise only reports routed to me or
+    // that I submitted.
+    const mine = session?.user?.id;
+    const matchesAccess =
+      isUnscoped(companyRole, isPlatformAdmin) ||
+      meetsLevel(modulePermissions?.[String(report.project_id)]?.field_test_reports, 'approve') ||
+      report.qc_assigned_to === mine ||
+      report.submitted_by === mine ||
+      report.created_by === mine;
+
+    return matchesAccess && matchesText && matchesStatus && matchesProject && matchesTechnician && matchesDateFrom && matchesDateTo;
   });
 
   const notifications = enrichedReports
@@ -340,58 +351,54 @@ function QCReviewDashboard() {
   const defaultProjectId = projectId || enrichedReports.find((report) => report.project_id)?.project_id || 1;
 
   return (
-    <div className="w-full max-w-full overflow-x-hidden bg-slate-100 px-4 py-5 sm:px-6 lg:p-8">
+    <div className="w-full max-w-full overflow-x-hidden bg-slate-50 px-4 py-5 sm:px-6 lg:p-8">
       <div className="mx-auto w-full max-w-[1500px] space-y-5 sm:space-y-6">
-        <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-8">
-          <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
-            <div className="min-w-0">
-              <p className="text-xs font-bold uppercase tracking-[0.32em] text-slate-400">{MODULE_NAMES.validationCenter}</p>
-              <h1 className="mt-3 break-words text-3xl font-semibold text-slate-950 sm:text-4xl">Validation Inbox</h1>
-              <p className="mt-2 max-w-3xl text-sm text-slate-600 sm:text-base">
-                Field operations records assigned to {profile?.full_name || profile?.email || 'the validation team'}, sorted by SLA risk and oldest submissions first.
-              </p>
+        <section className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+          <div className="min-w-0">
+            <h1 className="text-xl font-bold tracking-tight text-slate-900 sm:text-2xl">Validation Inbox</h1>
+            <p className="mt-0.5 max-w-3xl text-[13px] font-medium text-slate-500">
+              Records assigned to {profile?.full_name || profile?.email || 'the validation team'}, sorted by SLA risk and oldest submissions first.
+            </p>
+          </div>
+          <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-2 xl:w-auto xl:grid-cols-4">
+            <div className="inline-flex h-10 w-full items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-800 xl:w-64">
+              <Search className="h-4 w-4 shrink-0 text-slate-400" />
+              <input
+                type="search"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Search DFR, project, engineer"
+                className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-slate-400"
+              />
             </div>
-            <div className="grid w-full grid-cols-1 gap-3 sm:grid-cols-2 xl:w-auto">
-              <div className="inline-flex min-h-11 w-full items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm text-slate-700 xl:w-80">
-                <Search className="h-4 w-4 shrink-0" />
-                <input
-                  type="search"
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Search DFR, project, field engineer"
-                  className="min-w-0 flex-1 bg-transparent outline-none"
-                />
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setStatusFilter('pending');
-                  setSearch('');
-                  setProjectFilter('all');
-                  setTechnicianFilter('all');
-                  setDateFrom('');
-                  setDateTo('');
-                }}
-                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
-              >
-                <Filter className="h-4 w-4" />
-                Reset Filters
-              </button>
-              <button
-                type="button"
-                onClick={() => navigate(`/project/${defaultProjectId}`)}
-                className="inline-flex min-h-11 items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
-              >
-                {MODULE_NAMES.projectHub}
-              </button>
-              <button
-                type="button"
-                onClick={() => navigate(`/project/${defaultProjectId}/field-reports/concrete-test-log/create`)}
-                className="inline-flex min-h-11 items-center justify-center rounded-2xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-slate-800"
-              >
-                Create Field Operations Record
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setStatusFilter('pending');
+                setSearch('');
+                setProjectFilter('all');
+                setTechnicianFilter('all');
+                setDateFrom('');
+                setDateTo('');
+              }}
+              className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+            >
+              <Filter className="h-4 w-4" /> Reset
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate(`/project/${defaultProjectId}`)}
+              className="inline-flex h-10 items-center justify-center rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+            >
+              {MODULE_NAMES.projectHub}
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate(`/project/${defaultProjectId}/field-reports/concrete-test-log/create`)}
+              className="inline-flex h-10 items-center justify-center rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
+            >
+              New Record
+            </button>
           </div>
         </section>
 

@@ -94,24 +94,24 @@ function FieldReports() {
   return (
     <div className="w-full max-w-full overflow-x-hidden bg-gradient-to-br from-gray-50 to-gray-100">
       {/* Header */}
-      <div className="bg-white border-b border-gray-200 shadow-sm">
+      <div className="border-b-4 border-accent-500 bg-gradient-to-br from-navy-800 via-navy-900 to-navy-950 shadow-sm">
         <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6">
           <div className="mb-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex min-w-0 items-center gap-4">
               <button
                 onClick={() => navigate(`/project/${projectId}`)}
-                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                className="p-2 hover:bg-white/10 rounded-lg transition-colors"
               >
-                <ChevronLeft className="w-6 h-6 text-gray-600" />
+                <ChevronLeft className="w-6 h-6 text-slate-300" />
               </button>
               <div className="min-w-0">
-                <h1 className="break-words text-3xl font-bold text-gray-900">Field Operations</h1>
-                <p className="text-gray-600 text-sm mt-1">Manage site operations, inspection workflows, and field compliance observations.</p>
+                <h1 className="break-words text-3xl font-bold tracking-tight text-white">Field Operations</h1>
+                <p className="text-slate-300 text-sm mt-1">Manage site operations, inspection workflows, and field compliance observations.</p>
               </div>
             </div>
             <button
               onClick={() => navigate(`/project/${projectId}/field-reports/create`)}
-              className="flex min-h-11 w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-blue-600 to-blue-700 px-4 py-2 font-semibold text-white transition-shadow hover:shadow-lg sm:w-auto"
+              className="flex min-h-11 w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-accent-500 to-accent-600 px-4 py-2 font-semibold text-white shadow-lg shadow-accent-950/30 transition hover:from-accent-600 hover:to-accent-700 sm:w-auto"
             >
               <Plus className="w-5 h-5" />
               Create Field Operations Report

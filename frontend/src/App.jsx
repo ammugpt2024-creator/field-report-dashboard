@@ -16,6 +16,22 @@ import ManagerDashboard from "./pages/ManagerDashboard";
 import TechnicianDashboard from "./pages/TechnicianDashboard";
 import CylinderBreakReport from "./pages/CylinderBreakReport";
 import CylinderBreakList from "./pages/CylinderBreakList";
+import GroutCubeBreakReport from "./pages/GroutCubeBreakReport";
+import GroutCubeBreakList from "./pages/GroutCubeBreakList";
+import CoreBreakReport from "./pages/CoreBreakReport";
+import CoreBreakList from "./pages/CoreBreakList";
+import AsphaltGravityReport from "./pages/AsphaltGravityReport";
+import AsphaltGravityList from "./pages/AsphaltGravityList";
+import GradationReport from "./pages/GradationReport";
+import GradationList from "./pages/GradationList";
+import ProctorReportPage from "./pages/ProctorReportPage";
+import ProctorList from "./pages/ProctorList";
+import AtterbergReportPage from "./pages/AtterbergReportPage";
+import AtterbergList from "./pages/AtterbergList";
+import HydrometerReportPage from "./pages/HydrometerReportPage";
+import HydrometerList from "./pages/HydrometerList";
+import CbrReportPage from "./pages/CbrReportPage";
+import CbrList from "./pages/CbrList";
 import TimesheetsPage from "./pages/TimesheetsPage";
 import ProjectWorkspace from "./pages/ProjectWorkspace";
 import FieldReports from "./pages/FieldReports";
@@ -25,6 +41,10 @@ import ConcreteTestLogDetails from "./pages/ConcreteTestLogDetails";
 import QCReviewDashboard from "./pages/QCReviewDashboard";
 import Reports from "./pages/Reports";
 import DailyLogReview from "./pages/DailyLogReview";
+import PlatformAdminDashboard from "./pages/PlatformAdminDashboard";
+import CompanyDetail from "./pages/CompanyDetail";
+import CompanyAdminDashboard from "./pages/CompanyAdminDashboard";
+import AcceptInvite from "./pages/AcceptInvite";
 
 function App() {
 
@@ -32,7 +52,9 @@ function App() {
     session,
     role,
     loading,
-    profileReady
+    profileReady,
+    isPlatformAdmin,
+    companyRole
   } = useAuth();
 
   // profileReady guards the fresh-login race: the session exists before the
@@ -55,7 +77,27 @@ function App() {
     return <Login />;
   }
 
+  // Invitation / password-recovery links sign the user in with a one-time
+  // token; send them to the set-password screen before anything else.
+  const authFlow = sessionStorage.getItem("qcore-auth-flow");
+  if (authFlow || window.location.pathname === "/welcome") {
+    sessionStorage.removeItem("qcore-auth-flow");
+    if (window.location.pathname !== "/welcome") {
+      window.history.replaceState(null, "", "/welcome");
+    }
+    return <AcceptInvite />;
+  }
+
   function RoleHome() {
+    // Platform ownership and company-admin membership outrank the legacy
+    // profile role when deciding the landing page.
+    if (isPlatformAdmin) {
+      return <Navigate to="/platform-admin" replace />;
+    }
+    const normalized = String(role || "").toLowerCase();
+    if (companyRole === "company_admin" && ["viewer", "client", "company_admin"].includes(normalized)) {
+      return <Navigate to="/company-admin" replace />;
+    }
     return <Navigate to={getRoleHomeRoute(role)} replace />;
   }
 
@@ -68,7 +110,27 @@ function App() {
     return children;
   }
 
-  const MANAGER_ROLES = ["project_manager", "manager", "qc_manager", "admin"];
+  const MANAGER_ROLES = ["project_manager", "deputy_project_manager", "manager", "qc_manager", "admin", "company_admin"];
+
+  // Platform admin area: platform_admins membership (or the role) only.
+  function RequirePlatformAdmin({ children }) {
+    if (!isPlatformAdmin && String(role).toLowerCase() !== "platform_admin") {
+      return <Navigate to={getRoleHomeRoute(role)} replace />;
+    }
+    return children;
+  }
+
+  // Company admin area: the company_users role, the profile role, or legacy
+  // admin-equivalents (qc_manager/admin run today's single company).
+  function RequireCompanyAdmin({ children }) {
+    const normalized = String(role || "").toLowerCase();
+    const allowed = companyRole === "company_admin" ||
+      ["company_admin", "admin", "qc_manager"].includes(normalized);
+    if (!allowed) {
+      return <Navigate to={getRoleHomeRoute(role)} replace />;
+    }
+    return children;
+  }
   const QC_ROLES = ["qc", "qc_approver", "qc_manager", "project_manager", "manager", "admin"];
 
   function ProfileRoute() {
@@ -116,6 +178,86 @@ function App() {
         />
 
         <Route
+          path="/technician/lab/grout-cube-break"
+          element={<GroutCubeBreakList />}
+        />
+
+        <Route
+          path="/technician/lab/grout-cube-break/:reportId"
+          element={<GroutCubeBreakReport />}
+        />
+
+        <Route
+          path="/technician/lab/core-break"
+          element={<CoreBreakList />}
+        />
+
+        <Route
+          path="/technician/lab/core-break/:reportId"
+          element={<CoreBreakReport />}
+        />
+
+        <Route
+          path="/technician/lab/asphalt-bsg"
+          element={<AsphaltGravityList />}
+        />
+
+        <Route
+          path="/technician/lab/asphalt-bsg/:reportId"
+          element={<AsphaltGravityReport />}
+        />
+
+        <Route
+          path="/technician/lab/gradation"
+          element={<GradationList />}
+        />
+
+        <Route
+          path="/technician/lab/gradation/:reportId"
+          element={<GradationReport />}
+        />
+
+        <Route
+          path="/technician/lab/proctor"
+          element={<ProctorList />}
+        />
+
+        <Route
+          path="/technician/lab/proctor/:reportId"
+          element={<ProctorReportPage />}
+        />
+
+        <Route
+          path="/technician/lab/atterberg"
+          element={<AtterbergList />}
+        />
+
+        <Route
+          path="/technician/lab/atterberg/:reportId"
+          element={<AtterbergReportPage />}
+        />
+
+        <Route
+          path="/technician/lab/hydrometer"
+          element={<HydrometerList />}
+        />
+
+        <Route
+          path="/technician/lab/hydrometer/:reportId"
+          element={<HydrometerReportPage />}
+        />
+
+        <Route
+          path="/technician/lab/cbr"
+          element={<CbrList />}
+        />
+
+        <Route
+          path="/technician/lab/cbr/:reportId"
+          element={<CbrReportPage />}
+        />
+
+        <Route
           path="/technician/daily-log/:logId"
           element={<TechnicianDashboard />}
         />
@@ -151,6 +293,11 @@ function App() {
         />
 
         <Route
+          path="/technician/daily-log/:logId/activity/:activityId/samples-report/:reportId"
+          element={<TechnicianDashboard />}
+        />
+
+        <Route
           path="/profile"
           element={<ProfileRoute />}
         />
@@ -158,6 +305,21 @@ function App() {
         <Route
           path="/qc/dashboard"
           element={<RequireRole roles={QC_ROLES}><QCReviewDashboard /></RequireRole>}
+        />
+
+        <Route
+          path="/platform-admin"
+          element={<RequirePlatformAdmin><PlatformAdminDashboard /></RequirePlatformAdmin>}
+        />
+
+        <Route
+          path="/platform-admin/company/:companyId"
+          element={<RequirePlatformAdmin><CompanyDetail /></RequirePlatformAdmin>}
+        />
+
+        <Route
+          path="/company-admin"
+          element={<RequireCompanyAdmin><CompanyAdminDashboard /></RequireCompanyAdmin>}
         />
 
         <Route

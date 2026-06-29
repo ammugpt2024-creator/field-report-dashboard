@@ -473,10 +473,26 @@ export async function submitDailyLogToSupabase(log, { signatureId, submittedAt, 
   }
 
   const clientLogId = String(log.id);
+
+  // Stamp the reviewer the admin assigned to this submitter on this project,
+  // so the manager queue and notifications route to them.
+  let reviewerUserId = null;
+  const submitProjectId = log.projectId || log.project_id;
+  if (submitProjectId) {
+    const { data: asg } = await supabase
+      .from("project_assignments")
+      .select("reviewer_user_id")
+      .eq("project_id", submitProjectId)
+      .eq("user_id", user.id)
+      .maybeSingle();
+    reviewerUserId = asg?.reviewer_user_id || null;
+  }
+
   const submissionPatch = {
     status: DAILY_LOG_STATUS.SUBMITTED,
     submitted_at: submittedAt || new Date().toISOString(),
     submitted_by: user.id,
+    reviewer_user_id: reviewerUserId,
     signature_id: signatureId || null
   };
   const payload = buildSupabaseDailyLogPayload(log, user.id, submissionPatch);

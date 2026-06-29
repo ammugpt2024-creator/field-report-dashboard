@@ -32,10 +32,10 @@ function AdminDashboard() {
   return (
     <div className="w-full max-w-full overflow-x-hidden bg-slate-100 px-4 py-5 sm:px-6 lg:p-8">
       <div className="mx-auto w-full max-w-[1500px] space-y-5 sm:space-y-7">
-        <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-8">
-          <p className="text-xs font-semibold uppercase tracking-[0.28em] text-slate-400">System Operations Control Center</p>
-          <h1 className="mt-3 text-3xl font-bold text-slate-950 sm:text-4xl">{MODULE_NAMES.platformAdministration}</h1>
-          <p className="mt-2 max-w-3xl text-sm font-medium text-slate-600 sm:text-base">
+        <section className="overflow-hidden rounded-3xl border-b-4 border-accent-500 bg-gradient-to-br from-navy-800 via-navy-900 to-navy-950 p-5 shadow-sm sm:p-8">
+          <p className="text-xs font-semibold uppercase tracking-[0.28em] text-slate-300">System Operations Control Center</p>
+          <h1 className="mt-3 text-3xl font-bold tracking-tight text-white sm:text-4xl">{MODULE_NAMES.platformAdministration}</h1>
+          <p className="mt-2 max-w-3xl text-sm font-medium text-slate-300 sm:text-base">
             Manage the platform from a governed GUI: organizations, users, workflows, templates, activity streams, and audit controls.
           </p>
         </section>

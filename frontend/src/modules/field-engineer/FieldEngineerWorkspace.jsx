@@ -12,6 +12,7 @@ import {
   HardHat,
   KeyRound,
   Layers3,
+  MapPin,
   Minus,
   Plus,
   Save,
@@ -34,7 +35,7 @@ import {
   saveDailyLog,
   syncDailyLogsFromSupabase
 } from "../../services/dailyLogService";
-import { openDailyLogPdf, regenerateDailyLogPdf, generateProctorStandalonePdf } from "../../services/dailyLogPdfService";
+import { openDailyLogPdf, regenerateDailyLogPdf, generateProctorStandalonePdf, generateSamplesStandalonePdf } from "../../services/dailyLogPdfService";
 import { generateAndUploadConcreteReportPdf, openConcreteReportPdf } from "../../services/concreteReportPdfService";
 import { openTimeCardPdf } from "../../services/timeCardPdfService";
 import {
@@ -49,6 +50,9 @@ import {
   saveTimeCard,
   TIME_CARD_STATUS
 } from "../../services/timeCardService";
+import { supabase } from "../../services/supabase";
+import { useAuth } from "../../context/AuthContext";
+import { canAccessModule, moduleLevelForProject, meetsLevel } from "../../utils/moduleAccess";
 import { formatDateTime } from "./fieldEngineerData";
 import { fetchTimesheetStatusUpdates, fetchTimesheetsForTechnician } from "../../services/timesheetSyncService";
 import {
@@ -395,7 +399,7 @@ function ActionTimeCardRow({ card, onOpen }) {
 
 
 
-function DashboardOverview({ profile, logCollections, timeCardCollections, onOpenLog, onOpenTimeCard, onCreateLog, navigate }) {
+function DashboardOverview({ logCollections, timeCardCollections, onOpenLog, onOpenTimeCard, onCreateLog, navigate, assignedProjects = [], canCreateDailyLog = true, canCreateTimesheet = true }) {
   // Collapsed by default — expand on demand via the +/- control.
   const [activityCollapsed, setActivityCollapsed] = useState(true);
   const actionRequiredLogs = [...logCollections.returnedLogs, ...logCollections.draftLogs];
@@ -438,61 +442,163 @@ function DashboardOverview({ profile, logCollections, timeCardCollections, onOpe
     .sort((a, b) => new Date(b.at || 0) - new Date(a.at || 0))
     .slice(0, 50);
   const latestActivity = recentActivity.slice(0, 5);
-  const technicianName = profile?.full_name || profile?.name || "Technician";
-  const todayText = new Intl.DateTimeFormat(undefined, { month: "short", day: "2-digit", year: "numeric" }).format(new Date());
+  // The project the technician is currently working in. Prefer the projects the
+  // admin actually assigned them: a recent log on an assigned project wins;
+  // otherwise default to their first assigned project. Only fall back to a
+  // stray log (e.g. an old local draft) when nothing is assigned — this keeps a
+  // leftover "I-495 Expansion" draft from masking the real assigned project.
+  const assignedIds = new Set(assignedProjects.map((p) => String(p.id)));
+  const sortedLogs = [...allLogs].sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
+  const recentAssignedLog = sortedLogs.find((log) => assignedIds.has(String(log.projectId ?? log.project_id)));
+  const firstAssigned = assignedProjects[0];
+  const currentProject = recentAssignedLog
+    || (firstAssigned ? { projectId: firstAssigned.id, projectName: firstAssigned.name, projectNumber: firstAssigned.number } : null)
+    || sortedLogs[0]
+    || null;
+  const currentProjectId = currentProject?.projectId || currentProject?.project_id || null;
+  const currentProjectName = currentProject?.projectName || "—";
+
+  // Richer project context (location, number, lead) — fetched once per project.
+  const [projectInfo, setProjectInfo] = useState(null);
+  useEffect(() => {
+    if (!currentProjectId) return undefined;
+    let active = true;
+    supabase
+      .from("projects")
+      .select("project_number, project_location, project_manager_name, gc_representative")
+      .eq("id", currentProjectId)
+      .maybeSingle()
+      .then(({ data }) => { if (active) setProjectInfo(data || null); })
+      .catch(() => {});
+    return () => { active = false; };
+  }, [currentProjectId]);
+
+  const projectNumber = projectInfo?.project_number || currentProject?.projectNumber || currentProject?.project_number || "";
+  const projectLocation = projectInfo?.project_location || "";
+  const projectLead = projectInfo?.project_manager_name || projectInfo?.gc_representative || "";
+
+  // Operational status for the field-ops widgets.
+  const lastSubmittedAt = allLogs.map((l) => l.submittedAt).filter(Boolean).sort((a, b) => new Date(b) - new Date(a))[0] || null;
+  const reportsInReview = logCollections.submittedLogs.length;
+  const timesheetStatus = timeCardCollections.draftTimeCards.length > 0
+    ? { label: "Pending submission", tone: "text-amber-700" }
+    : timeCardCollections.submittedTimeCards.length > 0
+      ? { label: "Awaiting approval", tone: "text-blue-700" }
+      : { label: "Up to date", tone: "text-emerald-700" };
 
   return (
     <>
-      {/* Slim toolbar header — Procore-style, no hero banner */}
-      <section className="rounded-xl border border-slate-200 bg-white px-4 py-3 sm:px-5 sm:py-4">
-        <div className="flex flex-wrap items-center justify-between gap-2 sm:gap-3">
-          <div className="min-w-0">
-            <h1 className="text-lg font-semibold text-slate-900 sm:text-xl">Welcome, {technicianName}</h1>
-            <p className="mt-0.5 text-[13px] font-medium text-slate-500">
-              {todayText}
-              {actionRequiredItems.length
-                ? ` · ${actionRequiredItems.length} ${actionRequiredItems.length === 1 ? "item needs" : "items need"} your action`
-                : " · You're all caught up"}
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => navigate("/timesheets")}
-              className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-            >
-              <CalendarDays className="h-4 w-4" /> My Timesheet
-            </button>
+      {/* Title + quick actions (sidebar owns navigation; this is the page head) */}
+      <section className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Technician</p>
+          <h1 className="text-xl font-bold tracking-tight text-slate-900 sm:text-2xl">Dashboard</h1>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {canCreateDailyLog && (
             <button
               type="button"
               onClick={onCreateLog}
-              className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-blue-600 px-3 text-sm font-semibold text-white hover:bg-blue-700"
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-accent-500 px-3 text-sm font-semibold text-white transition hover:bg-accent-600"
             >
-              <Plus className="h-4 w-4" /> Start Daily Log
+              <Plus className="h-4 w-4" /> Daily Log
             </button>
-          </div>
+          )}
+          {canCreateTimesheet && (
+            <button
+              type="button"
+              onClick={() => navigate("/timesheets")}
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+            >
+              <Plus className="h-4 w-4" /> Timesheet
+            </button>
+          )}
         </div>
       </section>
 
-      {/* Metric strip — one card, divided columns; zeros dimmed, alerts colored */}
+      {/* PROJECT CONTEXT — the center of the technician workflow */}
+      {currentProject && (
+        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-3 px-5 py-4">
+            <div className="min-w-0">
+              <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Current Project</p>
+              <h2 className="mt-0.5 truncate text-xl font-bold text-slate-900 sm:text-2xl">{currentProjectName}</h2>
+              <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[13px] font-medium text-slate-500">
+                {projectNumber && <span>Project #{projectNumber}</span>}
+                {projectLocation && <span className="inline-flex items-center gap-1"><MapPin className="h-3.5 w-3.5 text-slate-400" /> {projectLocation}</span>}
+                {projectLead && <span>Lead: <span className="font-semibold text-slate-700">{projectLead}</span></span>}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => onOpenLog(currentProject)}
+              className="shrink-0 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 transition hover:bg-slate-50"
+            >
+              Open latest log
+            </button>
+          </div>
+          {/* Operational status — answers "what's pending right now" at a glance */}
+          <div className="grid grid-cols-2 gap-px border-t border-slate-100 bg-slate-100 sm:grid-cols-3">
+            <div className="bg-white px-5 py-3">
+              <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Last daily log</p>
+              <p className="mt-0.5 text-sm font-bold text-slate-800">{lastSubmittedAt ? `Submitted ${relativeTimeLabel(lastSubmittedAt)}` : "None submitted"}</p>
+            </div>
+            <div className="bg-white px-5 py-3">
+              <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Reports in review</p>
+              <p className="mt-0.5 text-sm font-bold text-slate-800">{reportsInReview} awaiting QC</p>
+            </div>
+            <div className="bg-white px-5 py-3">
+              <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Current timesheet</p>
+              <p className={`mt-0.5 text-sm font-bold ${timesheetStatus.tone}`}>{timesheetStatus.label}</p>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* KPI hierarchy — attention items prominent (but compact), rest muted */}
+      <section className="grid grid-cols-2 gap-3">
+        <button
+          type="button"
+          onClick={() => navigate("/technician/dashboard?view=returned-logs")}
+          className="flex items-center gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-left transition hover:bg-rose-100"
+        >
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-rose-100 text-rose-600"><AlertTriangle className="h-4 w-4" /></span>
+          <span className="text-2xl font-bold leading-none text-rose-700">{logCollections.returnedLogs.length}</span>
+          <span className="min-w-0 leading-tight">
+            <span className="block text-[13px] font-bold text-rose-800">Returned logs</span>
+            <span className="block text-[11px] font-semibold text-rose-600/80">Need correction</span>
+          </span>
+        </button>
+        <button
+          type="button"
+          onClick={() => navigate("/technician/dashboard?view=daily-logs")}
+          className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-left transition hover:bg-slate-50"
+        >
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-500"><FileText className="h-4 w-4" /></span>
+          <span className={`text-2xl font-bold leading-none ${logCollections.draftLogs.length > 0 ? "text-slate-900" : "text-slate-300"}`}>{logCollections.draftLogs.length}</span>
+          <span className="min-w-0 leading-tight">
+            <span className="block text-[13px] font-bold text-slate-800">Draft logs</span>
+            <span className="block text-[11px] font-semibold text-slate-400">Not submitted</span>
+          </span>
+        </button>
+      </section>
+
       <section className="overflow-hidden rounded-xl border border-slate-200 bg-white">
-        <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 xl:divide-x xl:divide-slate-200">
+        <div className="grid grid-cols-2 sm:grid-cols-4 sm:divide-x sm:divide-slate-100">
           {[
-            { label: "Draft logs", value: logCollections.draftLogs.length, view: "daily-logs" },
-            { label: "Submitted logs", value: logCollections.submittedLogs.length, view: "submitted-logs", tone: "text-blue-700" },
-            { label: "Returned logs", value: logCollections.returnedLogs.length, view: "returned-logs", tone: "text-rose-600" },
-            { label: "Approved logs", value: logCollections.approvedLogs.length, view: "approved-logs", tone: "text-emerald-700" },
-            { label: "Timesheets pending", value: timeCardCollections.submittedTimeCards.length, view: "submitted-time-cards", tone: "text-blue-700" },
-            { label: "Timesheets approved", value: timeCardCollections.approvedTimeCards.length, view: "approved-time-cards", tone: "text-emerald-700" }
-          ].map(({ label, value, view, tone }) => (
+            { label: "Submitted logs", value: logCollections.submittedLogs.length, view: "submitted-logs" },
+            { label: "Approved logs", value: logCollections.approvedLogs.length, view: "approved-logs" },
+            { label: "Submitted timesheets", value: timeCardCollections.submittedTimeCards.length, view: "submitted-time-cards" },
+            { label: "Approved timesheets", value: timeCardCollections.approvedTimeCards.length, view: "approved-time-cards" }
+          ].map(({ label, value, view }) => (
             <button
               key={label}
               type="button"
               onClick={() => navigate(`/technician/dashboard?view=${view}`)}
-              className="flex items-baseline justify-between gap-2 border-b border-slate-100 px-4 py-2.5 text-left transition hover:bg-slate-50 sm:block sm:py-3 xl:border-b-0"
+              className="flex items-baseline justify-between gap-2 border-b border-slate-100 px-4 py-2.5 text-left transition hover:bg-slate-50 sm:block sm:border-b-0"
             >
               <p className="text-xs font-medium text-slate-500">{label}</p>
-              <p className={`text-xl font-semibold sm:mt-1 sm:text-2xl ${value > 0 ? (tone || "text-slate-900") : "text-slate-300"}`}>{value}</p>
+              <p className={`text-lg font-bold sm:mt-0.5 ${value > 0 ? "text-slate-700" : "text-slate-300"}`}>{value}</p>
             </button>
           ))}
         </div>
@@ -532,13 +638,15 @@ function DashboardOverview({ profile, logCollections, timeCardCollections, onOpe
                 <span className="h-2 w-2 rounded-full bg-emerald-500" />
                 You're all caught up — no Daily Logs or Timesheets need your action.
               </p>
-              <button
-                type="button"
-                onClick={onCreateLog}
-                className="text-[13px] font-semibold text-blue-700 hover:text-blue-800"
-              >
-                Start today's Daily Log →
-              </button>
+              {canCreateDailyLog && (
+                <button
+                  type="button"
+                  onClick={onCreateLog}
+                  className="text-[13px] font-semibold text-blue-700 hover:text-blue-800"
+                >
+                  Start today's Daily Log →
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -1899,7 +2007,7 @@ function CompactionReportPage({ log, activityId, reportId, onChange, onBack }) {
   return (
     <div className="space-y-4 pb-24 lg:pb-4">
       <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
-        <div className="bg-gradient-to-r from-slate-950 via-slate-900 to-blue-950 px-5 py-5 sm:px-7">
+        <div className="border-b-4 border-accent-500 bg-gradient-to-br from-navy-800 via-navy-900 to-navy-950 px-5 py-5 sm:px-7">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div className="min-w-0">
               <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">Nuclear Density Report</p>
@@ -2324,14 +2432,14 @@ function AsphaltCompactionReportPage({ log, activityId, reportId, onChange, onBa
 
   return (
     <div className="space-y-4">
-      <section className={cardClass()}>
+      <section className="overflow-hidden rounded-2xl border-b-4 border-accent-500 bg-gradient-to-br from-navy-800 via-navy-900 to-navy-950 p-4 shadow-sm sm:p-5">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
-            <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-400">Asphalt Compaction Report</p>
-            <h1 className="mt-2 text-2xl font-bold text-slate-950">Compaction Report</h1>
-            <p className="mt-1 text-sm font-semibold text-slate-600">{report.projectName}</p>
+            <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-300">Asphalt Compaction Report</p>
+            <h1 className="mt-2 text-2xl font-bold tracking-tight text-white">Compaction Report</h1>
+            <p className="mt-1 text-sm font-semibold text-slate-300">{report.projectName}</p>
           </div>
-          <span className="w-fit rounded-full border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-bold uppercase tracking-[0.12em] text-slate-700">{report.status || "Draft"}</span>
+          <span className="w-fit rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs font-bold uppercase tracking-[0.12em] text-white">{report.status || "Draft"}</span>
         </div>
       </section>
 
@@ -2559,11 +2667,11 @@ function SurfaceInfiltrationReportPage({ log, activityId, reportId, onChange, on
 
   return (
     <div className="space-y-4">
-      <section className={cardClass()}>
+      <section className="overflow-hidden rounded-2xl border-b-4 border-accent-500 bg-gradient-to-br from-navy-800 via-navy-900 to-navy-950 p-4 shadow-sm sm:p-5">
         <div>
-          <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-400">ASTM C1781</p>
-          <h1 className="mt-2 text-2xl font-bold text-slate-950">Surface Infiltration Rate Report</h1>
-          <p className="mt-1 text-sm font-semibold text-slate-600">{report.projectName}</p>
+          <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-300">ASTM C1781</p>
+          <h1 className="mt-2 text-2xl font-bold tracking-tight text-white">Surface Infiltration Rate Report</h1>
+          <p className="mt-1 text-sm font-semibold text-slate-300">{report.projectName}</p>
         </div>
       </section>
 
@@ -2688,7 +2796,8 @@ const VTM12_CURVES = {
 // SVG chart of VTM-12 Set "C" moisture-density curves (Figure 1).
 // All 26 curves are rendered as solid black lines; the selected curve is heavier.
 // If field moisture and density are provided, the test point is plotted as an ×.
-function ProctorCurvesChart({ selectedCurve, moistureContent, fieldDryDensity }) {
+function ProctorCurvesChart({ selectedCurve, moistureContent, fieldDryDensity, wetDensity, onSelectCurve, isReadOnly }) {
+  const [hoverCurve, setHoverCurve] = useState("");
   const W = 560, H = 420;
   const ml = 46, mr = 10, mt = 12, mb = 44;
   const gw = W - ml - mr, gh = H - mt - mb;
@@ -2702,13 +2811,22 @@ function ProctorCurvesChart({ selectedCurve, moistureContent, fieldDryDensity })
   const HALF_SPAN = 7;
   const PTS = 60;
 
-  function curvePath(mdd, omc) {
+  // Sample one curve as {w, d} points; used for both the drawn path and hit-testing.
+  function curveSamples(mdd, omc) {
     const k = K_FACTOR * mdd;
-    let path = "";
-    let first = true;
+    const pts = [];
     for (let i = 0; i <= PTS; i++) {
       const w = (omc - HALF_SPAN) + HALF_SPAN * 2 * i / PTS;
       const d = mdd - k * (w - omc) * (w - omc);
+      pts.push({ w, d });
+    }
+    return pts;
+  }
+
+  function samplesToPath(pts) {
+    let path = "";
+    let first = true;
+    for (const { w, d } of pts) {
       if (w < moistMin || w > moistMax || d < densMin || d > densMax) { first = true; continue; }
       path += `${first ? "M" : "L"} ${toX(w).toFixed(1)} ${toY(d).toFixed(1)} `;
       first = false;
@@ -2716,21 +2834,103 @@ function ProctorCurvesChart({ selectedCurve, moistureContent, fieldDryDensity })
     return path.trim();
   }
 
+  // Precompute each curve's drawn path once.
+  const curveList = Object.entries(VTM12_CURVES).map(([letter, c]) => ({
+    letter,
+    mdd: c.maxDryDensity,
+    omc: c.optimumMoisture,
+    d: samplesToPath(curveSamples(c.maxDryDensity, c.optimumMoisture))
+  })).filter((c) => c.d);
+
   const mc = parseFloat(moistureContent);
   const fd = parseFloat(fieldDryDensity);
-  const hasPoint = !isNaN(mc) && !isNaN(fd) &&
-    mc >= moistMin && mc <= moistMax && fd >= densMin && fd <= densMax;
+  const wd = parseFloat(wetDensity);
+  // One-point molded dry density — the point overlaid on the family of curves to pick
+  // the curve. Computed live from wet density (D) and moisture (F): D / (1 + w/100).
+  const moldedDry = (!isNaN(wd) && !isNaN(mc) && wd > 0) ? wd / (1 + mc / 100) : NaN;
+
+  const inRange = (w, d) => w >= moistMin && w <= moistMax && d >= densMin && d <= densMax;
+  const hasMolded = !isNaN(mc) && !isNaN(moldedDry) && inRange(mc, moldedDry);
+  const hasField = !isNaN(mc) && !isNaN(fd) && inRange(mc, fd);
+
+  const canSelect = !isReadOnly && typeof onSelectCurve === "function";
+
+  // Suggested curve = family curve nearest (in plotted pixels) to the one-point test point.
+  // Falls back to the field-density point if the molded point isn't available yet.
+  const sx = hasMolded ? toX(mc) : (hasField ? toX(mc) : null);
+  const sy = hasMolded ? toY(moldedDry) : (hasField ? toY(fd) : null);
+  let suggested = "";
+  if (sx !== null && sy !== null) {
+    let best = Infinity;
+    Object.entries(VTM12_CURVES).forEach(([letter, { maxDryDensity: mdd, optimumMoisture: omc }]) => {
+      curveSamples(mdd, omc).forEach(({ w, d }) => {
+        const dist = (toX(w) - sx) ** 2 + (toY(d) - sy) ** 2;
+        if (dist < best) { best = dist; suggested = letter; }
+      });
+    });
+  }
+  const showSuggestApply = canSelect && suggested && suggested !== selectedCurve;
+
+  function styleFor(letter) {
+    if (letter === selectedCurve) return { stroke: "#000", width: 3, dash: "" };
+    if (canSelect && letter === hoverCurve) return { stroke: "#1d4ed8", width: 2.2, dash: "" };
+    if (letter === suggested) return { stroke: "#2563eb", width: 1.6, dash: "4 3" };
+    return { stroke: "#000", width: 0.75, dash: "" };
+  }
+
+  // Draw emphasized curves (suggested / hovered / selected) last so they sit on top.
+  const emphasized = [...new Set([suggested, hoverCurve, selectedCurve].filter(Boolean))];
+  const baseCurves = curveList.filter((c) => !emphasized.includes(c.letter));
+  const topCurves = emphasized.map((l) => curveList.find((c) => c.letter === l)).filter(Boolean);
 
   const xTicks = [], yTicks = [];
   for (let m = 4; m <= 34; m += 2) xTicks.push(m);
   for (let d = 80; d <= 144; d += 4) yTicks.push(d);
 
+  function renderCurve({ letter, mdd, omc, d }) {
+    const s = styleFor(letter);
+    const labeled = omc >= moistMin && omc <= moistMax && mdd >= densMin && mdd <= densMax;
+    const isEmph = letter === selectedCurve || letter === suggested || (canSelect && letter === hoverCurve);
+    return (
+      <g key={letter}>
+        <path d={d} fill="none" stroke={s.stroke} strokeWidth={s.width} strokeDasharray={s.dash} />
+        {labeled && (
+          <text x={toX(omc)} y={toY(mdd) - (isEmph ? 7 : 2)} textAnchor="middle"
+            fontSize={isEmph ? 11 : 6} fontWeight="bold" fill={s.stroke}>{letter}</text>
+        )}
+      </g>
+    );
+  }
+
   return (
-    <div className="mt-2 md:col-span-3 overflow-x-auto">
+    <div className="mt-2 md:col-span-3">
       <p className="mb-1 text-[10px] font-bold uppercase tracking-[0.14em] text-blue-600">
         Fig. 1 — Typical Moisture-Density Curves, Set &quot;C&quot; (VTM-12)
         {selectedCurve ? <span className="ml-2 text-blue-900">· Curve {selectedCurve} selected</span> : null}
       </p>
+      <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-orange-700">
+          <span className="inline-block h-2.5 w-2.5 rounded-full bg-orange-600" /> 1-Pt test point (live)
+        </span>
+        <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-500">
+          <span className="text-slate-400">✕</span> Field density
+        </span>
+        {canSelect && (
+          <span className="text-[11px] font-semibold text-slate-500">· Tap any curve to select it.</span>
+        )}
+        {showSuggestApply && (
+          <button type="button" onClick={() => onSelectCurve(suggested)}
+            className="inline-flex min-h-8 items-center rounded-xl border border-blue-300 bg-blue-50 px-3 text-[11px] font-bold text-blue-800 hover:bg-blue-100">
+            Suggested: Curve {suggested} — tap to apply
+          </button>
+        )}
+        {!hasMolded && (
+          <span className="inline-flex items-center rounded-lg border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
+            Enter A &amp; B (mold weights) + F (moisture) to plot the live 1-Pt test point
+          </span>
+        )}
+      </div>
+      <div className="overflow-x-auto">
       <svg viewBox={`0 0 ${W} ${H}`} className="w-full min-w-[300px]"
         style={{ border: "1px solid #bfdbfe", borderRadius: "12px", background: "white" }}>
         {/* Grid */}
@@ -2741,39 +2941,42 @@ function ProctorCurvesChart({ selectedCurve, moistureContent, fieldDryDensity })
           <line key={d} x1={ml} y1={toY(d)} x2={ml + gw} y2={toY(d)} stroke="#e2e8f0" strokeWidth="0.5" />
         ))}
 
-        {/* All non-selected curves — thin solid black */}
-        {Object.entries(VTM12_CURVES).filter(([l]) => l !== selectedCurve).map(([letter, { maxDryDensity: mdd, optimumMoisture: omc }]) => {
-          const d = curvePath(mdd, omc);
-          return d ? (
-            <g key={letter}>
-              <path d={d} fill="none" stroke="#000" strokeWidth="0.75" />
-              {omc >= moistMin && omc <= moistMax && mdd >= densMin && mdd <= densMax && (
-                <text x={toX(omc)} y={toY(mdd) - 2} textAnchor="middle" fontSize="6" fontWeight="bold" fill="#000">{letter}</text>
-              )}
-            </g>
-          ) : null;
-        })}
+        {/* Base curves — thin solid black (emphasized ones drawn later, on top) */}
+        {baseCurves.map(renderCurve)}
 
-        {/* Selected curve — heavy solid black */}
-        {selectedCurve && VTM12_CURVES[selectedCurve] && (() => {
-          const { maxDryDensity: mdd, optimumMoisture: omc } = VTM12_CURVES[selectedCurve];
-          const d = curvePath(mdd, omc);
-          return d ? (
-            <g>
-              <path d={d} fill="none" stroke="#000" strokeWidth="3" />
-              <text x={toX(omc)} y={toY(mdd) - 7} textAnchor="middle" fontSize="11" fontWeight="bold" fill="#000">{selectedCurve}</text>
-            </g>
-          ) : null;
-        })()}
+        {/* Emphasized curves — suggested (dashed blue), hovered (blue), selected (heavy black) */}
+        {topCurves.map(renderCurve)}
 
-        {/* Field test point — × marker */}
-        {hasPoint && (() => {
-          const px = toX(mc), py = toY(fd), s = 5;
+        {/* Transparent wide hit-areas so a curve can be tapped/clicked to select it */}
+        {canSelect && curveList.map(({ letter, d }) => (
+          <path key={`hit-${letter}`} d={d} fill="none" stroke="transparent" strokeWidth="11"
+            style={{ cursor: "pointer" }}
+            onMouseEnter={() => setHoverCurve(letter)}
+            onMouseLeave={() => setHoverCurve((prev) => (prev === letter ? "" : prev))}
+            onClick={() => onSelectCurve(letter)}>
+            <title>Curve {letter} — MDD {VTM12_CURVES[letter]?.maxDryDensity} lb/ft³, OMC {VTM12_CURVES[letter]?.optimumMoisture}%</title>
+          </path>
+        ))}
+
+        {/* Field density point — light grey × (kept for reference; matches the PDF) */}
+        {hasField && (() => {
+          const px = toX(mc), py = toY(fd), s = 4;
           return (
             <g>
-              <line x1={px - s} y1={py - s} x2={px + s} y2={py + s} stroke="#000" strokeWidth="2.5" />
-              <line x1={px + s} y1={py - s} x2={px - s} y2={py + s} stroke="#000" strokeWidth="2.5" />
-              <text x={px + s + 3} y={py + 3} fontSize="8" fontWeight="bold" fill="#000">Field Pt.</text>
+              <line x1={px - s} y1={py - s} x2={px + s} y2={py + s} stroke="#94a3b8" strokeWidth="1.8" />
+              <line x1={px + s} y1={py - s} x2={px - s} y2={py + s} stroke="#94a3b8" strokeWidth="1.8" />
+              <text x={px + s + 3} y={py + 3} fontSize="7.5" fontWeight="bold" fill="#64748b">Field</text>
+            </g>
+          );
+        })()}
+
+        {/* One-point molded test point — live marker used to read the family of curves */}
+        {hasMolded && (() => {
+          const px = toX(mc), py = toY(moldedDry);
+          return (
+            <g>
+              <circle cx={px} cy={py} r={4.5} fill="#ea580c" stroke="#7c2d12" strokeWidth="1" />
+              <text x={px + 7} y={py + 3} fontSize="8.5" fontWeight="bold" fill="#9a3412">1-Pt Test</text>
             </g>
           );
         })()}
@@ -2803,6 +3006,7 @@ function ProctorCurvesChart({ selectedCurve, moistureContent, fieldDryDensity })
           DRY DENSITY (lb/ft³)
         </text>
       </svg>
+      </div>
     </div>
   );
 }
@@ -2950,11 +3154,11 @@ function ProctorReportPage({ log, activityId, reportId, onChange, onBack }) {
 
   return (
     <div className="space-y-4">
-      <section className={cardClass()}>
+      <section className="overflow-hidden rounded-2xl border-b-4 border-accent-500 bg-gradient-to-br from-navy-800 via-navy-900 to-navy-950 p-4 shadow-sm sm:p-5">
         <div>
-          <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-400">VTM-12 · AASHTO T 272</p>
-          <h1 className="mt-2 text-2xl font-bold text-slate-950">One-Point Proctor Report</h1>
-          <p className="mt-1 text-sm font-semibold text-slate-600">{report.projectName}</p>
+          <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-300">VTM-12 · AASHTO T 272</p>
+          <h1 className="mt-2 text-2xl font-bold tracking-tight text-white">One-Point Proctor Report</h1>
+          <p className="mt-1 text-sm font-semibold text-slate-300">{report.projectName}</p>
         </div>
       </section>
 
@@ -3040,6 +3244,9 @@ function ProctorReportPage({ log, activityId, reportId, onChange, onBack }) {
                   selectedCurve={record.selectedCurve}
                   moistureContent={record.moistureContent}
                   fieldDryDensity={record.fieldDryDensity}
+                  wetDensity={record.wetDensity}
+                  isReadOnly={isReadOnly}
+                  onSelectCurve={(letter) => updateTestRecord(record.id, { selectedCurve: letter })}
                 />
               </div>
 
@@ -3126,6 +3333,135 @@ function ProctorReportPage({ log, activityId, reportId, onChange, onBack }) {
   );
 }
 
+const SAMPLE_TYPE_OPTIONS = [
+  "Soil",
+  "Concrete cylinders",
+  "Grout cubes",
+  "Asphalt cores or plugs"
+];
+
+function SamplesCollectionReportPage({ log, activityId, reportId, onChange, onBack }) {
+  const activity = (log.activities || []).find((item) => item.id === activityId);
+  const persistedReport = (activity?.reports || []).find((item) => item.id === reportId);
+  const [localReport, setLocalReport] = useState(persistedReport || null);
+  const [pdfGenerating, setPdfGenerating] = useState(false);
+  const report = localReport || persistedReport;
+  const isReadOnly = [DAILY_LOG_STATUS.SUBMITTED, DAILY_LOG_STATUS.APPROVED].includes(log.status);
+  const canComplete = Boolean(
+    String(report?.sampleType || "").trim() &&
+    String(report?.castDate || "").trim() &&
+    String(report?.specimenCount || "").trim()
+  );
+
+  async function downloadReportPdf() {
+    if (!report) return;
+    setPdfGenerating(true);
+    try {
+      await generateSamplesStandalonePdf(report, { download: true });
+    } catch (err) {
+      window.alert("Could not generate PDF: " + (err.message || "Unknown error"));
+    } finally {
+      setPdfGenerating(false);
+    }
+  }
+
+  if (!activity || !report) {
+    return (
+      <section className={cardClass()}>
+        <h1 className="text-xl font-bold text-slate-950">Samples Collection Report Not Found</h1>
+        <button type="button" onClick={onBack} className="mt-4 min-h-10 rounded-xl border border-slate-200 px-4 text-sm font-bold">Back</button>
+      </section>
+    );
+  }
+
+  function saveReport(nextReport) {
+    const normalized = { ...nextReport, updatedAt: new Date().toISOString() };
+    setLocalReport(normalized);
+    const nextLog = saveDailyLog({
+      ...log,
+      activities: (log.activities || []).map((item) =>
+        item.id === activityId
+          ? { ...item, reports: (item.reports || []).map((r) => (r.id === normalized.id ? normalized : r)), updatedAt: new Date().toISOString() }
+          : item
+      ),
+      updatedAt: new Date().toISOString()
+    });
+    onChange(nextLog);
+  }
+
+  function updateReport(patch) {
+    if (isReadOnly) return;
+    saveReport({ ...report, ...patch });
+  }
+
+  function completeReport() {
+    saveReport({ ...report, status: "completed", completedAt: new Date().toISOString() });
+    onBack();
+  }
+
+  return (
+    <div className="space-y-4">
+      <section className="overflow-hidden rounded-2xl border-b-4 border-accent-500 bg-gradient-to-br from-navy-800 via-navy-900 to-navy-950 p-4 shadow-sm sm:p-5">
+        <div>
+          <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-300">Field Sampling Record</p>
+          <h1 className="mt-2 text-2xl font-bold tracking-tight text-white">Samples Collection Report</h1>
+          <p className="mt-1 text-sm font-semibold text-slate-300">{report.projectName}</p>
+        </div>
+      </section>
+
+      <section className={cardClass()}>
+        <h2 className="text-lg font-bold text-slate-950">Collection Details</h2>
+        <p className="mt-1 text-xs font-semibold text-slate-400">Project name is carried over from the daily log.</p>
+
+        <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+          <Field label="Project Name">
+            <input readOnly value={report.projectName || "—"} className={`${inputClass()} bg-slate-100 font-bold text-slate-600`} />
+          </Field>
+          <Field label="Project Number">
+            <input readOnly value={report.projectNumber || report.project_number || "—"} className={`${inputClass()} bg-slate-100 font-bold text-slate-600`} />
+          </Field>
+          <Field label="Sample Type *">
+            <select value={report.sampleType || ""} disabled={isReadOnly} onChange={(e) => updateReport({ sampleType: e.target.value })} className={inputClass()}>
+              <option value="">— Select sample type —</option>
+              {SAMPLE_TYPE_OPTIONS.map((option) => (
+                <option key={option} value={option}>{option}</option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Cast Date *">
+            <input type="date" value={report.castDate || ""} disabled={isReadOnly} onChange={(e) => updateReport({ castDate: e.target.value })} className={inputClass()} />
+          </Field>
+          <Field label="Samples / Specimens Count *">
+            <input type="number" min="0" step="1" value={report.specimenCount || ""} disabled={isReadOnly} onChange={(e) => updateReport({ specimenCount: e.target.value })} className={inputClass()} placeholder="e.g. 4" />
+          </Field>
+          <Field label="Date Collected">
+            <input type="date" value={report.date || ""} disabled={isReadOnly} onChange={(e) => updateReport({ date: e.target.value })} className={inputClass()} />
+          </Field>
+          <Field label="Comments" extraClass="md:col-span-2">
+            <textarea value={report.comments || ""} disabled={isReadOnly} onChange={(e) => updateReport({ comments: e.target.value })} rows={4} className={`${inputClass()} min-h-28 max-w-full resize-y py-3 leading-6`} placeholder="Sample IDs, cure conditions, pickup notes, lab destination, etc." />
+          </Field>
+        </div>
+      </section>
+
+      <div className="sticky bottom-0 z-20 -mx-4 flex flex-col gap-2 border-t border-slate-200 bg-white/95 p-4 backdrop-blur sm:mx-0 sm:flex-row sm:justify-end sm:rounded-2xl sm:border">
+        <button type="button" onClick={onBack} className="min-h-11 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-800">Back</button>
+        {canComplete && (
+          <button
+            type="button"
+            onClick={downloadReportPdf}
+            disabled={pdfGenerating}
+            className="min-h-11 rounded-2xl border border-slate-300 bg-white px-4 text-sm font-bold text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {pdfGenerating ? "Generating…" : "Download PDF"}
+          </button>
+        )}
+        {!isReadOnly && <button type="button" onClick={() => saveReport(report)} className="min-h-11 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-800">Save Draft</button>}
+        {!isReadOnly && <button type="button" onClick={completeReport} disabled={!canComplete} className="min-h-11 rounded-2xl bg-emerald-700 px-4 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-600">Finish Report</button>}
+      </div>
+    </div>
+  );
+}
+
 const DAILY_LOG_TABS = [
   { id: "draft", label: "Draft" },
   { id: "submitted", label: "Submitted" },
@@ -3163,7 +3499,7 @@ function ReportsHome({ logCollections, navigate }) {
 
   return (
     <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
-      <div className="bg-gradient-to-r from-slate-950 via-slate-900 to-blue-950 px-5 py-5 sm:px-7">
+      <div className="border-b-4 border-accent-500 bg-gradient-to-br from-navy-800 via-navy-900 to-navy-950 px-5 py-5 sm:px-7">
         <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">Field Operations</p>
         <h1 className="mt-1 text-2xl font-bold text-white sm:text-3xl">Reports</h1>
         <p className="mt-1 text-xs font-semibold text-slate-400">Choose a reporting category to continue.</p>
@@ -3215,12 +3551,12 @@ const LAB_REPORT_SECTIONS = [
     icon: Layers3,
     tone: "amber",
     reports: [
-      { label: "Proctor — Standard", description: "Standard Proctor moisture-density (ASTM D698)." },
-      { label: "Proctor — Modified", description: "Modified Proctor moisture-density (ASTM D1557)." },
-      { label: "Sieve Analysis", description: "Particle size distribution / gradation." },
-      { label: "Atterberg Limits", description: "Liquid limit, plastic limit, plasticity index." },
-      { label: "Hydrometer Analysis", description: "Fine-grained particle size by sedimentation." },
-      { label: "CBR (California Bearing Ratio)", description: "Subgrade strength / bearing ratio." }
+      { label: "Proctor — Standard", description: "Standard Proctor moisture-density (ASTM D698 / AASHTO T99).", route: "/technician/lab/proctor" },
+      { label: "Proctor — Modified", description: "Modified Proctor moisture-density (ASTM D1557 / AASHTO T180 / VTM-1).", route: "/technician/lab/proctor" },
+      { label: "Sieve Analysis", description: "Washed particle size distribution / gradation (ASTM D422).", route: "/technician/lab/gradation" },
+      { label: "Atterberg Limits", description: "Liquid limit, plastic limit, plasticity index (ASTM D4318).", route: "/technician/lab/atterberg" },
+      { label: "Hydrometer Analysis", description: "Sieve + hydrometer particle size & USDA texture (ASTM D422).", route: "/technician/lab/hydrometer" },
+      { label: "CBR (California Bearing Ratio)", description: "Subgrade bearing ratio — soaked/unsoaked, single or 3-point (ASTM D1883 / AASHTO T 193).", route: "/technician/lab/cbr" }
     ]
   },
   {
@@ -3229,7 +3565,7 @@ const LAB_REPORT_SECTIONS = [
     icon: Layers3,
     tone: "slate",
     reports: [
-      { label: "Bulk Specific Gravity", description: "Bulk specific gravity of compacted asphalt mixtures." }
+      { label: "Bulk Specific Gravity", description: "Bulk specific gravity & density of compacted asphalt (AASHTO T-166 / ASTM D2726).", route: "/technician/lab/asphalt-bsg" }
     ]
   },
   {
@@ -3239,8 +3575,16 @@ const LAB_REPORT_SECTIONS = [
     tone: "blue",
     reports: [
       { label: "Cylinder Break", description: "Compressive strength of concrete cylinders.", route: "/technician/lab/cylinder-break" },
-      { label: "Cube Break", description: "Compressive strength of concrete cubes." },
-      { label: "Core Break", description: "Compressive strength of drilled cores." }
+      { label: "Core Break", description: "Compressive strength of drilled cores (ASTM C42).", route: "/technician/lab/core-break" }
+    ]
+  },
+  {
+    key: "grout",
+    title: "Grout",
+    icon: HardHat,
+    tone: "blue",
+    reports: [
+      { label: "Cube Break", description: "Grout compressive strength of 2\"×2\" cubes (ASTM C109/C1107).", route: "/technician/lab/grout-cube-break" }
     ]
   }
 ];
@@ -3254,7 +3598,7 @@ const LAB_SECTION_TONE = {
 function LabReportsPage({ navigate }) {
   return (
     <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
-      <div className="bg-gradient-to-r from-slate-950 via-slate-900 to-blue-950 px-5 py-5 sm:px-7">
+      <div className="border-b-4 border-accent-500 bg-gradient-to-br from-navy-800 via-navy-900 to-navy-950 px-5 py-5 sm:px-7">
         <button type="button" onClick={() => navigate("/technician/dashboard?view=reports-home")} className="text-xs font-bold text-slate-400 hover:text-white">&larr; Reports</button>
         <h1 className="mt-1 text-2xl font-bold text-white sm:text-3xl">Lab Reports</h1>
         <p className="mt-1 text-xs font-semibold text-slate-400">Laboratory testing records by material.</p>
@@ -3307,7 +3651,7 @@ function LabReportsPage({ navigate }) {
   );
 }
 
-function DailyLogsPage({ logCollections, initialTab = "draft", onOpenLog, onCreateLog, onDeleteLog, onRecallLog, onDownloadLogPdf }) {
+function DailyLogsPage({ navigate, logCollections, initialTab = "draft", onOpenLog, onCreateLog, onDeleteLog, onRecallLog, onDownloadLogPdf }) {
   const [activeTab, setActiveTab] = useState(initialTab);
   const [searchTerm, setSearchTerm] = useState("");
   useEffect(() => {
@@ -3344,15 +3688,21 @@ function DailyLogsPage({ logCollections, initialTab = "draft", onOpenLog, onCrea
 
   return (
     <>
-      <section className={cardClass()}>
-        <div className="flex items-center justify-between gap-3">
-          {commandCenterTitle("Daily Logs", "Review Daily Field Logs by status.")}
-          <button type="button" onClick={onCreateLog} className="min-h-10 shrink-0 rounded-xl bg-slate-950 px-3 text-sm font-bold text-white sm:min-h-11 sm:rounded-2xl sm:px-4">
-            <span className="sm:hidden">+ New</span>
-            <span className="hidden sm:inline">+ Create Daily Log</span>
-          </button>
+      <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+        <div className="border-b-4 border-accent-500 bg-gradient-to-br from-navy-800 via-navy-900 to-navy-950 px-5 py-5 sm:px-7">
+          <button type="button" onClick={() => navigate("/technician/dashboard?view=reports-home")} className="text-xs font-bold text-slate-400 hover:text-white">&larr; Reports</button>
+          <div className="mt-1 flex items-start justify-between gap-3">
+            <div>
+              <h1 className="text-2xl font-bold text-white sm:text-3xl">Daily Logs</h1>
+              <p className="mt-1 text-xs font-semibold text-slate-400">Review Daily Field Logs by status.</p>
+            </div>
+            <button type="button" onClick={onCreateLog} className="inline-flex min-h-10 shrink-0 items-center rounded-xl bg-accent-500 px-3 text-sm font-bold text-white shadow-lg shadow-accent-950/30 transition hover:bg-accent-600 sm:min-h-11 sm:rounded-2xl sm:px-4">
+              <span className="sm:hidden">+ New</span>
+              <span className="hidden sm:inline">+ Create Daily Log</span>
+            </button>
+          </div>
         </div>
-        <div className="mt-3">
+        <div className="p-5 sm:p-7">
           <StatusTabs tabs={DAILY_LOG_TABS} activeTab={activeTab} onChange={setActiveTab} counts={tabCounts} />
         </div>
       </section>
@@ -3485,8 +3835,9 @@ function TechnicianProfilePage({ profile, companyName, projectOptions, logCollec
 
   return (
     <div className="space-y-4">
-      <section className={cardClass()}>
-        {commandCenterTitle("Profile")}
+      <section className="overflow-hidden rounded-2xl border-b-4 border-accent-500 bg-gradient-to-br from-navy-800 via-navy-900 to-navy-950 p-4 shadow-sm sm:p-5">
+        <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-300">Command Center</p>
+        <h1 className="mt-1 text-2xl font-bold tracking-tight text-white">Profile</h1>
       </section>
 
       <section className={cardClass()}>
@@ -3659,6 +4010,9 @@ export default function FieldEngineerWorkspace({
   error,
   navigate
 }) {
+  const { companyRole, isPlatformAdmin, modulePermissions } = useAuth();
+  const canCreateDailyLog = canAccessModule(modulePermissions, companyRole, isPlatformAdmin, "daily_logs", "create_edit");
+  const canCreateTimesheet = canAccessModule(modulePermissions, companyRole, isPlatformAdmin, "timesheets", "create_edit");
   const [dailyLogs, setDailyLogs] = useState([]);
   const [activeLog, setActiveLog] = useState(null);
   const [timeCards, setTimeCards] = useState([]);
@@ -3670,6 +4024,7 @@ export default function FieldEngineerWorkspace({
     "asphalt-report",
     "infiltration-report",
     "proctor-report",
+    "samples-report",
     "reports-home",
     "lab-reports",
     "daily-logs",
@@ -3823,9 +4178,20 @@ export default function FieldEngineerWorkspace({
   }
 
   function createLog() {
+    // Only offer projects where the user may create daily logs.
+    const dailyLogProjects = projectOptions.filter((p) =>
+      meetsLevel(moduleLevelForProject(modulePermissions, companyRole, isPlatformAdmin, p.id, "daily_logs"), "create_edit"));
+    const fallbackProject = dailyLogProjects[0] || {};
+    const defaultAllowed = dailyLogProjects.some((p) => String(p.id) === String(defaultProjectId));
+    const resolvedProjectId = (defaultAllowed && defaultProjectId) || fallbackProject.id || null;
+    const resolvedProjectLabel = (defaultAllowed && projectLabel) || fallbackProject.name || "";
+    if (!resolvedProjectId) {
+      window.alert("You don't have create access to Daily Logs on any assigned project. Ask your company admin for access.");
+      return;
+    }
     const log = saveDailyLog(createDailyLog({
-      projectLabel,
-      defaultProjectId,
+      projectLabel: resolvedProjectLabel,
+      defaultProjectId: resolvedProjectId,
       technicianName: profile?.full_name || "Field Technician",
       companyId: profile?.company_id || profile?.organization_id || null,
       companyName,
@@ -4464,6 +4830,67 @@ export default function FieldEngineerWorkspace({
     navigate(getProctorReportRoute(log, activityId, report || { id: reportId }));
   }
 
+  function getSamplesReportRoute(log, activityId, report) {
+    return `/technician/daily-log/${log.id}/activity/${activityId}/samples-report/${report?.id || "new"}?returnTo=${encodeURIComponent(`/technician/daily-log/${log.id}`)}`;
+  }
+
+  function createSamplesReportForActivity(log, activityId) {
+    const activity = (log.activities || []).find((item) => item.id === activityId);
+    if (!activity) return null;
+    const existing = [...(activity.concreteReports || []), ...(activity.reports || [])][0];
+    if (existing) {
+      const type = String(existing.type || existing.reportType || "").toLowerCase();
+      if (type.includes("sample")) {
+        navigate(getSamplesReportRoute(log, activityId, existing));
+      } else {
+        window.alert("Only one report can be attached to each activity.");
+      }
+      return existing;
+    }
+    const report = {
+      id: crypto.randomUUID(),
+      type: "Samples Collection Report",
+      reportType: "Samples Collection Report",
+      report_type: "Samples Collection Report",
+      status: "draft",
+      dailyLogId: log.id,
+      daily_log_id: log.id,
+      activityId,
+      activity_id: activityId,
+      projectName: log.projectName || projectLabel,
+      project_name: log.projectName || projectLabel,
+      projectNumber: log.projectNumber || log.project_number || String(defaultProjectId || ""),
+      project_number: log.projectNumber || log.project_number || String(defaultProjectId || ""),
+      date: log.date || new Date().toISOString().slice(0, 10),
+      client: log.client || "",
+      sampleType: "",
+      castDate: "",
+      specimenCount: "",
+      comments: "",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    const nextLog = saveDailyLog({
+      ...log,
+      activities: (log.activities || []).map((item) =>
+        item.id === activityId
+          ? { ...item, reports: [...(item.reports || []), report], updatedAt: new Date().toISOString() }
+          : item
+      ),
+      updatedAt: new Date().toISOString()
+    });
+    refreshLogs(nextLog);
+    navigate(getSamplesReportRoute(nextLog, activityId, report));
+    return report;
+  }
+
+  function openSamplesReport(log, activityId, reportId) {
+    if (!log?.id || !activityId || !reportId) return;
+    const activity = (log.activities || []).find((item) => item.id === activityId);
+    const report = (activity?.reports || []).find((item) => item.id === reportId);
+    navigate(getSamplesReportRoute(log, activityId, report || { id: reportId }));
+  }
+
   function backToDailyLog(logId = selectedDailyLog?.id) {
     if (!logId) return;
     navigate(`/technician/daily-log/${logId}`);
@@ -4532,6 +4959,9 @@ export default function FieldEngineerWorkspace({
             profile={profile}
             logCollections={logCollections}
             timeCardCollections={timeCardCollections}
+            assignedProjects={projectOptions}
+            canCreateDailyLog={canCreateDailyLog}
+            canCreateTimesheet={canCreateTimesheet}
             onOpenLog={openLog}
             onOpenTimeCard={openTimeCard}
             onCreateLog={createLog}
@@ -4552,6 +4982,7 @@ export default function FieldEngineerWorkspace({
           ) : (
             <DailyLogEditor
               log={selectedDailyLog}
+              projectOptions={projectOptions}
               onChange={refreshLogs}
               onSubmitted={(submittedLog) => {
                 refreshLogs(submittedLog);
@@ -4569,6 +5000,8 @@ export default function FieldEngineerWorkspace({
               onOpenInfiltrationReport={openInfiltrationReport}
               onCreateProctorReport={createProctorReportForActivity}
               onOpenProctorReport={openProctorReport}
+              onCreateSamplesReport={createSamplesReportForActivity}
+              onOpenSamplesReport={openSamplesReport}
             />
           )
         )}
@@ -4623,6 +5056,16 @@ export default function FieldEngineerWorkspace({
           />
         )}
 
+        {currentView === "samples-report" && selectedDailyLog && (
+          <SamplesCollectionReportPage
+            log={selectedDailyLog}
+            activityId={activeActivityId}
+            reportId={activeReportId}
+            onChange={refreshLogs}
+            onBack={() => backToDailyLog(selectedDailyLog.id)}
+          />
+        )}
+
         {currentView === "reports-home" && (
           <ReportsHome logCollections={logCollections} navigate={navigate} />
         )}
@@ -4634,6 +5077,7 @@ export default function FieldEngineerWorkspace({
         {Object.prototype.hasOwnProperty.call(logTabByView, currentView) && (
           <DailyLogsPage
             key={currentView}
+            navigate={navigate}
             logCollections={logCollections}
             initialTab={logTabByView[currentView]}
             onOpenLog={openLog}
@@ -4685,8 +5129,14 @@ export default function FieldEngineerWorkspace({
         )}
 
         {currentView === "notifications" && (
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <SimplePanel icon={Bell} kicker="Command Center" title="Notifications" description="Manager review, returned correction, upload, and approval events will appear here." />
+          <div className="space-y-4">
+            <section className="overflow-hidden rounded-2xl border-b-4 border-accent-500 bg-gradient-to-br from-navy-800 via-navy-900 to-navy-950 p-4 shadow-sm sm:p-5">
+              <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-300">Command Center</p>
+              <h1 className="mt-1 text-2xl font-bold tracking-tight text-white">Notifications</h1>
+            </section>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <SimplePanel icon={Bell} kicker="Activity" title="No notifications yet" description="Manager review, returned correction, upload, and approval events will appear here." />
+            </div>
           </div>
         )}
 
