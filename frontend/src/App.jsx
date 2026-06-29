@@ -33,6 +33,7 @@ import HydrometerList from "./pages/HydrometerList";
 import CbrReportPage from "./pages/CbrReportPage";
 import CbrList from "./pages/CbrList";
 import TimesheetsPage from "./pages/TimesheetsPage";
+import TimeOff from "./pages/TimeOff";
 import ProjectWorkspace from "./pages/ProjectWorkspace";
 import FieldReports from "./pages/FieldReports";
 import LabReports from "./pages/LabReports";
@@ -160,6 +161,11 @@ function App() {
         <Route
           path="/timesheets"
           element={<TimesheetsPage />}
+        />
+
+        <Route
+          path="/time-off"
+          element={<TimeOff />}
         />
 
         <Route

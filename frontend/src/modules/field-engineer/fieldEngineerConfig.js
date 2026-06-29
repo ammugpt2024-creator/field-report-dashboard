@@ -1,6 +1,7 @@
 import {
   AlertTriangle,
   Bell,
+  CalendarClock,
   Camera,
   CheckCircle2,
   ClipboardCheck,
@@ -33,6 +34,8 @@ export const FIELD_ENGINEER_NAV = [
   { label: "Current", path: "/timesheets", icon: Clock, nested: true, module: "timesheets" },
   { label: "Submitted", path: "/technician/dashboard?view=submitted-time-cards", icon: SendHorizontal, nested: true, module: "timesheets" },
   { label: "Approved", path: "/technician/dashboard?view=approved-time-cards", icon: CheckCircle2, nested: true, module: "timesheets" },
+  { section: "Time Off" },
+  { label: "Time Off", path: "/time-off", icon: CalendarClock },
   { section: "Account" },
   { label: "Notifications", path: "/technician/dashboard?view=notifications", icon: Bell },
   { label: "Profile", path: "/technician/dashboard?view=profile", icon: User }

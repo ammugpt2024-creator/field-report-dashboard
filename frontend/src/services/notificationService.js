@@ -29,7 +29,7 @@ function formatDateTime(value = new Date()) {
   }).format(value instanceof Date ? value : new Date(value));
 }
 
-function baseEmailShell({ title, intro, rows, ctaLabel, ctaUrl, footer = BRAND.name }) {
+export function baseEmailShell({ title, intro, rows, ctaLabel, ctaUrl, footer = BRAND.name }) {
   const rowHtml = rows
     .map(([label, value]) => `
       <tr>

@@ -4,6 +4,7 @@ import {
   BarChart3,
   Bell,
   Building2,
+  CalendarClock,
   ChevronDown,
   ClipboardCheck,
   FileCheck2,
@@ -39,6 +40,7 @@ const navByRole = {
     { label: MODULE_NAMES.projectHub, path: "/project/1", icon: FolderKanban },
     { label: "Teams", path: "/manager/dashboard?view=teams", icon: Users },
     { label: "Workflow Monitoring", path: "/qc/dashboard", icon: Workflow },
+    { label: "Time Off", path: "/time-off", icon: CalendarClock },
     { label: MODULE_NAMES.projectInsights, path: "/manager/dashboard?view=analytics", icon: BarChart3 }
   ],
   admin: [
@@ -72,6 +74,7 @@ const navByRole = {
     { label: "Employees", path: "/company-admin?section=employees", icon: Users },
     { label: "Roles & Permissions", path: "/company-admin?section=roles", icon: ShieldCheck },
     { label: "Org Structure", path: "/company-admin?section=org", icon: Network },
+    { label: "Time Off", path: "/company-admin?section=time-off", icon: CalendarClock },
     { label: "Clients", path: "/company-admin?section=clients", icon: Building2 },
     { label: "Reports", path: "/manager/dashboard", icon: FileCheck2 },
     { label: "Timesheets", path: "/timesheets", icon: FileClock },

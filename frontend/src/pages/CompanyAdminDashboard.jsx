@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useLocation } from "react-router-dom";
 import {
   Building2, CreditCard, FileText, FolderKanban, Lock, Plus, ShieldCheck, Upload, Users, Wrench, X,
-  Mail, Check, Loader2, UserPlus, AtSign, Settings2, Trash2, FolderPlus, Network
+  Mail, Check, Loader2, UserPlus, AtSign, Settings2, Trash2, FolderPlus, Network, CalendarClock
 } from "lucide-react";
 import { supabase } from "../services/supabase";
 import {
@@ -34,6 +34,10 @@ import {
   listCompanyReports,
   supportScopeLabel
 } from "../services/tenantService";
+import {
+  PTO_TYPES, ptoTypeLabel, PTO_STATUS_TONES,
+  listPtoPolicies, upsertPtoPolicy, listCompanyPtoRequests, decidePtoRequest
+} from "../services/ptoService";
 import { companyStoragePath, preloadCompanyBranding } from "../services/brandingService";
 import KeyValueList from "../components/mobile/KeyValueList";
 
@@ -276,19 +280,24 @@ export default function CompanyAdminDashboard() {
   const [profileDraft, setProfileDraft] = useState(null);
   const [supportRequests, setSupportRequests] = useState([]);
   const [approveFor, setApproveFor] = useState(null); // session being approved
+  const [ptoRequests, setPtoRequests] = useState([]);
+  const [ptoPolicies, setPtoPolicies] = useState([]);
+  const [policyDraft, setPolicyDraft] = useState({});
 
   async function refresh() {
     try {
       const ctx = await getMyCompanyContext();
       setContext(ctx);
-      const [projectRows, clientRows, equipmentRows, labRows, supportRows, assignmentRows, roleRows] = await Promise.all([
+      const [projectRows, clientRows, equipmentRows, labRows, supportRows, assignmentRows, roleRows, ptoReqRows, ptoPolicyRows] = await Promise.all([
         supabase.from("projects").select("*").order("project_name").then((r) => r.data || []),
         listCompanyRows("clients"),
         listCompanyRows("equipment"),
         listCompanyRows("lab_reports"),
         listSupportRequests(),
         listProjectAssignments(),
-        listRoles()
+        listRoles(),
+        listCompanyPtoRequests(),
+        listPtoPolicies()
       ]);
       setProjects(projectRows);
       setAssignments(assignmentRows);
@@ -297,9 +306,24 @@ export default function CompanyAdminDashboard() {
       setEquipment(equipmentRows);
       setLabReports(labRows);
       setSupportRequests(supportRows);
+      setPtoRequests(ptoReqRows);
+      setPtoPolicies(ptoPolicyRows);
+      setPolicyDraft(PTO_TYPES.reduce((acc, t) => ({ ...acc, [t.value]: String(ptoPolicyRows.find((p) => p.pto_type === t.value)?.annual_hours ?? 0) }), {}));
     } catch (err) {
       setError(err.message || "Company data could not be loaded.");
     }
+  }
+
+  async function decidePto(request, decision) {
+    let comment = "";
+    if (decision === "denied") { comment = window.prompt("Reason for denial (optional):") || ""; }
+    try { await decidePtoRequest(request, decision, comment); await refresh(); }
+    catch (err) { window.alert(err.message); }
+  }
+
+  async function savePolicy(ptoType) {
+    try { await upsertPtoPolicy(company.id, ptoType, policyDraft[ptoType]); await refresh(); }
+    catch (err) { window.alert(err.message); }
   }
 
   async function denyRequest(session) {
@@ -730,6 +754,59 @@ export default function CompanyAdminDashboard() {
             </div>
           </SectionCard>
         )}
+
+        {(showAll || section === "time-off") && (() => {
+          const pending = ptoRequests.filter((r) => r.status === "pending");
+          const decided = ptoRequests.filter((r) => r.status !== "pending").slice(0, 12);
+          return (
+            <SectionCard icon={CalendarClock} title="Time Off" count={pending.length}>
+              {/* Approval queue */}
+              <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Pending approvals</p>
+              <div className="mt-2 divide-y divide-slate-100 rounded-xl border border-slate-200">
+                {pending.length ? pending.map((r) => (
+                  <div key={r.id} className="flex flex-wrap items-center gap-3 px-3 py-2.5">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-bold text-slate-900">{nameOf(r.user_id)} · {ptoTypeLabel(r.pto_type)} · {r.hours} h</p>
+                      <p className="truncate text-xs font-medium text-slate-400">{r.start_date} → {r.end_date}{r.reason ? ` · ${r.reason}` : ""}</p>
+                    </div>
+                    <button type="button" onClick={() => decidePto(r, "approved")} className="inline-flex min-h-9 items-center rounded-lg bg-emerald-600 px-3 text-xs font-bold text-white hover:bg-emerald-700">Approve</button>
+                    <SmallButton onClick={() => decidePto(r, "denied")} className="border-rose-200 text-rose-700 hover:bg-rose-50">Deny</SmallButton>
+                  </div>
+                )) : <p className="px-3 py-2.5 text-xs font-medium text-slate-400">No pending time-off requests.</p>}
+              </div>
+
+              {/* Allotment policies */}
+              <p className="mt-6 text-xs font-bold uppercase tracking-wide text-slate-500">Annual allotment (hours)</p>
+              <p className="text-[11px] font-medium text-slate-400">Company-wide hours per leave type. Applies to every employee.</p>
+              <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {PTO_TYPES.filter((t) => t.value !== "unpaid").map((t) => (
+                  <div key={t.value} className="rounded-xl border border-slate-200 p-2.5">
+                    <p className="text-xs font-semibold text-slate-600">{t.label}</p>
+                    <div className="mt-1 flex items-center gap-1">
+                      <input type="number" min="0" value={policyDraft[t.value] ?? ""} onChange={(e) => setPolicyDraft({ ...policyDraft, [t.value]: e.target.value })} className="min-h-9 w-full rounded-lg border border-slate-300 px-2 text-sm font-semibold" />
+                      <SmallButton onClick={() => savePolicy(t.value)} className="border-blue-200 text-blue-700 hover:bg-blue-50">Save</SmallButton>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* History */}
+              {decided.length > 0 && (
+                <>
+                  <p className="mt-6 text-xs font-bold uppercase tracking-wide text-slate-500">Recent decisions</p>
+                  <div className="mt-2 divide-y divide-slate-100">
+                    {decided.map((r) => (
+                      <div key={r.id} className="flex items-center justify-between gap-3 py-2">
+                        <p className="truncate text-sm font-medium text-slate-700">{nameOf(r.user_id)} · {ptoTypeLabel(r.pto_type)} · {r.start_date}→{r.end_date}</p>
+                        <span className={`inline-flex shrink-0 items-center rounded-full border px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide ${PTO_STATUS_TONES[r.status] || PTO_STATUS_TONES.cancelled}`}>{r.status}</span>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </SectionCard>
+          );
+        })()}
 
         {(showAll || section === "clients") && (
           <SectionCard
