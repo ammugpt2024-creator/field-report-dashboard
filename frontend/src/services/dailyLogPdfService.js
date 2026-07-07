@@ -1,13 +1,16 @@
 import jsPdfModule from "jspdf";
 import autoTable from "jspdf-autotable";
-import pdfWorkerUrl from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
 import interRegularUrl from "../assets/fonts/Inter-Regular.ttf?url";
 import interSemiBoldUrl from "../assets/fonts/Inter-SemiBold.ttf?url";
 import { supabase } from "./supabase.js";
 import { saveDailyLog } from "./dailyLogService.js";
 import { getStorageConfigError, logStorageStep } from "./storageDiagnosticsService.js";
 
-const COMPANY_LOGO_URL = "https://img1.wsimg.com/isteam/ip/5d283b38-0950-4c46-838b-44766d9a75d2/DULLES%20ENGINEERING_new%20logo.png/%3A/rs%3Dh%3A78%2Ccg%3Atrue%2Cm/qt%3Dq%3A95";
+import { getCompanyBranding } from "./brandingService";
+
+// Branding resolves from the caller's company (multi-tenant); these getters
+// fall back to the historic defaults inside brandingService.
+const COMPANY_LOGO_URL = { get current() { return getCompanyBranding().logoUrl; } };
 const REPORT_FONT_FAMILY = "Inter";
 let reportFontsRegistered = false;
 const PDF_COLORS = {
@@ -119,7 +122,7 @@ function getProjectNumber(log) {
 }
 
 function getDailyReportNumber(log) {
-  const explicitNumber = log.logNumber || log.log_number || log.reportNumber || log.report_number || log.dailyLogNumber || log.daily_log_number;
+  const explicitNumber = log.dfrNumber || log.dfr_number || log.logNumber || log.log_number || log.reportNumber || log.report_number || log.dailyLogNumber || log.daily_log_number;
   if (explicitNumber && !/^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(String(explicitNumber))) return explicitNumber;
   const projectPart = safePathSegment(getProjectNumber(log), "PROJECT").toUpperCase();
   const datePart = safePathSegment(log.date || log.reportDate || log.report_date, "DATE").replace(/-/g, "");
@@ -534,14 +537,6 @@ async function sourceToArrayBuffer(source) {
   }
 }
 
-function getPdfRenderScale(page) {
-  const viewport = page.getViewport({ scale: 1 });
-  const targetWidth = viewport.width > viewport.height ? 1200 : 950;
-  const rawScale = targetWidth / Math.max(viewport.width, 1);
-  const maxPixels = 1_800_000;
-  const pixelScale = Math.sqrt(maxPixels / Math.max(viewport.width * viewport.height, 1));
-  return Math.max(0.85, Math.min(rawScale, pixelScale, 1.6));
-}
 
 function openDataUrl(dataUrl, { download, fileName }) {
   if (download) {
@@ -790,7 +785,11 @@ async function hydrateDailyLogForPdf(log) {
   const logWithAttachments = await hydrateAttachmentsForPdf(logWithProject);
   const activities = await Promise.all((logWithAttachments.activities || []).map(async (activity) => {
     const concreteReports = await Promise.all((activity.concreteReports || []).map(hydrateConcreteReportForPdf));
-    const legacyReports = await Promise.all((activity.reports || []).map(hydrateConcreteReportForPdf));
+    const legacyReports = await Promise.all((activity.reports || []).map((report) => {
+      const type = String(report.type || report.reportType || report.report_type || "").toLowerCase();
+      if (type.includes("concrete")) return hydrateConcreteReportForPdf(report);
+      return Promise.resolve(report);
+    }));
     return {
       ...activity,
       concreteReports,
@@ -804,17 +803,27 @@ function safePathSegment(value, fallback = "unassigned") {
   return String(value || fallback).replace(/[^a-zA-Z0-9_.-]/g, "_");
 }
 
+function getTechnicianInitials(log) {
+  const name = log.technicianName || log.technician_name || log.userName || log.user_name || log.submittedByName || log.submitted_by_name || "";
+  if (!name) return "";
+  return name.trim().split(/\s+/).map((w) => w[0] || "").join("").toUpperCase().slice(0, 4);
+}
+
 function getPdfStoragePath(log) {
+  const initials = getTechnicianInitials(log);
+  const fileName = initials ? `daily-log-${initials}.pdf` : "daily-log.pdf";
   return [
     safePathSegment(log.companyId || log.organizationId || "company"),
     safePathSegment(log.projectId || log.project_id || "project"),
     safePathSegment(log.id || "daily-log"),
-    "daily-log.pdf"
+    fileName
   ].join("/");
 }
 
 function getPdfFileName(log) {
-  return `Daily-Field-Log-${safePathSegment(log.projectNumber || log.projectId)}-${safePathSegment(log.date)}-${safePathSegment(log.id)}.pdf`;
+  const initials = getTechnicianInitials(log);
+  const suffix = initials ? `-${initials}` : "";
+  return `Daily-Field-Log-${safePathSegment(log.projectNumber || log.projectId)}-${safePathSegment(log.date)}-${safePathSegment(log.id)}${suffix}.pdf`;
 }
 
 function arrayBufferToBase64(buffer) {
@@ -907,60 +916,71 @@ function addImageToPdf(doc, source, attachment, x, y, maxWidth, maxHeight) {
   }
 }
 
+// Reset at the start of each generateDailyLogPdfBlob call.
+// Each entry records the 1-based page number of the jsPDF placeholder page
+// so pdf-lib can replace it with the real PDF pages at the exact position.
+let _pdfMergeQueue = [];
+
 async function renderPdfAttachment(doc, attachment, y) {
+  const fileName = getAttachmentFileName(attachment);
   const source = await resolveAttachmentSource(attachment);
   const arrayBuffer = await sourceToArrayBuffer(source);
+
   if (!arrayBuffer) {
     y = ensurePage(doc, y, 22);
-    setReportFont(doc, "regular", 9, PDF_COLORS.slate);
-    doc.text(`PDF attachment unavailable: ${getAttachmentFileName(attachment)}`, PAGE_MARGIN, y);
+    setReportFont(doc, "regular", 8.5, [185, 28, 28]);
+    doc.text(`PDF attachment unavailable: ${fileName}`, PAGE_MARGIN, y);
     return y + 14;
   }
 
-  try {
-    const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-    pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
-    const pdf = await pdfjs.getDocument({ data: arrayBuffer.slice(0) }).promise;
-
-    setReportFont(doc, "medium", 9, PDF_COLORS.slate);
-    doc.text(`Attached PDF: ${getAttachmentFileName(attachment)}`, PAGE_MARGIN, y);
-    y += 12;
-
-    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
-      const page = await pdf.getPage(pageNumber);
-      const viewport = page.getViewport({ scale: getPdfRenderScale(page) });
-      const canvas = document.createElement("canvas");
-      const context = canvas.getContext("2d");
-      if (!context) throw new Error("Canvas rendering is not available.");
-      canvas.width = Math.ceil(viewport.width);
-      canvas.height = Math.ceil(viewport.height);
-      context.fillStyle = "#ffffff";
-      context.fillRect(0, 0, canvas.width, canvas.height);
-      await page.render({ canvasContext: context, viewport }).promise;
-
-      const pageImage = canvas.toDataURL("image/jpeg", 0.72);
-      // Cap attached pages at roughly two-thirds of the printable height so they
-      // read as embedded figures instead of consuming a full page each.
-      const maxAttachedPageHeight = 440;
-      const ratio = Math.min(getContentWidth(doc) / canvas.width, maxAttachedPageHeight / canvas.height);
-      const width = canvas.width * ratio;
-      const height = canvas.height * ratio;
-      y = ensurePage(doc, y, height + 22);
-      const x = PAGE_MARGIN + (getContentWidth(doc) - width) / 2;
-      doc.setDrawColor(226, 232, 240);
-      doc.setFillColor(255, 255, 255);
-      doc.rect(x - 4, y - 4, width + 8, height + 8, "FD");
-      doc.addImage(pageImage, "JPEG", x, y, width, height, undefined, "FAST");
-      y += height + 14;
-    }
-  } catch (error) {
-    console.warn("[Daily Log PDF] Unable to render PDF attachment", error);
-    y = ensurePage(doc, y, 22);
-    setReportFont(doc, "regular", 9, PDF_COLORS.slate);
-    doc.text(`PDF attachment could not be rendered: ${getAttachmentFileName(attachment)}`, PAGE_MARGIN, y);
-    y += 14;
+  // If ensurePage already moved us to the top of a fresh page, use that page
+  // as the placeholder; otherwise add a new one.  This avoids a blank page
+  // between the activity content and the attachment.
+  if (y > PAGE_TOP_MARGIN + 4) {
+    doc.addPage("letter", "portrait");
   }
-  return y;
+  const placeholderPage = doc.internal.getNumberOfPages(); // 1-based
+  // Minimal fallback label visible only if the merge step fails
+  setReportFont(doc, "medium", 8.5, PDF_COLORS.slate);
+  doc.text(`Attached PDF: ${fileName}`, PAGE_MARGIN, PAGE_TOP_MARGIN);
+  _pdfMergeQueue.push({ pageNumber: placeholderPage, fileName, arrayBuffer });
+
+  // Return y beyond the page height so the next ensurePage() opens a fresh page
+  return doc.internal.pageSize.getHeight() + 1;
+}
+
+async function mergePdfAttachments(mainBlob, queue) {
+  if (!queue.length) return mainBlob;
+  try {
+    const { PDFDocument } = await import("pdf-lib");
+    const mainDoc = await PDFDocument.load(await mainBlob.arrayBuffer());
+
+    // Process highest page number first so earlier insertions don't shift
+    // the 0-based indices of pages still waiting to be processed.
+    const sorted = [...queue].sort((a, b) => b.pageNumber - a.pageNumber);
+
+    for (const { pageNumber, fileName, arrayBuffer } of sorted) {
+      const idx = pageNumber - 1; // pdf-lib uses 0-based indices
+      try {
+        const attachedDoc = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
+        const copied = await mainDoc.copyPages(attachedDoc, attachedDoc.getPageIndices());
+        // Remove the placeholder page
+        mainDoc.removePage(idx);
+        // Insert the real pages at the same position in original order
+        for (let i = 0; i < copied.length; i++) {
+          mainDoc.insertPage(idx + i, copied[i]);
+        }
+      } catch (err) {
+        console.warn(`[Daily Log PDF] Could not merge attachment: ${fileName}`, err);
+      }
+    }
+
+    const merged = await mainDoc.save();
+    return new Blob([merged], { type: "application/pdf" });
+  } catch (err) {
+    console.warn("[Daily Log PDF] pdf-lib merge failed, returning unmerged PDF", err);
+    return mainBlob;
+  }
 }
 
 async function renderSignatureImage(doc, source, x, y, width, height) {
@@ -1149,7 +1169,7 @@ function getRecordValue(record, keys) {
 }
 
 async function renderReferenceDailyLogHeader(doc, log, y) {
-  const logoSource = await sourceToDataUrl(log.companyLogoUrl || log.company_logo_url || COMPANY_LOGO_URL) || getDullesLogoDataUrl();
+  const logoSource = await sourceToDataUrl(log.companyLogoUrl || log.company_logo_url || COMPANY_LOGO_URL.current) || getDullesLogoDataUrl();
   const pageWidth = getPageWidth(doc);
   const headerX = PAGE_MARGIN;
   const headerWidth = getContentWidth(doc);
@@ -1517,6 +1537,593 @@ async function renderReferenceAttachmentContent(doc, attachments, y, title) {
   return y + 6;
 }
 
+function getReportKind(report) {
+  const type = String(report.type || report.reportType || report.report_type || "").toLowerCase();
+  const num = String(report.reportNumber || report.report_number || "").trim();
+  if (type.includes("asphalt") || num.startsWith("ACR-")) return "asphalt";
+  if (num.startsWith("CDR-") || (!num.startsWith("ACR-") && (type.includes("compaction") || type.includes("density") || type.includes("nuclear")))) return "compaction";
+  if (type.includes("infiltration") || num.startsWith("SIR-")) return "infiltration";
+  if (type.includes("proctor") || num.startsWith("OPP-")) return "proctor";
+  if (type.includes("sample")) return "samples";
+  return "concrete";
+}
+
+async function renderReferenceAsphaltReportBlock(doc, report, reportIndex, y, activity, log) {
+  const logDate = log.date || log.logDate || log.log_date || "";
+  const calibrationDueDate = report.calibrationDueDate || report.calibration_due_date || "";
+  const isOutOfCalibration = Boolean(calibrationDueDate && logDate && calibrationDueDate < logDate);
+
+  y = ensurePage(doc, y, 160);
+  y = renderReferenceSectionBar(doc, `Asphalt Compaction Report ${reportIndex + 1}`, y, {
+    afterGap: 10,
+    rightText: formatStatus(report.status || "Draft")
+  });
+
+  y = renderReferenceCardGrid(doc, [
+    { label: "Serial Number", value: pdfValue(report.serialNumber) },
+    { label: "Gauge Model", value: pdfValue(report.gaugeModel) },
+    { label: "Calibration Due Date", value: isOutOfCalibration ? `${calibrationDueDate} ⚠ OUT OF CALIBRATION` : pdfValue(calibrationDueDate) },
+    { label: "Gauge Standardized", value: pdfValue(report.standardizedGauge) },
+    { label: "Standard Count Density", value: pdfValue(report.standardDensity) },
+    { label: "Standard Count Moisture", value: pdfValue(report.standardMoisture) }
+  ], y, { columns: 3, afterGap: isOutOfCalibration ? 6 : 10 });
+
+  if (isOutOfCalibration) {
+    y = ensurePage(doc, y, 24);
+    doc.setFillColor(...[254, 226, 226]);
+    doc.roundedRect(PAGE_MARGIN, y, getContentWidth(doc), 18, 3, 3, "F");
+    setReportFont(doc, "bold", 8.5, [185, 28, 28]);
+    doc.text(`⚠ OUT OF CALIBRATION — Calibration expired before report date (${logDate}).`, PAGE_MARGIN + 6, y + 11);
+    y += 24;
+  }
+
+  const materialGroups = Array.isArray(report.materialGroups) ? report.materialGroups : [];
+  if (!materialGroups.length) {
+    y = renderReferenceTextBox(doc, "Test Data", "No material groups or test records recorded.", y);
+  }
+
+  for (const [gi, group] of materialGroups.entries()) {
+    y = ensurePage(doc, y, 80);
+    y = renderReferenceSubTitle(doc, `Material ${gi + 1} — Mix ID: ${pdfValue(group.mixId)}`, y, { rightText: `${(group.testRecords || []).length} test(s)` });
+    y = renderReferenceCardGrid(doc, [
+      { label: "Marshall Value (pcf)", value: pdfValue(group.marshallValue) },
+      { label: "Required Compaction (%)", value: pdfValue(group.requiredCompaction) }
+    ], y, { columns: 3, afterGap: 8 });
+
+    const records = Array.isArray(group.testRecords) ? group.testRecords : [];
+    if (records.length) {
+      y = ensurePage(doc, y, 80);
+      const fontFamily = reportFontsRegistered ? REPORT_FONT_FAMILY : "helvetica";
+      autoTable(doc, {
+        startY: y,
+        head: [["Test #", "Location", "Field Density (pcf)", "Compaction %", "Result"]],
+        body: records.map((r) => [
+          pdfValue(r.testNo),
+          pdfValue(r.location),
+          pdfValue(r.fieldDensity),
+          r.compactionPercent ? `${r.compactionPercent}%` : "N/A",
+          pdfValue(r.result)
+        ]),
+        theme: "grid",
+        margin: { left: PAGE_MARGIN, right: PAGE_MARGIN, top: PAGE_TOP_MARGIN, bottom: PAGE_BOTTOM_MARGIN + 16 },
+        tableWidth: getContentWidth(doc),
+        showHead: "everyPage",
+        styles: { font: fontFamily, fontSize: 8, textColor: PDF_COLORS.navy, cellPadding: 5, valign: "middle" },
+        headStyles: { fillColor: PDF_COLORS.navy, textColor: PDF_COLORS.white, fontStyle: "bold", fontSize: 8 },
+        bodyStyles: { fillColor: PDF_COLORS.white },
+        alternateRowStyles: { fillColor: PDF_COLORS.soft },
+        didParseCell(data) {
+          if (data.section === "body") {
+            if (data.column.index === 4) {
+              const val = String(data.cell.raw || "").toUpperCase();
+              if (val === "PASS") data.cell.styles.textColor = [4, 120, 87];
+              else if (val === "FAIL") data.cell.styles.textColor = [185, 28, 28];
+            }
+            if (data.column.index === 3) {
+              const pct = parseFloat(String(data.cell.raw || "").replace("%", ""));
+              if (!Number.isNaN(pct) && pct > 102) {
+                data.cell.styles.textColor = [146, 64, 14];
+                data.cell.styles.fontStyle = "bold";
+              }
+            }
+          }
+        }
+      });
+      y = doc.lastAutoTable.finalY + 10;
+    } else {
+      y = renderReferenceTextBox(doc, "Test Records", "No test records for this material.", y);
+    }
+  }
+
+  if (report.coresTaken) {
+    const coreItems = [{ label: "Cores Taken", value: pdfValue(report.coresTaken) }];
+    if (report.coresTaken === "Yes") {
+      coreItems.push({ label: "Number of Cores", value: pdfValue(report.coreCount) });
+      coreItems.push({ label: "Core Locations", value: pdfValue(report.coreLocations) });
+    }
+    y = renderReferenceCardGrid(doc, coreItems, y, { columns: 3, afterGap: 8 });
+    if (report.coreNotes) {
+      y = renderReferenceTextBox(doc, "Core Notes", report.coreNotes, y);
+    }
+  }
+
+  y = await renderReferenceAttachmentContent(doc, getReportAttachments(report, activity, log), y, `Asphalt Report ${reportIndex + 1} Attachments`);
+  return y + 6;
+}
+
+async function renderReferenceNuclearCompactionReportBlock(doc, report, reportIndex, y, activity, log) {
+  const logDate = log.date || log.logDate || log.log_date || "";
+  const calibrationDueDate = report.calibrationDueDate || report.calibration_due_date || "";
+  const isOutOfCalibration = Boolean(calibrationDueDate && logDate && calibrationDueDate < logDate);
+
+  y = ensurePage(doc, y, 160);
+  y = renderReferenceSectionBar(doc, `Nuclear Density Report ${reportIndex + 1}`, y, {
+    afterGap: 10,
+    rightText: formatStatus(report.status || "Draft")
+  });
+
+  y = renderReferenceCardGrid(doc, [
+    { label: "Serial Number", value: pdfValue(report.serialNumber || report.serial_number) },
+    { label: "Gauge Model", value: pdfValue(report.gaugeModel || report.gauge_model) },
+    { label: "Calibration Due Date", value: isOutOfCalibration ? `${calibrationDueDate} ⚠ OUT OF CALIBRATION` : pdfValue(calibrationDueDate) },
+    { label: "Gauge Standardized", value: pdfValue(report.standardizedGauge || report.standardized_gauge) },
+    { label: "Standard Count Density", value: pdfValue(report.standardDensity || report.standard_density) },
+    { label: "Standard Count Moisture", value: pdfValue(report.standardMoisture || report.standard_moisture) },
+    { label: "Material Type", value: pdfValue(report.materialType || report.material_type) },
+    { label: "Material Name", value: pdfValue(report.materialName || report.material_name) },
+    { label: "Min. Density Required (%)", value: pdfValue(report.percentMinimumDensityRequired || report.percent_minimum_density_required) }
+  ], y, { columns: 3, afterGap: isOutOfCalibration ? 6 : 10 });
+
+  if (isOutOfCalibration) {
+    y = ensurePage(doc, y, 24);
+    doc.setFillColor(...[254, 226, 226]);
+    doc.roundedRect(PAGE_MARGIN, y, getContentWidth(doc), 18, 3, 3, "F");
+    setReportFont(doc, "bold", 8.5, [185, 28, 28]);
+    doc.text(`⚠ OUT OF CALIBRATION — Calibration expired before report date (${logDate}).`, PAGE_MARGIN + 6, y + 11);
+    y += 24;
+  }
+
+  const records = Array.isArray(report.testRecords) ? report.testRecords : [];
+  if (records.length) {
+    y = ensurePage(doc, y, 80);
+    const fontFamily = reportFontsRegistered ? REPORT_FONT_FAMILY : "helvetica";
+    autoTable(doc, {
+      startY: y,
+      head: [["Test #", "Location", "Wet Density", "Dry Density", "% Dry Density", "Result"]],
+      body: records.map((r) => [
+        pdfValue(r.testNo || r.test_no),
+        pdfValue(r.location),
+        pdfValue(r.wetDensity || r.wet_density),
+        pdfValue(r.dryDensity || r.dry_density),
+        pdfValue(r.percentDryDensity || r.percent_dry_density),
+        pdfValue(r.densityResult || r.density_result)
+      ]),
+      theme: "grid",
+      margin: { left: PAGE_MARGIN, right: PAGE_MARGIN, top: PAGE_TOP_MARGIN, bottom: PAGE_BOTTOM_MARGIN + 16 },
+      tableWidth: getContentWidth(doc),
+      showHead: "everyPage",
+      styles: { font: fontFamily, fontSize: 8, textColor: PDF_COLORS.navy, cellPadding: 5, valign: "middle" },
+      headStyles: { fillColor: PDF_COLORS.navy, textColor: PDF_COLORS.white, fontStyle: "bold", fontSize: 8 },
+      bodyStyles: { fillColor: PDF_COLORS.white },
+      alternateRowStyles: { fillColor: PDF_COLORS.soft }
+    });
+    y = doc.lastAutoTable.finalY + 10;
+  } else {
+    y = renderReferenceTextBox(doc, "Test Records", "No test records recorded for this report.", y);
+  }
+
+  y = await renderReferenceAttachmentContent(doc, getReportAttachments(report, activity, log), y, `Nuclear Density Report ${reportIndex + 1} Attachments`);
+  return y + 6;
+}
+
+async function renderReferenceInfiltrationReportBlock(doc, report, reportIndex, y, activity, log) {
+  y = ensurePage(doc, y, 160);
+  y = renderReferenceSectionBar(doc, `Surface Infiltration Rate Report ${reportIndex + 1}`, y, {
+    afterGap: 10,
+    rightText: formatStatus(report.status || "Draft")
+  });
+
+  y = renderReferenceCardGrid(doc, [
+    { label: "Project Name", value: pdfValue(report.projectName || report.project_name) },
+    { label: "Project Number", value: pdfValue(report.projectNumber || report.project_number) },
+    { label: "Date", value: pdfValue(report.date) },
+    { label: "Client", value: pdfValue(report.client) },
+    { label: "Location", value: pdfValue(report.location) },
+    { label: "Test Standard", value: "ASTM C1781" }
+  ], y, { columns: 3, afterGap: 10 });
+
+  const records = Array.isArray(report.testRecords) ? report.testRecords : [];
+  if (records.length) {
+    y = ensurePage(doc, y, 80);
+    const fontFamily = reportFontsRegistered ? REPORT_FONT_FAMILY : "helvetica";
+    autoTable(doc, {
+      startY: y,
+      head: [["Test #", "Location", "Weight (g)", "Diameter (mm)", "Time (s)", "IR (mm/hr)"]],
+      body: records.map((r, i) => [
+        pdfValue(r.testNo || r.test_no || i + 1),
+        pdfValue(r.location),
+        pdfValue(r.weightInfiltratedWater),
+        pdfValue(r.insideDiameter),
+        pdfValue(r.timeInfiltration),
+        String(r.infiltrationRate || "").trim() || "—"
+      ]),
+      theme: "grid",
+      margin: { left: PAGE_MARGIN, right: PAGE_MARGIN, top: PAGE_TOP_MARGIN, bottom: PAGE_BOTTOM_MARGIN + 16 },
+      tableWidth: getContentWidth(doc),
+      showHead: "everyPage",
+      styles: { font: fontFamily, fontSize: 8, textColor: PDF_COLORS.navy, cellPadding: 5, valign: "middle" },
+      headStyles: { fillColor: PDF_COLORS.navy, textColor: PDF_COLORS.white, fontStyle: "bold", fontSize: 8 },
+      bodyStyles: { fillColor: PDF_COLORS.white },
+      alternateRowStyles: { fillColor: PDF_COLORS.soft },
+      didParseCell: ({ cell, column }) => {
+        if (column.index === 5 && cell.section === "body") {
+          const val = String(cell.raw || "").trim();
+          if (val && val !== "—") {
+            cell.styles.textColor = [5, 122, 85];
+            cell.styles.fontStyle = "bold";
+          }
+        }
+      }
+    });
+    y = doc.lastAutoTable.finalY + 10;
+
+    y = ensurePage(doc, y, 28);
+    doc.setFillColor(239, 246, 255);
+    doc.roundedRect(PAGE_MARGIN, y, getContentWidth(doc), 18, 3, 3, "F");
+    setReportFont(doc, "regular", 7.5, [30, 64, 175]);
+    doc.text("Formula: IR = (126,870 × W) / (D² × T)  |  W = Weight infiltrated water (g) · D = Inside diameter of ring (mm) · T = Time elapsed (s)", PAGE_MARGIN + 6, y + 11);
+    y += 24;
+  } else {
+    y = renderReferenceTextBox(doc, "Test Records", "No test records recorded for this report.", y);
+  }
+
+  y = await renderReferenceAttachmentContent(doc, getReportAttachments(report, activity, log), y, `Surface Infiltration Report ${reportIndex + 1} Attachments`);
+  return y + 6;
+}
+
+// VTM-12 Set "C" moisture-density curve parameters (mirrors FieldEngineerWorkspace.jsx)
+const VTM12_CURVES_PDF = {
+  A: { maxDryDensity: 141.8, optimumMoisture: 6.1 },
+  B: { maxDryDensity: 139.1, optimumMoisture: 6.7 },
+  C: { maxDryDensity: 136.3, optimumMoisture: 7.4 },
+  D: { maxDryDensity: 134.1, optimumMoisture: 8.0 },
+  E: { maxDryDensity: 132.0, optimumMoisture: 8.5 },
+  F: { maxDryDensity: 129.3, optimumMoisture: 9.2 },
+  G: { maxDryDensity: 126.6, optimumMoisture: 10.0 },
+  H: { maxDryDensity: 124.2, optimumMoisture: 10.7 },
+  I: { maxDryDensity: 121.7, optimumMoisture: 11.4 },
+  J: { maxDryDensity: 119.3, optimumMoisture: 12.2 },
+  K: { maxDryDensity: 117.0, optimumMoisture: 13.0 },
+  L: { maxDryDensity: 114.6, optimumMoisture: 14.1 },
+  M: { maxDryDensity: 112.0, optimumMoisture: 15.2 },
+  N: { maxDryDensity: 109.6, optimumMoisture: 16.4 },
+  O: { maxDryDensity: 107.1, optimumMoisture: 17.6 },
+  P: { maxDryDensity: 104.7, optimumMoisture: 19.2 },
+  Q: { maxDryDensity: 102.4, optimumMoisture: 20.3 },
+  R: { maxDryDensity: 99.9,  optimumMoisture: 21.5 },
+  S: { maxDryDensity: 97.4,  optimumMoisture: 22.7 },
+  T: { maxDryDensity: 94.6,  optimumMoisture: 24.4 },
+  U: { maxDryDensity: 92.1,  optimumMoisture: 25.8 },
+  V: { maxDryDensity: 89.9,  optimumMoisture: 27.4 },
+  W: { maxDryDensity: 87.5,  optimumMoisture: 29.5 },
+  X: { maxDryDensity: 85.0,  optimumMoisture: 30.5 },
+  Y: { maxDryDensity: 83.0,  optimumMoisture: 31.5 },
+  Z: { maxDryDensity: 81.1,  optimumMoisture: 32.5 }
+};
+
+// Draws Figure 1 (VTM-12 moisture-density curves) on the current PDF page.
+// All 26 curves are rendered with solid black lines; the selected curve(s) for
+// this report are drawn with a heavier stroke so they stand out.
+function renderProctorCurvesPage(doc, report) {
+  const fontFamily = reportFontsRegistered ? REPORT_FONT_FAMILY : "helvetica";
+  const pageW = getPageWidth(doc);
+  const pageH = getPageHeight(doc);
+
+  // ── Title ──────────────────────────────────────────────────────────────────
+  let ty = PAGE_TOP_MARGIN + 8;
+  doc.setFont(fontFamily, "bold");
+  doc.setFontSize(10);
+  doc.setTextColor(...PDF_COLORS.navy);
+  doc.text("FIGURE 1 — TYPICAL MOISTURE-DENSITY CURVES, SET \"C\"", pageW / 2, ty, { align: "center" });
+  ty += 9;
+  doc.setFont(fontFamily, "normal");
+  doc.setFontSize(7.5);
+  doc.setTextColor(...PDF_COLORS.muted);
+  doc.text("VTM-12 / AASHTO T 272 · TL-125A · VDOT Special Provision", pageW / 2, ty, { align: "center" });
+  ty += 5;
+
+  // ── Graph area ────────────────────────────────────────────────────────────
+  const yAxisLabelWidth = 20;  // space reserved for Y-axis tick labels
+  const xAxisLabelHeight = 18; // space reserved below graph for X-axis labels + title
+  const gx = PAGE_MARGIN + yAxisLabelWidth;
+  const gy = ty + 8;
+  const gw = pageW - PAGE_MARGIN - gx - 4;
+  const gh = pageH - PAGE_BOTTOM_MARGIN - gy - xAxisLabelHeight;
+
+  // Axis data ranges
+  const moistMin = 2,  moistMax = 36;
+  const densMin  = 78, densMax  = 146;
+
+  function toX(moist) { return gx + (moist - moistMin) / (moistMax - moistMin) * gw; }
+  function toY(dens)  { return gy + (1 - (dens - densMin) / (densMax - densMin)) * gh; }
+
+  // White fill
+  doc.setFillColor(255, 255, 255);
+  doc.rect(gx, gy, gw, gh, "F");
+
+  // ── Grid lines ─────────────────────────────────────────────────────────────
+  doc.setDrawColor(210, 210, 210);
+  doc.setLineWidth(0.25);
+  for (let m = 4; m <= 34; m += 2) {
+    const x = toX(m);
+    doc.line(x, gy, x, gy + gh);
+  }
+  for (let d = 80; d <= 144; d += 4) {
+    const y = toY(d);
+    doc.line(gx, y, gx + gw, y);
+  }
+
+  // ── Graph border ───────────────────────────────────────────────────────────
+  doc.setDrawColor(0, 0, 0);
+  doc.setLineWidth(0.7);
+  doc.rect(gx, gy, gw, gh);
+
+  // ── Y-axis labels ──────────────────────────────────────────────────────────
+  doc.setFont(fontFamily, "normal");
+  doc.setFontSize(6);
+  doc.setTextColor(0, 0, 0);
+  for (let d = 80; d <= 144; d += 4) {
+    const y = toY(d);
+    doc.setDrawColor(0, 0, 0);
+    doc.setLineWidth(0.4);
+    doc.line(gx - 3, y, gx, y);
+    doc.text(String(d), gx - 4, y + 2, { align: "right" });
+  }
+
+  // ── X-axis labels ──────────────────────────────────────────────────────────
+  for (let m = 4; m <= 34; m += 2) {
+    const x = toX(m);
+    doc.setDrawColor(0, 0, 0);
+    doc.setLineWidth(0.4);
+    doc.line(x, gy + gh, x, gy + gh + 3);
+    doc.setFont(fontFamily, "normal");
+    doc.setFontSize(6);
+    doc.setTextColor(0, 0, 0);
+    doc.text(String(m), x, gy + gh + 8, { align: "center" });
+  }
+
+  // ── Axis titles ────────────────────────────────────────────────────────────
+  doc.setFont(fontFamily, "bold");
+  doc.setFontSize(7);
+  doc.setTextColor(0, 0, 0);
+  // X-axis title
+  doc.text("MOISTURE CONTENT (%)", gx + gw / 2, gy + gh + 16, { align: "center" });
+  // Y-axis title (rotated 90°)
+  doc.text("DRY DENSITY (lb/ft³)", gx - yAxisLabelWidth + 2, gy + gh / 2, { angle: 90, align: "center" });
+
+  // ── Determine which curves are selected in this report ────────────────────
+  const selectedCurves = new Set(
+    (report.testRecords || []).map((r) => r.selectedCurve).filter(Boolean)
+  );
+
+  // Parabolic curve model: D(w) = MDD − k·(w − OMC)²
+  // k = 0.0048 × MDD gives ≈10 % density drop at OMC ± 5 %, matching VTM-12 curves.
+  const K_FACTOR = 0.0048;
+  const CURVE_PTS = 60;
+  const HALF_WIDTH = 7; // moisture half-span of each parabola (%)
+
+  function drawCurve(mdd, omc, lineWidth) {
+    doc.setDrawColor(0, 0, 0);
+    doc.setLineWidth(lineWidth);
+    const k = K_FACTOR * mdd;
+    let prev = null;
+    for (let i = 0; i <= CURVE_PTS; i++) {
+      const w = (omc - HALF_WIDTH) + (HALF_WIDTH * 2) * i / CURVE_PTS;
+      const d = mdd - k * (w - omc) * (w - omc);
+      if (w < moistMin || w > moistMax || d < densMin || d > densMax) {
+        prev = null;
+        continue;
+      }
+      const px = toX(w);
+      const py = toY(d);
+      if (prev) doc.line(prev[0], prev[1], px, py);
+      prev = [px, py];
+    }
+  }
+
+  // First pass — all non-selected curves (thin solid black, 0.5 pt)
+  Object.entries(VTM12_CURVES_PDF).forEach(([letter, { maxDryDensity: mdd, optimumMoisture: omc }]) => {
+    if (selectedCurves.has(letter)) return;
+    drawCurve(mdd, omc, 0.5);
+    // Small letter label just above the peak
+    if (omc >= moistMin && omc <= moistMax && mdd >= densMin && mdd <= densMax) {
+      doc.setFont(fontFamily, "bold");
+      doc.setFontSize(5.5);
+      doc.setTextColor(0, 0, 0);
+      doc.text(letter, toX(omc), toY(mdd) - 2, { align: "center" });
+    }
+  });
+
+  // Second pass — selected curves (heavy solid black, 2 pt)
+  selectedCurves.forEach((letter) => {
+    const entry = VTM12_CURVES_PDF[letter];
+    if (!entry) return;
+    const { maxDryDensity: mdd, optimumMoisture: omc } = entry;
+    drawCurve(mdd, omc, 2);
+    if (omc >= moistMin && omc <= moistMax && mdd >= densMin && mdd <= densMax) {
+      doc.setFont(fontFamily, "bold");
+      doc.setFontSize(8);
+      doc.setTextColor(0, 0, 0);
+      doc.text(letter, toX(omc), toY(mdd) - 4, { align: "center" });
+    }
+  });
+
+  // ── Test point markers ─────────────────────────────────────────────────────
+  (report.testRecords || []).forEach((r, idx) => {
+    const mc = parseFloat(r.moistureContent);
+    const fd = parseFloat(r.fieldDryDensity);
+    if (isNaN(mc) || isNaN(fd)) return;
+    if (mc < moistMin || mc > moistMax || fd < densMin || fd > densMax) return;
+    const px = toX(mc);
+    const py = toY(fd);
+    doc.setFillColor(0, 0, 0);
+    doc.setDrawColor(0, 0, 0);
+    doc.setLineWidth(0.5);
+    // Draw an X marker
+    const s = 3;
+    doc.line(px - s, py - s, px + s, py + s);
+    doc.line(px + s, py - s, px - s, py + s);
+    // Label
+    doc.setFont(fontFamily, "bold");
+    doc.setFontSize(6.5);
+    doc.setTextColor(0, 0, 0);
+    doc.text(`T${r.testNo || idx + 1}`, px + s + 2, py + 2);
+  });
+
+  // ── Legend / note ─────────────────────────────────────────────────────────
+  const noteY = gy + gh + xAxisLabelHeight + 4;
+  doc.setFont(fontFamily, "normal");
+  doc.setFontSize(7);
+  doc.setTextColor(...PDF_COLORS.muted);
+  const selLabel = selectedCurves.size > 0
+    ? `Selected curve(s): ${[...selectedCurves].join(", ")} — drawn with heavy line. `
+    : "";
+  doc.text(
+    `${selLabel}× markers show field test point (moisture content vs. field dry density). All 26 VTM-12 Set "C" curves shown.`,
+    PAGE_MARGIN, noteY
+  );
+  return noteY + 10;
+}
+
+async function renderReferenceProctorReportBlock(doc, report, reportIndex, y, activity, log) {
+  y = ensurePage(doc, y, 160);
+  y = renderReferenceSectionBar(doc, `One-Point Proctor Report ${reportIndex + 1}`, y, {
+    afterGap: 10,
+    rightText: formatStatus(report.status || "Draft")
+  });
+
+  y = renderReferenceCardGrid(doc, [
+    { label: "Project Name", value: pdfValue(report.projectName || report.project_name) },
+    { label: "Project Number", value: pdfValue(report.projectNumber || report.project_number) },
+    { label: "Date", value: pdfValue(report.date) },
+    { label: "Client", value: pdfValue(report.client) },
+    { label: "Test Standard", value: "AASHTO T 272 / VTM-12" },
+    { label: "Curve Set", value: "Set \"C\" (A–Z)" }
+  ], y, { columns: 3, afterGap: 10 });
+
+  const records = Array.isArray(report.testRecords) ? report.testRecords : [];
+  const hasOversized = records.some((r) => r.hasOversizedCorrection);
+  if (records.length) {
+    y = ensurePage(doc, y, 80);
+    const fontFamily = reportFontsRegistered ? REPORT_FONT_FAMILY : "helvetica";
+    // Columns match TL-125A rows A–L
+    const baseHead = [
+      "Test #", "Location",
+      "A\nMold+Soil (lb)", "B\nMold Wt (lb)", "D\nWet Density\n(lb/ft³)",
+      "F\nMoisture (%)", "Curve",
+      "G\nMDD (lb/ft³)", "H\nOMC (%)",
+      "I\nField Density\n(lb/ft³)",
+      "L\n% Comp.", "Result"
+    ];
+    const oversizedHead = hasOversized ? ["J\nNo.4 (%)", "K\nCorr MDD\n(lb/ft³)"] : [];
+    // Column index of "Result" depends on whether oversized columns are appended
+    const resultColIndex = baseHead.length - 1;
+    const compColIndex = resultColIndex - 1;
+    autoTable(doc, {
+      startY: y,
+      head: [[...baseHead, ...oversizedHead]],
+      body: records.map((r, i) => {
+        const pct = String(r.percentCompaction || "").trim();
+        const result = String(r.compactionResult || "").trim();
+        const base = [
+          pdfValue(r.testNo || r.test_no || i + 1),
+          pdfValue(r.location),
+          pdfValue(r.moldAndSoilWeight),
+          pdfValue(r.moldWeight),
+          pdfValue(r.wetDensity),
+          pdfValue(r.moistureContent),
+          pdfValue(r.selectedCurve),
+          pdfValue(r.maxDryDensityFromCurve),
+          pdfValue(r.optimumMoistureFromCurve),
+          pdfValue(r.fieldDryDensity),
+          pct ? `${pct}%` : "—",
+          result || "—"
+        ];
+        const oversized = hasOversized ? [
+          pdfValue(r.percentPlusNo4),
+          pdfValue(r.correctedMaxDryDensity)
+        ] : [];
+        return [...base, ...oversized];
+      }),
+      theme: "grid",
+      margin: { left: PAGE_MARGIN, right: PAGE_MARGIN, top: PAGE_TOP_MARGIN, bottom: PAGE_BOTTOM_MARGIN + 16 },
+      tableWidth: getContentWidth(doc),
+      showHead: "everyPage",
+      styles: { font: fontFamily, fontSize: 7, textColor: PDF_COLORS.navy, cellPadding: 3, valign: "middle" },
+      headStyles: { fillColor: PDF_COLORS.navy, textColor: PDF_COLORS.white, fontStyle: "bold", fontSize: 7 },
+      bodyStyles: { fillColor: PDF_COLORS.white },
+      alternateRowStyles: { fillColor: PDF_COLORS.soft },
+      didParseCell: ({ cell, column }) => {
+        if (cell.section === "body") {
+          if (column.index === resultColIndex) {
+            const val = String(cell.raw || "").trim();
+            if (val === "PASS") {
+              cell.styles.textColor = [5, 122, 85];
+              cell.styles.fontStyle = "bold";
+            } else if (val === "FAIL") {
+              cell.styles.textColor = [185, 28, 28];
+              cell.styles.fontStyle = "bold";
+            }
+          }
+          if (column.index === compColIndex) {
+            cell.styles.fontStyle = "bold";
+          }
+        }
+      }
+    });
+    y = doc.lastAutoTable.finalY + 10;
+
+    y = ensurePage(doc, y, 28);
+    doc.setFillColor(236, 253, 245);
+    doc.roundedRect(PAGE_MARGIN, y, getContentWidth(doc), 18, 3, 3, "F");
+    setReportFont(doc, "regular", 7, [5, 122, 85]);
+    doc.text("C = A−B · D = C×30 · L = I/G×100  |  G from VTM-12 Fig. 1 · K (corrected MDD) applied when J ≥ 10% retained on No. 4  |  AASHTO T 272 / VTM-12 / TL-125A", PAGE_MARGIN + 6, y + 11);
+    y += 24;
+  } else {
+    y = renderReferenceTextBox(doc, "Test Records", "No test records recorded for this report.", y);
+  }
+
+  // Figure 1: moisture-density curves on a dedicated page (mirrors TL-125A page 2)
+  doc.addPage("letter", "portrait");
+  y = renderProctorCurvesPage(doc, report);
+  // Attachments start on a new page only when there are attachments to render;
+  // ensurePage will handle the page break if there isn't enough room.
+  y = await renderReferenceAttachmentContent(doc, getReportAttachments(report, activity, log), y, `One-Point Proctor Report ${reportIndex + 1} Attachments`);
+  return y + 6;
+}
+
+async function renderReferenceSamplesReportBlock(doc, report, reportIndex, y, activity, log) {
+  y = ensurePage(doc, y, 140);
+  y = renderReferenceSectionBar(doc, `Samples Collection Report ${reportIndex + 1}`, y, {
+    afterGap: 10,
+    rightText: formatStatus(report.status || "Draft")
+  });
+
+  y = renderReferenceCardGrid(doc, [
+    { label: "Project Name", value: pdfValue(report.projectName || report.project_name) },
+    { label: "Project Number", value: pdfValue(report.projectNumber || report.project_number) },
+    { label: "Sample Type", value: pdfValue(report.sampleType) },
+    { label: "Cast Date", value: pdfValue(report.castDate || report.cast_date) },
+    { label: "Samples / Specimens", value: pdfValue(report.specimenCount || report.specimen_count) },
+    { label: "Date Collected", value: pdfValue(report.date) }
+  ], y, { columns: 3, afterGap: 10 });
+
+  y = renderReferenceTextBox(doc, "Comments", sentenceCase(report.comments || "No comments recorded."), y);
+
+  y = await renderReferenceAttachmentContent(doc, getReportAttachments(report, activity, log), y, `Samples Collection Report ${reportIndex + 1} Attachments`);
+  return y + 6;
+}
+
 async function renderReferenceConcreteReportBlock(doc, report, reportIndex, y, activity, log) {
   y = ensurePage(doc, y, 160);
   y = renderReferenceSectionBar(doc, `Concrete Report ${reportIndex + 1} — ${getReportDfrNumber(report)}`, y, {
@@ -1585,31 +2192,24 @@ async function renderReferenceActivityDetails(doc, log, y) {
     }
 
     for (const [reportIndex, report] of reports.entries()) {
-      y = await renderReferenceConcreteReportBlock(doc, report, reportIndex, y, activity, log);
+      const kind = getReportKind(report);
+      if (kind === "asphalt") {
+        y = await renderReferenceAsphaltReportBlock(doc, report, reportIndex, y, activity, log);
+      } else if (kind === "compaction") {
+        y = await renderReferenceNuclearCompactionReportBlock(doc, report, reportIndex, y, activity, log);
+      } else if (kind === "infiltration") {
+        y = await renderReferenceInfiltrationReportBlock(doc, report, reportIndex, y, activity, log);
+      } else if (kind === "proctor") {
+        y = await renderReferenceProctorReportBlock(doc, report, reportIndex, y, activity, log);
+      } else if (kind === "samples") {
+        y = await renderReferenceSamplesReportBlock(doc, report, reportIndex, y, activity, log);
+      } else {
+        y = await renderReferenceConcreteReportBlock(doc, report, reportIndex, y, activity, log);
+      }
     }
 
     y = await renderReferenceAttachmentContent(doc, attachments, y, `Activity ${String(index + 1).padStart(2, "0")} Attachments`);
   }
-  return y;
-}
-
-function renderReferenceQaqcSummary(doc, log, y) {
-  const reports = getConcreteReports(log).map(({ report }) => report);
-  const records = reports.flatMap(getReportRecords);
-  const totalCy = records.reduce((sum, record) => sum + (Number(getRecordField(record, ["cubic_yards", "cubicYards"])) || 0), 0);
-  const totalCylinders = records.reduce((sum, record) => (
-    sum + (Number(getRecordField(record, ["lab_cylinders", "lab_samples", "labSamples"])) || 0) + (Number(getRecordField(record, ["field_cylinders", "field_samples", "fieldSamples"])) || 0)
-  ), 0);
-  const passed = records.filter((record) => formatStatus(getRecordField(record, ["record_result", "row_status", "recordResult", "status"])).toLowerCase().includes("pass")).length;
-  const failed = records.filter((record) => formatStatus(getRecordField(record, ["record_result", "row_status", "recordResult", "status"])).toLowerCase().includes("fail")).length;
-  y = renderReferenceSection(doc, "QA/QC Summary", [
-    { label: "Total Records", value: records.length },
-    { label: "Total Cubic Yards", value: totalCy.toFixed(1) },
-    { label: "Total Cylinders", value: totalCylinders },
-    { label: "Passed Tests", value: passed },
-    { label: "Failed Tests", value: failed },
-    { label: "Pending Review", value: Math.max(records.length - passed - failed, 0) }
-  ], y, { columns: 3, minSpace: 86 });
   return y;
 }
 
@@ -1640,6 +2240,8 @@ export async function generateHydratedDailyLogPdfBlob(log) {
 }
 
 export async function generateDailyLogPdfBlob(log) {
+  _pdfMergeQueue = [];
+
   const doc = new JsPDFConstructor({ orientation: "portrait", unit: "pt", format: "letter", compress: true });
   await registerReportFonts(doc);
   let y = PAGE_TOP_MARGIN;
@@ -1655,14 +2257,12 @@ export async function generateDailyLogPdfBlob(log) {
     { label: "Weather", value: getWeatherText(log) },
     { label: "Shift", value: log.shift || log.shift_name || "Not recorded" }
   ], y, { columns: 2, cardHeight: 38, minSpace: 128 });
-  // Front matter: reviewers see the QA/QC totals and sign-off block first;
-  // per-activity details and attachments follow as the supporting record.
-  y = renderReferenceQaqcSummary(doc, log, y);
   y = await renderReferenceSignatures(doc, log, y);
   await renderReferenceActivityDetails(doc, log, y);
   PdfFooter(doc, log);
 
-  return doc.output("blob");
+  const mainBlob = doc.output("blob");
+  return mergePdfAttachments(mainBlob, _pdfMergeQueue);
 }
 
 export async function uploadDailyLogPdf(log, pdfBlob) {
@@ -1793,4 +2393,215 @@ export async function openDailyLogPdf(log, { download = false } = {}) {
   }
   window.open(signedUrl, "_blank", "noopener,noreferrer");
   return signedUrl;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Standalone One-Point Proctor PDF (TL-125A / VTM-12 format)
+// Page 1: vertical A–L data table; Page 2: Figure 1 moisture-density curves
+// ─────────────────────────────────────────────────────────────────────────────
+
+const PROCTOR_ROW_DEFS = [
+  { letter: "",  key: "location",                label: "Location / Station",                         section: "info" },
+  { letter: "",  key: "materialDescription",     label: "Material Description",                       section: "info" },
+  { letter: "",  key: "moistureMethod",          label: "Moisture Test Method",                       section: "info" },
+  { letter: "A", key: "moldAndSoilWeight",       label: "Weight of Mold + Wet Soil (lb)",             section: "mold" },
+  { letter: "B", key: "moldWeight",              label: "Weight of Mold (lb)",                        section: "mold" },
+  { letter: "C", key: "wetSoilWeight",           label: "Wet Soil Weight  =  A − B  (lb)",       section: "mold", computed: true },
+  { letter: "D", key: "wetDensity",              label: "Wet Density  =  C × 30  (lb/ft³)", section: "mold", computed: true },
+  { letter: "E", key: "speedyDialReading",       label: "“Speedy” Dial Reading",             section: "moist" },
+  { letter: "F", key: "moistureContent",         label: "Moisture Content (%)",                       section: "moist" },
+  { letter: "",  key: "selectedCurve",           label: "Selected Curve from Fig. 1",                 section: "curve" },
+  { letter: "G", key: "maxDryDensityFromCurve",  label: "Maximum Dry Density from Fig. 1 (lb/ft³)", section: "curve", computed: true },
+  { letter: "H", key: "optimumMoistureFromCurve",label: "Optimum Moisture Content from Fig. 1 (%)",   section: "curve", computed: true },
+  { letter: "I", key: "fieldDryDensity",         label: "Field Dry Density from TL-125 (lb/ft³)", section: "field" },
+  { letter: "",  key: "requiredCompaction",      label: "Required Compaction (%)",                    section: "field" },
+  { letter: "J", key: "percentPlusNo4",          label: "No. 4 (+4.75 mm) Material (%)",              section: "oversized" },
+  { letter: "",  key: "bulkSpecificGravity",     label: "Bulk Specific Gravity of +No. 4 Material",   section: "oversized" },
+  { letter: "K", key: "correctedMaxDryDensity",  label: "Corrected Maximum Dry Density (lb/ft³)", section: "oversized", computed: true },
+  { letter: "",  key: "correctedOptimumMoisture",label: "Corrected Optimum Moisture (%)",              section: "oversized", computed: true },
+  { letter: "L", key: "percentCompaction",       label: "% Compaction  =  I ÷ (G or K) × 100", section: "result", computed: true },
+  { letter: "",  key: "compactionResult",        label: "Result",                                     section: "result" },
+];
+
+const SECTION_BG = {
+  info:      [255, 255, 255],
+  mold:      [248, 250, 252],
+  moist:     [239, 246, 255],
+  curve:     [235, 245, 255],
+  field:     [240, 253, 244],
+  oversized: [255, 251, 235],
+  result:    [236, 253, 245],
+};
+
+export async function generateProctorStandalonePdf(report, { download = true } = {}) {
+  const doc = new JsPDFConstructor({ orientation: "portrait", unit: "pt", format: "letter", compress: true });
+  await registerReportFonts(doc);
+  const fontFamily = reportFontsRegistered ? REPORT_FONT_FAMILY : "helvetica";
+  const pageW = getPageWidth(doc);
+  const cw = getContentWidth(doc);
+
+  // ── Page 1: Data form ──────────────────────────────────────────────────────
+  let y = PAGE_TOP_MARGIN;
+
+  // Header bar
+  doc.setFillColor(...PDF_COLORS.navy);
+  doc.roundedRect(PAGE_MARGIN, y, cw, 54, 4, 4, "F");
+  doc.setFont(fontFamily, "bold");
+  doc.setFontSize(13);
+  doc.setTextColor(...PDF_COLORS.white);
+  doc.text("ONE-POINT PROCTOR COMPACTION TEST", PAGE_MARGIN + 14, y + 20);
+  doc.setFont(fontFamily, "normal");
+  doc.setFontSize(8.5);
+  doc.text("VTM-12  ·  AASHTO T 272  ·  TL-125A  ·  Standard Method A of T 99", PAGE_MARGIN + 14, y + 35);
+  doc.setFont(fontFamily, "bold");
+  doc.setFontSize(9.5);
+  doc.text(pdfValue(report.projectNumber || report.project_number || ""), pageW - PAGE_MARGIN - 10, y + 28, { align: "right" });
+  y += 66;
+
+  // Report meta grid
+  y = renderReferenceCardGrid(doc, [
+    { label: "Project Name",   value: pdfValue(report.projectName || report.project_name) },
+    { label: "Project Number", value: pdfValue(report.projectNumber || report.project_number) },
+    { label: "Date",           value: pdfValue(report.date) },
+    { label: "Client",         value: pdfValue(report.client) },
+    { label: "Location",       value: pdfValue(report.projectLocation || report.location || "") },
+    { label: "Test Standard",  value: "AASHTO T 272 / VTM-12" },
+  ], y, { columns: 3, afterGap: 14 });
+
+  // Vertical A–L data table
+  const records = Array.isArray(report.testRecords) ? report.testRecords : [];
+  const testHeaders = records.length > 0
+    ? records.map((r, i) => `Test ${r.testNo || i + 1}`)
+    : ["Test 1"];
+
+  const head = [["", "Description", ...testHeaders]];
+  const body = PROCTOR_ROW_DEFS.map((def) => {
+    const vals = records.length > 0
+      ? records.map((r) => {
+          const v = r[def.key];
+          return (v === null || v === undefined || String(v).trim() === "") ? "—" : String(v);
+        })
+      : ["—"];
+    return [def.letter, def.label, ...vals];
+  });
+
+  autoTable(doc, {
+    startY: y,
+    head,
+    body,
+    theme: "grid",
+    margin: { left: PAGE_MARGIN, right: PAGE_MARGIN, top: PAGE_TOP_MARGIN, bottom: PAGE_BOTTOM_MARGIN + 16 },
+    tableWidth: cw,
+    showHead: "everyPage",
+    columnStyles: {
+      0: { cellWidth: 18, halign: "center", fontStyle: "bold", fontSize: 9 },
+      1: { cellWidth: "auto" },
+    },
+    styles: {
+      font: fontFamily, fontSize: 8, textColor: PDF_COLORS.navy,
+      cellPadding: { top: 4, bottom: 4, left: 7, right: 7 }, valign: "middle"
+    },
+    headStyles: { fillColor: PDF_COLORS.navy, textColor: PDF_COLORS.white, fontStyle: "bold", fontSize: 8 },
+    bodyStyles: { fillColor: PDF_COLORS.white },
+    didParseCell: ({ cell, column, row, section }) => {
+      if (section !== "body") return;
+      const def = PROCTOR_ROW_DEFS[row.index];
+      if (!def) return;
+      const bg = SECTION_BG[def.section] || PDF_COLORS.white;
+      cell.styles.fillColor = def.computed ? [242, 247, 255] : bg;
+      if (column.index === 0 && def.letter) {
+        cell.styles.fillColor = PDF_COLORS.navy;
+        cell.styles.textColor = PDF_COLORS.white;
+        cell.styles.fontSize = 9;
+        cell.styles.fontStyle = "bold";
+      }
+      if (def.key === "compactionResult") {
+        const val = String(cell.raw || "").trim();
+        if (val === "PASS") { cell.styles.textColor = [5, 122, 85]; cell.styles.fontStyle = "bold"; }
+        else if (val === "FAIL") { cell.styles.textColor = [185, 28, 28]; cell.styles.fontStyle = "bold"; }
+      }
+      if (def.letter === "L") cell.styles.fontStyle = "bold";
+    }
+  });
+
+  y = doc.lastAutoTable.finalY + 20;
+
+  // Signature line
+  y = ensurePage(doc, y, 60);
+  doc.setDrawColor(...PDF_COLORS.line);
+  doc.setLineWidth(0.5);
+  const half = (cw - 16) / 2;
+  doc.line(PAGE_MARGIN, y + 38, PAGE_MARGIN + half, y + 38);
+  doc.line(PAGE_MARGIN + half + 16, y + 38, PAGE_MARGIN + cw, y + 38);
+  setReportFont(doc, "regular", 8, PDF_COLORS.muted);
+  doc.text("Technician Signature", PAGE_MARGIN, y + 48);
+  doc.text("Date", PAGE_MARGIN + half + 16, y + 48);
+
+  // ── Page 2: Figure 1 ──────────────────────────────────────────────────────
+  doc.addPage("letter", "portrait");
+  renderProctorCurvesPage(doc, report);
+
+  // ── Output ────────────────────────────────────────────────────────────────
+  const fileName = `${report.projectNumber || report.project_number || "Proctor-Report"}.pdf`;
+  if (download) {
+    doc.save(fileName);
+    return null;
+  }
+  return doc.output("blob");
+}
+
+export async function generateSamplesStandalonePdf(report, { download = true } = {}) {
+  const doc = new JsPDFConstructor({ orientation: "portrait", unit: "pt", format: "letter", compress: true });
+  await registerReportFonts(doc);
+  const fontFamily = reportFontsRegistered ? REPORT_FONT_FAMILY : "helvetica";
+  const pageW = getPageWidth(doc);
+  const cw = getContentWidth(doc);
+
+  let y = PAGE_TOP_MARGIN;
+
+  // Header bar
+  doc.setFillColor(...PDF_COLORS.navy);
+  doc.roundedRect(PAGE_MARGIN, y, cw, 54, 4, 4, "F");
+  doc.setFont(fontFamily, "bold");
+  doc.setFontSize(13);
+  doc.setTextColor(...PDF_COLORS.white);
+  doc.text("SAMPLES COLLECTION REPORT", PAGE_MARGIN + 14, y + 20);
+  doc.setFont(fontFamily, "normal");
+  doc.setFontSize(8.5);
+  doc.text("Field Sampling Record", PAGE_MARGIN + 14, y + 35);
+  doc.setFont(fontFamily, "bold");
+  doc.setFontSize(9.5);
+  doc.text(pdfValue(report.projectNumber || report.project_number || ""), pageW - PAGE_MARGIN - 10, y + 28, { align: "right" });
+  y += 66;
+
+  // Report meta grid
+  y = renderReferenceCardGrid(doc, [
+    { label: "Project Name",        value: pdfValue(report.projectName || report.project_name) },
+    { label: "Project Number",      value: pdfValue(report.projectNumber || report.project_number) },
+    { label: "Sample Type",         value: pdfValue(report.sampleType) },
+    { label: "Cast Date",           value: pdfValue(report.castDate || report.cast_date) },
+    { label: "Samples / Specimens", value: pdfValue(report.specimenCount || report.specimen_count) },
+    { label: "Date Collected",      value: pdfValue(report.date) },
+  ], y, { columns: 3, afterGap: 14 });
+
+  // Comments
+  y = renderReferenceTextBox(doc, "Comments", sentenceCase(report.comments || "No comments recorded."), y);
+
+  // Signature line
+  y = ensurePage(doc, y, 60);
+  doc.setDrawColor(...PDF_COLORS.line);
+  doc.setLineWidth(0.5);
+  const half = (cw - 16) / 2;
+  doc.line(PAGE_MARGIN, y + 38, PAGE_MARGIN + half, y + 38);
+  doc.line(PAGE_MARGIN + half + 16, y + 38, PAGE_MARGIN + cw, y + 38);
+  setReportFont(doc, "regular", 8, PDF_COLORS.muted);
+  doc.text("Technician Signature", PAGE_MARGIN, y + 48);
+  doc.text("Date", PAGE_MARGIN + half + 16, y + 48);
+
+  const fileName = `${report.projectNumber || report.project_number || "Samples-Collection-Report"}.pdf`;
+  if (download) {
+    doc.save(fileName);
+    return null;
+  }
+  return doc.output("blob");
 }

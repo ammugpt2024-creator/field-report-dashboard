@@ -254,6 +254,24 @@ export function filterDailyLogsForAccess(logs, access = {}) {
   });
 }
 
+function getProjectInitials(projectName) {
+  return (projectName || "")
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => word[0].toUpperCase())
+    .join("")
+    .slice(0, 6);
+}
+
+function getNextDfrNumber(projectId, projectName) {
+  const counterKey = `dfrCounter:${projectId}`;
+  let counter = parseInt(window.localStorage.getItem(counterKey) || "0", 10);
+  counter += 1;
+  window.localStorage.setItem(counterKey, String(counter));
+  const initials = getProjectInitials(projectName);
+  return `${initials}DFR${counter}`;
+}
+
 export function createDailyLog({
   projectLabel = "DC Water Potomac Tunnel",
   technicianName = "Ammu",
@@ -263,8 +281,11 @@ export function createDailyLog({
   userId = null
 } = {}) {
   const today = new Date();
+  const dfrNumber = getNextDfrNumber(defaultProjectId, projectLabel);
   return {
     id: crypto.randomUUID(),
+    dfrNumber,
+    logNumber: dfrNumber,
     companyId,
     companyName,
     userId,
@@ -451,24 +472,62 @@ export async function submitDailyLogToSupabase(log, { signatureId, submittedAt, 
     throw new Error("Daily Log submission failed. Please try again.");
   }
 
-  const payload = buildSupabaseDailyLogPayload(log, user.id, {
+  const clientLogId = String(log.id);
+
+  // Stamp the reviewer the admin assigned to this submitter on this project,
+  // so the manager queue and notifications route to them.
+  let reviewerUserId = null;
+  const submitProjectId = log.projectId || log.project_id;
+  if (submitProjectId) {
+    const { data: asg } = await supabase
+      .from("project_assignments")
+      .select("reviewer_user_id")
+      .eq("project_id", submitProjectId)
+      .eq("user_id", user.id)
+      .maybeSingle();
+    reviewerUserId = asg?.reviewer_user_id || null;
+  }
+
+  const submissionPatch = {
     status: DAILY_LOG_STATUS.SUBMITTED,
     submitted_at: submittedAt || new Date().toISOString(),
     submitted_by: user.id,
+    reviewer_user_id: reviewerUserId,
     signature_id: signatureId || null
-  });
+  };
+  const payload = buildSupabaseDailyLogPayload(log, user.id, submissionPatch);
 
-  // The upsert returns the persisted row, so its status is already the
-  // authoritative verification; a separate read-back round trip only adds
-  // another failure point inside the submission timeout budget.
-  const { data, error } = await supabase
+  // Look for an existing row first so we can UPDATE it — avoids depending on
+  // a unique index for ON CONFLICT resolution (the index may not exist on all
+  // environments). INSERT for new logs, UPDATE for re-submissions.
+  const { data: existing } = await supabase
     .from("daily_logs")
-    .upsert(payload, { onConflict: "client_log_id" })
-    .select("id,status,submitted_at,submitted_by,signature_id,pdf_url,pdf_storage_path")
-    .single();
+    .select("id")
+    .eq("client_log_id", clientLogId)
+    .maybeSingle();
 
-  if (error || data?.status !== DAILY_LOG_STATUS.SUBMITTED) {
-    if (error) console.error("Daily Log submission upsert failed", error);
+  let data, error;
+  if (existing?.id) {
+    ({ data, error } = await supabase
+      .from("daily_logs")
+      .update({ ...payload, updated_at: new Date().toISOString() })
+      .eq("id", existing.id)
+      .select("id,status,submitted_at,submitted_by,signature_id,pdf_url,pdf_storage_path")
+      .single());
+  } else {
+    ({ data, error } = await supabase
+      .from("daily_logs")
+      .insert(payload)
+      .select("id,status,submitted_at,submitted_by,signature_id,pdf_url,pdf_storage_path")
+      .single());
+  }
+
+  if (error) {
+    console.error("Daily Log submission failed", { code: error.code, message: error.message, details: error.details });
+    throw new Error(`Daily Log submission failed: ${error.message || "Unknown database error"}`);
+  }
+  if (data?.status !== DAILY_LOG_STATUS.SUBMITTED) {
+    console.error("Daily Log submission returned unexpected status", data?.status);
     throw new Error("Daily Log submission failed. Please try again.");
   }
 

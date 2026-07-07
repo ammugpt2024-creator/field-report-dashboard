@@ -8,10 +8,16 @@ import {
 } from "react";
 
 import { supabase } from "../services/supabase";
+import { preloadCompanyBranding, getCompanyBranding } from "../services/brandingService";
 
 const AuthContext = createContext();
 
 const ROLE_LABELS = {
+  platform_admin: "Platform Admin",
+  company_admin: "Company Admin",
+  deputy_project_manager: "Deputy Project Manager",
+  inspector: "Inspector",
+  lab_technician: "Lab Technician",
   technician: "Field Engineer",
   qc: "Quality Reviewer",
   qc_approver: "Quality Reviewer",
@@ -52,6 +58,10 @@ export function AuthProvider({ children }) {
 
   const [companyName, setCompanyName] = useState("");
 
+  // Company branding (logo/name/color), kept reactive so the header updates
+  // once the logo resolves after login.
+  const [companyBranding, setCompanyBranding] = useState(getCompanyBranding());
+
   const [loading, setLoading] = useState(true);
 
   // Which user the loaded profile belongs to. On a fresh sign-in the session
@@ -59,12 +69,63 @@ export function AuthProvider({ children }) {
   // role would strand managers on the wrong home page.
   const [profileUserId, setProfileUserId] = useState(null);
 
+  // Multi-tenant context: the caller's company membership (SaaS role), the
+  // company record itself (branding), and platform ownership.
+  const [company, setCompany] = useState(null);
+  const [companyRole, setCompanyRole] = useState("");
+  const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
+  // Per-project module permissions for the signed-in user: { [projectId]: {module: level} }
+  const [modulePermissions, setModulePermissions] = useState({});
+
+  const loadTenantContext = useCallback(async (userId) => {
+    if (!userId) {
+      setCompany(null);
+      setCompanyRole("");
+      setIsPlatformAdmin(false);
+      setModulePermissions({});
+      return;
+    }
+    try {
+      // First sign-in after a Company Admin / employee invitation: attach this
+      // account to its pending roster row before resolving membership.
+      const { error: claimError } = await supabase.rpc("claim_company_invite");
+      if (claimError) console.warn("Pending invite could not be claimed:", claimError.message);
+      const [membershipRes, platformRes] = await Promise.all([
+        supabase.from("company_users").select("company_id, role, status").eq("user_id", userId).eq("status", "active").maybeSingle(),
+        supabase.from("platform_admins").select("user_id, status").eq("user_id", userId).eq("status", "active").maybeSingle()
+      ]);
+      setCompanyRole(membershipRes.data?.role || "");
+      setIsPlatformAdmin(Boolean(platformRes.data));
+      // Load this user's per-project module permissions for app-side gating.
+      const { data: asg } = await supabase
+        .from("project_assignments").select("project_id, permissions").eq("user_id", userId);
+      const permMap = {};
+      (asg || []).forEach((a) => { permMap[String(a.project_id)] = a.permissions || {}; });
+      setModulePermissions(permMap);
+      if (membershipRes.data?.company_id) {
+        const { data: companyRow } = await supabase
+          .from("companies")
+          .select("*")
+          .eq("id", membershipRes.data.company_id)
+          .maybeSingle();
+        setCompany(companyRow || null);
+      } else {
+        setCompany(null);
+      }
+    } catch (error) {
+      console.warn("Tenant context could not be loaded.", error);
+    }
+  }, []);
+
   const loadProfile = useCallback(async (currentSession) => {
     if (!currentSession?.user?.id) {
       setProfile(null);
       setRole("viewer");
       setCompanyName("");
       setProfileUserId(null);
+      setCompany(null);
+      setCompanyRole("");
+      setIsPlatformAdmin(false);
       return;
     }
 
@@ -95,8 +156,12 @@ export function AuthProvider({ children }) {
     setProfile(resolvedProfile);
     setRole(resolvedRole);
     setCompanyName(resolvedProfile?.company_name || "");
+    // Tenant context must resolve before routing decisions fire — a platform
+    // admin routed on the placeholder state would land on the viewer fallback.
+    await loadTenantContext(currentSession.user.id);
     setProfileUserId(currentSession.user.id);
-  }, []);
+    preloadCompanyBranding().then((b) => setCompanyBranding({ ...b }));
+  }, [loadTenantContext]);
 
   useEffect(() => {
 
@@ -153,7 +218,13 @@ export function AuthProvider({ children }) {
         role,
         roleLabel: ROLE_LABELS[role] || "Viewer",
         profileReady: !session?.user?.id || profileUserId === session.user.id,
+        company,
+        companyId: company?.id || profile?.company_id || null,
+        companyRole,
+        isPlatformAdmin,
+        modulePermissions,
         companyName,
+        companyBranding,
         loading
       }}
     >

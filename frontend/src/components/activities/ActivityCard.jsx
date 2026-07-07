@@ -33,6 +33,11 @@ export default function ActivityCard({
   onDelete,
   onDuplicate,
   onAddConcreteReport,
+  onAddCompactionReport,
+  onAddAsphaltReport,
+  onAddInfiltrationReport,
+  onAddProctorReport,
+  onAddSamplesReport,
   onViewConcreteReport,
   onEditConcreteReport,
   onRemoveConcreteReport
@@ -100,7 +105,14 @@ export default function ActivityCard({
           {(concreteReports.length > 0 || showReportPicker) && (
             <div className="mt-4 rounded-2xl bg-slate-50 p-4">
               {showReportPicker && (
-                <ActivityReportSelector onAddConcreteReport={handleAddConcreteReport} />
+                <ActivityReportSelector
+                  onAddConcreteReport={handleAddConcreteReport}
+                  onAddCompactionReport={onAddCompactionReport}
+                  onAddAsphaltReport={onAddAsphaltReport}
+                  onAddInfiltrationReport={onAddInfiltrationReport}
+                  onAddProctorReport={onAddProctorReport}
+                  onAddSamplesReport={onAddSamplesReport}
+                />
               )}
               {!showReportPicker && (
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">

@@ -879,7 +879,7 @@ export default function ConcreteTestLogDetails() {
   return (
     <div className="w-full max-w-full overflow-x-hidden bg-slate-100 pb-44 md:pb-32">
       <div className="mx-auto w-full max-w-[1600px] space-y-5 px-4 py-5 sm:px-6 sm:space-y-6">
-        <div className="rounded-3xl bg-slate-950 p-5 text-white shadow-lg sm:p-8">
+        <div className="overflow-hidden rounded-3xl border-b-4 border-accent-500 bg-gradient-to-br from-navy-800 via-navy-900 to-navy-950 p-5 text-white shadow-lg sm:p-8">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div className="min-w-0">
               <button

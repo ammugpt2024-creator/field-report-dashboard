@@ -8,7 +8,11 @@ import {
   ClipboardCheck,
   Download,
   FileText,
+  FlaskConical,
+  HardHat,
   KeyRound,
+  Layers3,
+  MapPin,
   Minus,
   Plus,
   Save,
@@ -31,7 +35,7 @@ import {
   saveDailyLog,
   syncDailyLogsFromSupabase
 } from "../../services/dailyLogService";
-import { openDailyLogPdf, regenerateDailyLogPdf } from "../../services/dailyLogPdfService";
+import { openDailyLogPdf, regenerateDailyLogPdf, generateProctorStandalonePdf, generateSamplesStandalonePdf } from "../../services/dailyLogPdfService";
 import { generateAndUploadConcreteReportPdf, openConcreteReportPdf } from "../../services/concreteReportPdfService";
 import { openTimeCardPdf } from "../../services/timeCardPdfService";
 import {
@@ -46,6 +50,9 @@ import {
   saveTimeCard,
   TIME_CARD_STATUS
 } from "../../services/timeCardService";
+import { supabase } from "../../services/supabase";
+import { useAuth } from "../../context/AuthContext";
+import { canAccessModule, moduleLevelForProject, meetsLevel } from "../../utils/moduleAccess";
 import { formatDateTime } from "./fieldEngineerData";
 import { fetchTimesheetStatusUpdates, fetchTimesheetsForTechnician } from "../../services/timesheetSyncService";
 import {
@@ -392,7 +399,7 @@ function ActionTimeCardRow({ card, onOpen }) {
 
 
 
-function DashboardOverview({ profile, logCollections, timeCardCollections, onOpenLog, onOpenTimeCard, onCreateLog, navigate }) {
+function DashboardOverview({ logCollections, timeCardCollections, onOpenLog, onOpenTimeCard, onCreateLog, navigate, assignedProjects = [], canCreateDailyLog = true, canCreateTimesheet = true }) {
   // Collapsed by default — expand on demand via the +/- control.
   const [activityCollapsed, setActivityCollapsed] = useState(true);
   const actionRequiredLogs = [...logCollections.returnedLogs, ...logCollections.draftLogs];
@@ -435,61 +442,163 @@ function DashboardOverview({ profile, logCollections, timeCardCollections, onOpe
     .sort((a, b) => new Date(b.at || 0) - new Date(a.at || 0))
     .slice(0, 50);
   const latestActivity = recentActivity.slice(0, 5);
-  const technicianName = profile?.full_name || profile?.name || "Technician";
-  const todayText = new Intl.DateTimeFormat(undefined, { month: "short", day: "2-digit", year: "numeric" }).format(new Date());
+  // The project the technician is currently working in. Prefer the projects the
+  // admin actually assigned them: a recent log on an assigned project wins;
+  // otherwise default to their first assigned project. Only fall back to a
+  // stray log (e.g. an old local draft) when nothing is assigned — this keeps a
+  // leftover "I-495 Expansion" draft from masking the real assigned project.
+  const assignedIds = new Set(assignedProjects.map((p) => String(p.id)));
+  const sortedLogs = [...allLogs].sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
+  const recentAssignedLog = sortedLogs.find((log) => assignedIds.has(String(log.projectId ?? log.project_id)));
+  const firstAssigned = assignedProjects[0];
+  const currentProject = recentAssignedLog
+    || (firstAssigned ? { projectId: firstAssigned.id, projectName: firstAssigned.name, projectNumber: firstAssigned.number } : null)
+    || sortedLogs[0]
+    || null;
+  const currentProjectId = currentProject?.projectId || currentProject?.project_id || null;
+  const currentProjectName = currentProject?.projectName || "—";
+
+  // Richer project context (location, number, lead) — fetched once per project.
+  const [projectInfo, setProjectInfo] = useState(null);
+  useEffect(() => {
+    if (!currentProjectId) return undefined;
+    let active = true;
+    supabase
+      .from("projects")
+      .select("project_number, project_location, project_manager_name, gc_representative")
+      .eq("id", currentProjectId)
+      .maybeSingle()
+      .then(({ data }) => { if (active) setProjectInfo(data || null); })
+      .catch(() => {});
+    return () => { active = false; };
+  }, [currentProjectId]);
+
+  const projectNumber = projectInfo?.project_number || currentProject?.projectNumber || currentProject?.project_number || "";
+  const projectLocation = projectInfo?.project_location || "";
+  const projectLead = projectInfo?.project_manager_name || projectInfo?.gc_representative || "";
+
+  // Operational status for the field-ops widgets.
+  const lastSubmittedAt = allLogs.map((l) => l.submittedAt).filter(Boolean).sort((a, b) => new Date(b) - new Date(a))[0] || null;
+  const reportsInReview = logCollections.submittedLogs.length;
+  const timesheetStatus = timeCardCollections.draftTimeCards.length > 0
+    ? { label: "Pending submission", tone: "text-amber-700" }
+    : timeCardCollections.submittedTimeCards.length > 0
+      ? { label: "Awaiting approval", tone: "text-blue-700" }
+      : { label: "Up to date", tone: "text-emerald-700" };
 
   return (
     <>
-      {/* Slim toolbar header — Procore-style, no hero banner */}
-      <section className="rounded-xl border border-slate-200 bg-white px-4 py-3 sm:px-5 sm:py-4">
-        <div className="flex flex-wrap items-center justify-between gap-2 sm:gap-3">
-          <div className="min-w-0">
-            <h1 className="text-lg font-semibold text-slate-900 sm:text-xl">Welcome, {technicianName}</h1>
-            <p className="mt-0.5 text-[13px] font-medium text-slate-500">
-              {todayText}
-              {actionRequiredItems.length
-                ? ` · ${actionRequiredItems.length} ${actionRequiredItems.length === 1 ? "item needs" : "items need"} your action`
-                : " · You're all caught up"}
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => navigate("/timesheets")}
-              className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-            >
-              <CalendarDays className="h-4 w-4" /> My Timesheet
-            </button>
+      {/* Title + quick actions (sidebar owns navigation; this is the page head) */}
+      <section className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Technician</p>
+          <h1 className="text-xl font-bold tracking-tight text-slate-900 sm:text-2xl">Dashboard</h1>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {canCreateDailyLog && (
             <button
               type="button"
               onClick={onCreateLog}
-              className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-blue-600 px-3 text-sm font-semibold text-white hover:bg-blue-700"
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-accent-500 px-3 text-sm font-semibold text-white transition hover:bg-accent-600"
             >
-              <Plus className="h-4 w-4" /> Start Daily Log
+              <Plus className="h-4 w-4" /> Daily Log
             </button>
-          </div>
+          )}
+          {canCreateTimesheet && (
+            <button
+              type="button"
+              onClick={() => navigate("/timesheets")}
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+            >
+              <Plus className="h-4 w-4" /> Timesheet
+            </button>
+          )}
         </div>
       </section>
 
-      {/* Metric strip — one card, divided columns; zeros dimmed, alerts colored */}
+      {/* PROJECT CONTEXT — the center of the technician workflow */}
+      {currentProject && (
+        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-3 px-5 py-4">
+            <div className="min-w-0">
+              <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Current Project</p>
+              <h2 className="mt-0.5 truncate text-xl font-bold text-slate-900 sm:text-2xl">{currentProjectName}</h2>
+              <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[13px] font-medium text-slate-500">
+                {projectNumber && <span>Project #{projectNumber}</span>}
+                {projectLocation && <span className="inline-flex items-center gap-1"><MapPin className="h-3.5 w-3.5 text-slate-400" /> {projectLocation}</span>}
+                {projectLead && <span>Lead: <span className="font-semibold text-slate-700">{projectLead}</span></span>}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => onOpenLog(currentProject)}
+              className="shrink-0 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 transition hover:bg-slate-50"
+            >
+              Open latest log
+            </button>
+          </div>
+          {/* Operational status — answers "what's pending right now" at a glance */}
+          <div className="grid grid-cols-2 gap-px border-t border-slate-100 bg-slate-100 sm:grid-cols-3">
+            <div className="bg-white px-5 py-3">
+              <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Last daily log</p>
+              <p className="mt-0.5 text-sm font-bold text-slate-800">{lastSubmittedAt ? `Submitted ${relativeTimeLabel(lastSubmittedAt)}` : "None submitted"}</p>
+            </div>
+            <div className="bg-white px-5 py-3">
+              <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Reports in review</p>
+              <p className="mt-0.5 text-sm font-bold text-slate-800">{reportsInReview} awaiting QC</p>
+            </div>
+            <div className="bg-white px-5 py-3">
+              <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Current timesheet</p>
+              <p className={`mt-0.5 text-sm font-bold ${timesheetStatus.tone}`}>{timesheetStatus.label}</p>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* KPI hierarchy — attention items prominent (but compact), rest muted */}
+      <section className="grid grid-cols-2 gap-3">
+        <button
+          type="button"
+          onClick={() => navigate("/technician/dashboard?view=returned-logs")}
+          className="flex items-center gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-left transition hover:bg-rose-100"
+        >
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-rose-100 text-rose-600"><AlertTriangle className="h-4 w-4" /></span>
+          <span className="text-2xl font-bold leading-none text-rose-700">{logCollections.returnedLogs.length}</span>
+          <span className="min-w-0 leading-tight">
+            <span className="block text-[13px] font-bold text-rose-800">Returned logs</span>
+            <span className="block text-[11px] font-semibold text-rose-600/80">Need correction</span>
+          </span>
+        </button>
+        <button
+          type="button"
+          onClick={() => navigate("/technician/dashboard?view=daily-logs")}
+          className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-left transition hover:bg-slate-50"
+        >
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-500"><FileText className="h-4 w-4" /></span>
+          <span className={`text-2xl font-bold leading-none ${logCollections.draftLogs.length > 0 ? "text-slate-900" : "text-slate-300"}`}>{logCollections.draftLogs.length}</span>
+          <span className="min-w-0 leading-tight">
+            <span className="block text-[13px] font-bold text-slate-800">Draft logs</span>
+            <span className="block text-[11px] font-semibold text-slate-400">Not submitted</span>
+          </span>
+        </button>
+      </section>
+
       <section className="overflow-hidden rounded-xl border border-slate-200 bg-white">
-        <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 xl:divide-x xl:divide-slate-200">
+        <div className="grid grid-cols-2 sm:grid-cols-4 sm:divide-x sm:divide-slate-100">
           {[
-            { label: "Draft logs", value: logCollections.draftLogs.length, view: "daily-logs" },
-            { label: "Submitted logs", value: logCollections.submittedLogs.length, view: "submitted-logs", tone: "text-blue-700" },
-            { label: "Returned logs", value: logCollections.returnedLogs.length, view: "returned-logs", tone: "text-rose-600" },
-            { label: "Approved logs", value: logCollections.approvedLogs.length, view: "approved-logs", tone: "text-emerald-700" },
-            { label: "Timesheets pending", value: timeCardCollections.submittedTimeCards.length, view: "submitted-time-cards", tone: "text-blue-700" },
-            { label: "Timesheets approved", value: timeCardCollections.approvedTimeCards.length, view: "approved-time-cards", tone: "text-emerald-700" }
-          ].map(({ label, value, view, tone }) => (
+            { label: "Submitted logs", value: logCollections.submittedLogs.length, view: "submitted-logs" },
+            { label: "Approved logs", value: logCollections.approvedLogs.length, view: "approved-logs" },
+            { label: "Submitted timesheets", value: timeCardCollections.submittedTimeCards.length, view: "submitted-time-cards" },
+            { label: "Approved timesheets", value: timeCardCollections.approvedTimeCards.length, view: "approved-time-cards" }
+          ].map(({ label, value, view }) => (
             <button
               key={label}
               type="button"
               onClick={() => navigate(`/technician/dashboard?view=${view}`)}
-              className="flex items-baseline justify-between gap-2 border-b border-slate-100 px-4 py-2.5 text-left transition hover:bg-slate-50 sm:block sm:py-3 xl:border-b-0"
+              className="flex items-baseline justify-between gap-2 border-b border-slate-100 px-4 py-2.5 text-left transition hover:bg-slate-50 sm:block sm:border-b-0"
             >
               <p className="text-xs font-medium text-slate-500">{label}</p>
-              <p className={`text-xl font-semibold sm:mt-1 sm:text-2xl ${value > 0 ? (tone || "text-slate-900") : "text-slate-300"}`}>{value}</p>
+              <p className={`text-lg font-bold sm:mt-0.5 ${value > 0 ? "text-slate-700" : "text-slate-300"}`}>{value}</p>
             </button>
           ))}
         </div>
@@ -529,13 +638,15 @@ function DashboardOverview({ profile, logCollections, timeCardCollections, onOpe
                 <span className="h-2 w-2 rounded-full bg-emerald-500" />
                 You're all caught up — no Daily Logs or Timesheets need your action.
               </p>
-              <button
-                type="button"
-                onClick={onCreateLog}
-                className="text-[13px] font-semibold text-blue-700 hover:text-blue-800"
-              >
-                Start today's Daily Log →
-              </button>
+              {canCreateDailyLog && (
+                <button
+                  type="button"
+                  onClick={onCreateLog}
+                  className="text-[13px] font-semibold text-blue-700 hover:text-blue-800"
+                >
+                  Start today's Daily Log →
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -756,8 +867,6 @@ function ConcreteReportPage({ log, activityId, reportId, onChange, onBack }) {
   const strengthComplete = strengthMissingFields.length === 0;
   const attachmentCount = (report?.attachments || []).filter((attachment) => attachment.attachmentType !== "photo").length;
   const photoCount = (report?.attachments || []).filter((attachment) => attachment.attachmentType === "photo").length;
-  const reportYear = new Date(log.date || report?.createdAt || Date.now()).getFullYear();
-  const reportNumber = report?.reportNumber || `CR-${reportYear}-${String(report?.id || "000124").replace(/\D/g, "").slice(-6).padStart(6, "0")}`;
   const stepComplete = [
     !requiredSpecMissing,
     testRecordsComplete,
@@ -936,7 +1045,7 @@ function ConcreteReportPage({ log, activityId, reportId, onChange, onBack }) {
     const completedAt = new Date().toISOString();
     let pdfPatch;
     try {
-      pdfPatch = await generateAndUploadConcreteReportPdf(log, activity, { ...report, reportNumber, status: "completed", completedAt });
+      pdfPatch = await generateAndUploadConcreteReportPdf(log, activity, { ...report, status: "completed", completedAt });
     } catch (error) {
       pdfPatch = {
         pdfGenerationStatus: "failed",
@@ -945,7 +1054,7 @@ function ConcreteReportPage({ log, activityId, reportId, onChange, onBack }) {
         pdf_generation_failure_reason: error.message || "PDF storage configuration issue. Please contact administrator."
       };
     }
-    updateReport({ status: "completed", completedAt, reportNumber, ...pdfPatch });
+    updateReport({ status: "completed", completedAt, ...pdfPatch });
     onBack();
   }
 
@@ -1074,7 +1183,7 @@ function ConcreteReportPage({ log, activityId, reportId, onChange, onBack }) {
     try {
       await openConcreteReportPdf(report, {
         download,
-        fileName: `${reportNumber}.pdf`
+        fileName: `${report.dfrNumber || report.dfr_number || "Concrete-Report"}.pdf`
       });
     } catch (error) {
       window.alert(error.message || "PDF is still being generated. Please try again in a few seconds.");
@@ -1176,7 +1285,6 @@ function ConcreteReportPage({ log, activityId, reportId, onChange, onBack }) {
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <h2 className="text-2xl font-bold text-slate-950">Concrete Report</h2>
-            <p className="mt-1 text-base font-bold text-slate-700">{reportNumber}</p>
             <p className="mt-1 text-sm font-semibold text-slate-600">{log.projectName} • {activity.title || "Activity"}</p>
           </div>
           <div className="flex flex-col gap-2 sm:items-end">
@@ -1522,6 +1630,34 @@ function toFiniteNumber(value) {
   return Number.isFinite(number) ? number : null;
 }
 
+function calculateAsphaltTestRecord(record = {}, group = {}) {
+  const fieldDensity = toFiniteNumber(record.fieldDensity);
+  const marshallValue = toFiniteNumber(group.marshallValue);
+  const requiredCompaction = toFiniteNumber(group.requiredCompaction);
+  const compactionPercent = fieldDensity !== null && marshallValue !== null && marshallValue > 0
+    ? (fieldDensity / marshallValue) * 100
+    : null;
+  const result = compactionPercent !== null && requiredCompaction !== null
+    ? (compactionPercent >= requiredCompaction ? "PASS" : "FAIL")
+    : "";
+  return {
+    ...record,
+    compactionPercent: compactionPercent === null ? "" : compactionPercent.toFixed(1),
+    result,
+    exceededLimit: compactionPercent !== null && compactionPercent > 102
+  };
+}
+
+function calculateInfiltrationRate(record = {}) {
+  const weight = toFiniteNumber(record.weightInfiltratedWater);
+  const diameter = toFiniteNumber(record.insideDiameter);
+  const time = toFiniteNumber(record.timeInfiltration);
+  const rate = (weight !== null && diameter !== null && diameter > 0 && time !== null && time > 0)
+    ? (126870 * weight) / (diameter * diameter * time)
+    : null;
+  return { ...record, infiltrationRate: rate === null ? "" : rate.toFixed(2) };
+}
+
 function getCompactionRecordMoistureRange(record = {}, materialType = "") {
   const correctedOptimum = toFiniteNumber(record.correctedOptimumMoisture ?? record.corrected_optimum_moisture);
   if (correctedOptimum === null || correctedOptimum <= 0) return null;
@@ -1537,9 +1673,12 @@ function formatCompactionRange(range) {
 
 function calculateCompactionRecord(record = {}, reportOrMaterialType = "") {
   const reportContext = typeof reportOrMaterialType === "object" && reportOrMaterialType !== null ? reportOrMaterialType : {};
-  const materialType = typeof reportOrMaterialType === "object" && reportOrMaterialType !== null
+  // Each test record can carry its own material type (one row aggregate, another
+  // soil); fall back to the report-level default when the record has none.
+  const reportMaterialType = typeof reportOrMaterialType === "object" && reportOrMaterialType !== null
     ? (reportOrMaterialType.materialType || reportOrMaterialType.material_type || "")
     : reportOrMaterialType;
+  const materialType = record.materialType || record.material_type || reportMaterialType;
   const wetDensity = toFiniteNumber(record.wetDensity ?? record.wet_density);
   const moistureUnitMass = toFiniteNumber(record.moistureUnitMass ?? record.moisture_unit_mass);
   const correctedMaximum = toFiniteNumber(reportContext.correctedMaximumDryDensity ?? reportContext.corrected_maximum_dry_density);
@@ -1587,24 +1726,134 @@ function getCompactionMoistureRange(report = {}) {
   return `${(correctedOptimum * 0.8).toFixed(1)} - ${(correctedOptimum * 1.2).toFixed(1)}`;
 }
 
+// Spec fields are proctor-derived, so they belong to a material group (aggregate
+// and soil have different proctors), not the whole report.
+const COMPACTION_SPEC_FIELDS = [
+  ["E. Maximum Dry Density (lbs/ft3)", "maximumDryDensity", "maximum_dry_density"],
+  ["F. Percent Optimum Moisture (%)", "percentOptimumMoisture", "percent_optimum_moisture"],
+  ["G. Percent of Plus #4 (4.75 mm) (%)", "percentPassingNo4", "percent_passing_no4"],
+  ["H. Corrected Maximum Dry Density (lbs/ft3)", "correctedMaximumDryDensity", "corrected_maximum_dry_density"],
+  ["I. Corrected Optimum Moisture (%)", "correctedOptimumMoisture", "corrected_optimum_moisture"],
+  ["K. Percent Minimum Density Required (%)", "percentMinimumDensityRequired", "percent_minimum_density_required"]
+];
+
+function createMaterialGroup(seed = {}) {
+  return {
+    id: crypto.randomUUID(),
+    materialType: "", material_type: "",
+    materialName: "", material_name: "",
+    maximumDryDensity: "", maximum_dry_density: "",
+    percentOptimumMoisture: "", percent_optimum_moisture: "",
+    percentPassingNo4: "", percent_passing_no4: "",
+    correctedMaximumDryDensity: "", corrected_maximum_dry_density: "",
+    correctedOptimumMoisture: "", corrected_optimum_moisture: "",
+    percentMinimumDensityRequired: "", percent_minimum_density_required: "",
+    testRecords: [],
+    ...seed
+  };
+}
+
+// Material groups are the editor's source of truth. Legacy reports stored a single
+// material + specs + flat testRecords; wrap those into one group on first load.
+function getReportMaterialGroups(report = {}) {
+  if (Array.isArray(report.materialGroups) && report.materialGroups.length) return report.materialGroups;
+  const hasLegacyData = (report.materialType || report.material_type)
+    || (Array.isArray(report.testRecords) && report.testRecords.length)
+    || (report.maximumDryDensity || report.maximum_dry_density);
+  if (!hasLegacyData) return [];
+  return [createMaterialGroup({
+    materialType: report.materialType || "", material_type: report.material_type || "",
+    materialName: report.materialName || "", material_name: report.material_name || "",
+    maximumDryDensity: report.maximumDryDensity || "", maximum_dry_density: report.maximum_dry_density || "",
+    percentOptimumMoisture: report.percentOptimumMoisture || "", percent_optimum_moisture: report.percent_optimum_moisture || "",
+    percentPassingNo4: report.percentPassingNo4 || "", percent_passing_no4: report.percent_passing_no4 || "",
+    correctedMaximumDryDensity: report.correctedMaximumDryDensity || "", corrected_maximum_dry_density: report.corrected_maximum_dry_density || "",
+    correctedOptimumMoisture: report.correctedOptimumMoisture || "", corrected_optimum_moisture: report.corrected_optimum_moisture || "",
+    percentMinimumDensityRequired: report.percentMinimumDensityRequired || "", percent_minimum_density_required: report.percent_minimum_density_required || "",
+    testRecords: Array.isArray(report.testRecords) ? report.testRecords : []
+  })];
+}
+
+// Recompute each group's records against its own specs, and flatten all records
+// into report.testRecords (annotated with their group's material + specs) so the
+// PDF, summary, and inline views keep working unchanged.
+function normalizeCompactionGroups(groups = []) {
+  const computedGroups = groups.map((group) => ({
+    ...group,
+    testRecords: (group.testRecords || []).map((record) => calculateCompactionRecord(record, group))
+  }));
+  let testNo = 0;
+  const flatRecords = computedGroups.flatMap((group) =>
+    (group.testRecords || []).map((record) => {
+      testNo += 1;
+      return {
+        ...record,
+        testNo,
+        test_no: testNo,
+        materialGroupId: group.id,
+        materialType: group.materialType || "", material_type: group.material_type || group.materialType || "",
+        materialName: group.materialName || "", material_name: group.material_name || group.materialName || "",
+        maximumDryDensity: group.maximumDryDensity || "", maximum_dry_density: group.maximum_dry_density || "",
+        correctedMaximumDryDensity: group.correctedMaximumDryDensity || "", corrected_maximum_dry_density: group.corrected_maximum_dry_density || "",
+        correctedOptimumMoisture: group.correctedOptimumMoisture || "", corrected_optimum_moisture: group.corrected_optimum_moisture || "",
+        percentMinimumDensityRequired: group.percentMinimumDensityRequired || "", percent_minimum_density_required: group.percent_minimum_density_required || ""
+      };
+    })
+  );
+  const summaryType = computedGroups.length === 1
+    ? (computedGroups[0].materialType || "")
+    : (computedGroups.length > 1 ? "Multiple" : "");
+  const summaryName = computedGroups.length === 1
+    ? (computedGroups[0].materialName || "")
+    : computedGroups.map((group) => group.materialName).filter(Boolean).join(", ");
+  return { computedGroups, flatRecords, summaryType, summaryName };
+}
+
 function CompactionReportPage({ log, activityId, reportId, onChange, onBack }) {
   const activity = (log.activities || []).find((item) => item.id === activityId);
   const persistedReport = (activity?.reports || []).find((item) => item.id === reportId);
   const [localReport, setLocalReport] = useState(persistedReport || null);
   const report = localReport || persistedReport;
   const isReadOnly = [DAILY_LOG_STATUS.SUBMITTED, DAILY_LOG_STATUS.APPROVED].includes(log.status);
+
+  // Start with one material ready so the technician can pick a type and add test
+  // data immediately, instead of facing an empty page that requires "Add Material
+  // Type" first. Seeded in local state only — persisted once they enter data.
+  useEffect(() => {
+    const current = localReport || persistedReport;
+    if (!isReadOnly && current && getReportMaterialGroups(current).length === 0) {
+      setLocalReport({ ...current, materialGroups: [createMaterialGroup()] });
+    }
+  }, [reportId]);
   const isStandardizationNo = String(report?.standardizedGauge || report?.standardized_gauge || "").toLowerCase() === "no";
+  // The gauge is out of calibration if its calibration due date has already passed.
+  const calibrationDueValue = report?.calibrationDueDate || report?.calibration_due_date || "";
+  const isCalibrationExpired = (() => {
+    if (!calibrationDueValue) return false;
+    const due = new Date(`${calibrationDueValue}T00:00:00`);
+    if (Number.isNaN(due.getTime())) return false;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return due < today;
+  })();
   const requiredMissing = [
     ["serialNumber", "Serial Number"],
     ["gaugeModel", "Gauge Model"],
     ["calibrationDueDate", "Calibration Due Date"],
     ["standardizedGauge", "Gauge Standardization"],
     ["standardDensity", "Standard Density"],
-    ["standardMoisture", "Standard Moisture"],
-    ["materialType", "Material Type"],
-    ["materialName", "Material Name"]
+    ["standardMoisture", "Standard Moisture"]
   ].filter(([key]) => !String(report?.[key] || "").trim());
-  const canComplete = report && requiredMissing.length === 0 && !isStandardizationNo && (report.testRecords || []).length > 0;
+  const materialGroups = report ? getReportMaterialGroups(report) : [];
+  // Every material group must name its material and hold at least one test record.
+  const groupsIncomplete = materialGroups.filter((group) =>
+    !String(group.materialType || group.material_type || "").trim() ||
+    !String(group.materialName || group.material_name || "").trim() ||
+    !(group.testRecords || []).length
+  );
+  const totalTestRecords = materialGroups.reduce((sum, group) => sum + (group.testRecords || []).length, 0);
+  const canComplete = report && requiredMissing.length === 0 && !isStandardizationNo
+    && materialGroups.length > 0 && groupsIncomplete.length === 0 && totalTestRecords > 0;
 
   if (!activity || !report) {
     return (
@@ -1615,11 +1864,19 @@ function CompactionReportPage({ log, activityId, reportId, onChange, onBack }) {
     );
   }
 
-  function saveReport(nextReport) {
-    const materialType = nextReport.materialType || nextReport.material_type || "";
+  // Persist a set of material groups: recompute each group's records against its
+  // own specs, then flatten into report.testRecords for downstream consumers.
+  function saveGroups(nextGroups, extraPatch = {}) {
+    const { computedGroups, flatRecords, summaryType, summaryName } = normalizeCompactionGroups(nextGroups);
     const normalized = {
-      ...nextReport,
-      testRecords: (nextReport.testRecords || []).map((record) => calculateCompactionRecord(record, { ...nextReport, materialType })),
+      ...report,
+      ...extraPatch,
+      materialGroups: computedGroups,
+      testRecords: flatRecords,
+      materialType: summaryType,
+      material_type: summaryType,
+      materialName: summaryName,
+      material_name: summaryName,
       updatedAt: new Date().toISOString()
     };
     setLocalReport(normalized);
@@ -1643,83 +1900,82 @@ function CompactionReportPage({ log, activityId, reportId, onChange, onBack }) {
 
   function updateReport(patch) {
     if (isReadOnly) return;
-    saveReport({ ...report, ...patch, status: "draft" });
+    saveGroups(getReportMaterialGroups({ ...report, ...patch }), { ...patch, status: "draft" });
   }
 
-  function addTestRecord() {
-    const nextNumber = (report.testRecords || []).length + 1;
-    updateReport({
-      testRecords: [
-        ...(report.testRecords || []),
-        calculateCompactionRecord({
-          id: crypto.randomUUID(),
-          testNo: nextNumber,
-          test_no: nextNumber,
-          location: activity.location || "",
-          stationFt: "",
-          station_ft: "",
-          referenceToCenterLine: "",
-          reference_to_center_line: "",
-          elevation: "",
-          compactedDepth: "",
-          compacted_depth: "",
-          methodOfCompaction: "",
-          method_of_compaction: "",
-          wetDensity: "",
-          wet_density: "",
-          moistureUnitMass: "",
-          moisture_unit_mass: "",
-          dryDensity: "",
-          dry_density: "",
-          moistureContent: "",
-          moisture_content: "",
-          densityResult: "",
-          density_result: "",
-          resultOverridden: false,
-          result_overridden: false,
-          testStatus: "Pending",
-          test_status: "Pending",
-          remarks: ""
-        }, report)
-      ]
-    });
+  function persistGroups(nextGroups) {
+    if (isReadOnly) return;
+    saveGroups(nextGroups, { status: "draft" });
   }
 
-  function updateTestRecord(recordId, patch) {
-    updateReport({
-      testRecords: (report.testRecords || []).map((record) => (
-        record.id === recordId ? calculateCompactionRecord({ ...record, ...patch }, report) : record
-      ))
-    });
+  function addMaterialGroup() {
+    persistGroups([...materialGroups, createMaterialGroup()]);
   }
 
-  function duplicateTestRecord(recordId) {
-    const source = (report.testRecords || []).find((record) => record.id === recordId);
-    if (!source) return;
-    const copy = calculateCompactionRecord({
-      ...source,
+  function updateMaterialGroup(groupId, patch) {
+    persistGroups(materialGroups.map((group) => (group.id === groupId ? { ...group, ...patch } : group)));
+  }
+
+  function deleteMaterialGroup(groupId) {
+    persistGroups(materialGroups.filter((group) => group.id !== groupId));
+  }
+
+  function newTestRecord() {
+    return {
       id: crypto.randomUUID(),
-      testNo: (report.testRecords || []).length + 1,
-      test_no: (report.testRecords || []).length + 1
-    }, report);
-    updateReport({ testRecords: [...(report.testRecords || []), copy] });
+      location: activity.location || "",
+      stationFt: "", station_ft: "",
+      referenceToCenterLine: "", reference_to_center_line: "",
+      elevation: "",
+      compactedDepth: "", compacted_depth: "",
+      methodOfCompaction: "", method_of_compaction: "",
+      wetDensity: "", wet_density: "",
+      moistureUnitMass: "", moisture_unit_mass: "",
+      dryDensity: "", dry_density: "",
+      moistureContent: "", moisture_content: "",
+      densityResult: "", density_result: "",
+      resultOverridden: false, result_overridden: false,
+      testStatus: "Pending", test_status: "Pending",
+      remarks: ""
+    };
   }
 
-  function deleteTestRecord(recordId) {
-    updateReport({
-      testRecords: (report.testRecords || [])
-        .filter((record) => record.id !== recordId)
-        .map((record, index) => ({ ...record, testNo: index + 1, test_no: index + 1 }))
-    });
+  function addTestRecord(groupId) {
+    persistGroups(materialGroups.map((group) => (
+      group.id === groupId ? { ...group, testRecords: [...(group.testRecords || []), newTestRecord()] } : group
+    )));
+  }
+
+  function updateTestRecord(groupId, recordId, patch) {
+    persistGroups(materialGroups.map((group) => (
+      group.id === groupId
+        ? { ...group, testRecords: (group.testRecords || []).map((record) => (record.id === recordId ? { ...record, ...patch } : record)) }
+        : group
+    )));
+  }
+
+  function duplicateTestRecord(groupId, recordId) {
+    persistGroups(materialGroups.map((group) => {
+      if (group.id !== groupId) return group;
+      const source = (group.testRecords || []).find((record) => record.id === recordId);
+      if (!source) return group;
+      return { ...group, testRecords: [...(group.testRecords || []), { ...source, id: crypto.randomUUID() }] };
+    }));
+  }
+
+  function deleteTestRecord(groupId, recordId) {
+    persistGroups(materialGroups.map((group) => (
+      group.id === groupId
+        ? { ...group, testRecords: (group.testRecords || []).filter((record) => record.id !== recordId) }
+        : group
+    )));
   }
 
   function completeReport() {
     if (!canComplete) return;
-    saveReport({ ...report, status: "completed", completedAt: new Date().toISOString() });
+    saveGroups(materialGroups, { status: "completed", completedAt: new Date().toISOString() });
     onBack();
   }
-
-  const records = report.testRecords || [];
 
   function recordSectionTitle(title) {
     return <h4 className="border-b border-slate-200 pb-2 text-sm font-bold uppercase tracking-[0.12em] text-slate-700 md:col-span-3">{title}</h4>;
@@ -1749,23 +2005,35 @@ function CompactionReportPage({ log, activityId, reportId, onChange, onBack }) {
   }
 
   return (
-    <div className="space-y-4">
-      <section className={cardClass()}>
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-400">Nuclear Density Report</p>
-            <h1 className="mt-2 text-2xl font-bold text-slate-950">Compaction Report</h1>
-            <p className="mt-1 text-sm font-semibold text-slate-600">{report.reportNumber} · {report.projectName}</p>
+    <div className="space-y-4 pb-24 lg:pb-4">
+      <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+        <div className="border-b-4 border-accent-500 bg-gradient-to-br from-navy-800 via-navy-900 to-navy-950 px-5 py-5 sm:px-7">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="min-w-0">
+              <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">Nuclear Density Report</p>
+              <h1 className="mt-1 break-words text-2xl font-bold text-white sm:text-3xl">Compaction Report</h1>
+              <p className="mt-1 text-xs font-semibold text-slate-400">{report.projectName}{report.reportNumber ? ` · ${report.reportNumber}` : ""}</p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="inline-flex items-center rounded-full border border-amber-400/40 bg-amber-400/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-amber-300">
+                {String(report.status || "draft").replace(/_/g, " ")}
+              </span>
+              <div className="hidden gap-2 lg:flex">
+                {!isReadOnly && <button type="button" onClick={() => saveGroups(materialGroups)} className="inline-flex min-h-11 items-center gap-2 rounded-2xl border border-slate-700 bg-transparent px-4 text-sm font-bold text-white hover:bg-slate-900"><Save className="h-4 w-4" /> Save Draft</button>}
+                {!isReadOnly && <button type="button" onClick={completeReport} disabled={!canComplete} className="inline-flex min-h-11 items-center gap-2 rounded-2xl bg-blue-600 px-4 text-sm font-bold text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"><Send className="h-4 w-4" /> Finish Report</button>}
+              </div>
+            </div>
           </div>
-          <span className="w-fit rounded-full border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-bold uppercase tracking-[0.12em] text-slate-700">{report.status || "Draft"}</span>
         </div>
       </section>
 
       <section className={cardClass()}>
-        <h2 className="text-lg font-bold text-slate-950">Report Header</h2>
+        <div className="flex items-center gap-2.5">
+          <span className="inline-flex h-8 w-8 items-center justify-center rounded-xl bg-blue-50 text-blue-700"><FileText className="h-4 w-4" /></span>
+          <h2 className="text-base font-bold text-slate-950">Report Header</h2>
+        </div>
         <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
           {[
-            ["Report Number", report.reportNumber],
             ["Project Name", report.projectName],
             ["Project Number", report.projectNumber],
             ["Section", report.section],
@@ -1784,11 +2052,27 @@ function CompactionReportPage({ log, activityId, reportId, onChange, onBack }) {
       </section>
 
       <section className={cardClass()}>
-        <h2 className="text-lg font-bold text-slate-950">Gauge Information</h2>
+        <div className="flex items-center gap-2.5">
+          <span className="inline-flex h-8 w-8 items-center justify-center rounded-xl bg-blue-50 text-blue-700"><ShieldCheck className="h-4 w-4" /></span>
+          <h2 className="text-base font-bold text-slate-950">Gauge Information</h2>
+        </div>
         <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
           <Field label="Serial Number *"><input value={report.serialNumber || ""} disabled={isReadOnly} onChange={(event) => updateReport({ serialNumber: event.target.value, serial_number: event.target.value })} className={inputClass()} /></Field>
           <Field label="Gauge Model *"><input value={report.gaugeModel || ""} disabled={isReadOnly} onChange={(event) => updateReport({ gaugeModel: event.target.value, gauge_model: event.target.value })} className={inputClass()} /></Field>
-          <Field label="Calibration Due Date *"><input type="date" value={report.calibrationDueDate || ""} disabled={isReadOnly} onChange={(event) => updateReport({ calibrationDueDate: event.target.value, calibration_due_date: event.target.value })} className={inputClass()} /></Field>
+          <Field label="Calibration Due Date *">
+            <input
+              type="date"
+              value={report.calibrationDueDate || ""}
+              disabled={isReadOnly}
+              onChange={(event) => updateReport({ calibrationDueDate: event.target.value, calibration_due_date: event.target.value })}
+              className={`${inputClass()}${isCalibrationExpired ? " border-rose-400 bg-rose-50 text-rose-800 focus:border-rose-500 focus:ring-rose-100" : ""}`}
+            />
+            {isCalibrationExpired && (
+              <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-xs font-bold text-rose-700">
+                <AlertTriangle className="h-3.5 w-3.5" /> Out of calibration
+              </span>
+            )}
+          </Field>
           <Field label="Did you standardize the nuclear gauge? *">
             <select value={report.standardizedGauge || ""} disabled={isReadOnly} onChange={(event) => updateReport({ standardizedGauge: event.target.value, standardized_gauge: event.target.value })} className={inputClass()}>
               <option value="">Select</option>
@@ -1805,150 +2089,491 @@ function CompactionReportPage({ log, activityId, reportId, onChange, onBack }) {
             Nuclear gauge must be standardized before testing.
           </p>
         )}
+        {isCalibrationExpired && (
+          <p className="mt-3 flex items-center gap-2 rounded-2xl border border-rose-200 bg-rose-50 p-3 text-sm font-bold text-rose-800">
+            <AlertTriangle className="h-4 w-4 shrink-0" /> Gauge is out of calibration — the calibration due date has passed. Recalibrate before testing.
+          </p>
+        )}
       </section>
 
       <section className={cardClass()}>
-        <h2 className="text-lg font-bold text-slate-950">Material Type</h2>
-        <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
-          <Field label="Material Type *">
-            <select value={report.materialType || ""} disabled={isReadOnly} onChange={(event) => updateReport({ materialType: event.target.value, material_type: event.target.value, materialName: "", material_name: "" })} className={inputClass()}>
-              <option value="">Select</option>
-              <option>Aggregate</option>
-              <option>Soil</option>
-            </select>
-          </Field>
-          {report.materialType && (
-            <Field label="Material Name *">
-              <input value={report.materialName || ""} disabled={isReadOnly} onChange={(event) => updateReport({ materialName: event.target.value, material_name: event.target.value })} className={inputClass()} placeholder={report.materialType === "Aggregate" ? "#57 Stone, CR6, 21A" : "Structural Fill, Clay, Silty Sand"} />
-            </Field>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <div className="flex items-center gap-2.5">
+              <span className="inline-flex h-8 w-8 items-center justify-center rounded-xl bg-blue-50 text-blue-700"><ClipboardCheck className="h-4 w-4" /></span>
+              <h2 className="text-base font-bold text-slate-950">Materials &amp; Test Data</h2>
+            </div>
+            <p className="mt-1.5 text-sm font-semibold text-slate-500">Add a material (e.g. Aggregate), enter its specs and test data, then add another material (e.g. Soil) with its own tests.</p>
+          </div>
+          {!isReadOnly && <button type="button" onClick={addMaterialGroup} className="min-h-10 shrink-0 rounded-xl bg-slate-950 px-4 text-sm font-bold text-white">Add Material Type</button>}
+        </div>
+
+        <div className="mt-4 space-y-5">
+          {materialGroups.map((group, groupIndex) => {
+            const groupRecords = group.testRecords || [];
+            return (
+              <div key={group.id} className="rounded-2xl border-2 border-slate-200 bg-white p-4">
+                {/* Material header */}
+                <div className="flex flex-col gap-3 border-b border-slate-200 pb-4 sm:flex-row sm:items-end sm:justify-between">
+                  <div className="grid w-full grid-cols-1 gap-3 sm:grid-cols-2 md:max-w-2xl">
+                    <Field label={`Material ${groupIndex + 1} - Type *`}>
+                      <select
+                        value={group.materialType || group.material_type || ""}
+                        disabled={isReadOnly}
+                        onChange={(event) => updateMaterialGroup(group.id, { materialType: event.target.value, material_type: event.target.value, materialName: "", material_name: "" })}
+                        className={inputClass()}
+                      >
+                        <option value="">Select</option>
+                        <option>Aggregate</option>
+                        <option>Soil</option>
+                      </select>
+                    </Field>
+                    {(group.materialType || group.material_type) && (
+                      <Field label="Material Name *">
+                        <input
+                          value={group.materialName || group.material_name || ""}
+                          disabled={isReadOnly}
+                          onChange={(event) => updateMaterialGroup(group.id, { materialName: event.target.value, material_name: event.target.value })}
+                          className={inputClass()}
+                          placeholder={(group.materialType || group.material_type) === "Aggregate" ? "#57 Stone, CR6, 21A" : "Structural Fill, Clay, Silty Sand"}
+                        />
+                      </Field>
+                    )}
+                  </div>
+                  {!isReadOnly && (
+                    <button type="button" onClick={() => deleteMaterialGroup(group.id)} className="min-h-9 shrink-0 rounded-xl border border-rose-200 bg-white px-3 text-xs font-bold text-rose-700">Remove Material</button>
+                  )}
+                </div>
+
+                {/* Specifications for this material */}
+                <div className="mt-4">
+                  <h3 className="text-sm font-bold uppercase tracking-[0.12em] text-slate-700">Specifications</h3>
+                  <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
+                    {COMPACTION_SPEC_FIELDS.map(([label, key, snakeKey]) => (
+                      <Field key={key} label={label}>
+                        <input
+                          value={group[key] || group[snakeKey] || ""}
+                          disabled={isReadOnly}
+                          onChange={(event) => updateMaterialGroup(group.id, { [key]: event.target.value, [snakeKey]: event.target.value })}
+                          className={inputClass()}
+                        />
+                      </Field>
+                    ))}
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2">
+                      <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-400">Allowed Moisture Range</p>
+                      <p className="mt-1 text-sm font-bold text-slate-950">{getCompactionMoistureRange(group)}</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Test data for this material */}
+                <div className="mt-5 flex items-center justify-between">
+                  <h3 className="text-sm font-bold uppercase tracking-[0.12em] text-slate-700">Test Data ({groupRecords.length})</h3>
+                  {!isReadOnly && <button type="button" onClick={() => addTestRecord(group.id)} className="min-h-9 rounded-xl bg-slate-950 px-4 text-xs font-bold text-white">Add Test Data</button>}
+                </div>
+                <div className="mt-3 space-y-4">
+                  {groupRecords.map((record, recordIndex) => (
+                    <div key={record.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                        <h4 className="text-base font-bold text-slate-950">Test No. {recordIndex + 1}</h4>
+                        {!isReadOnly && (
+                          <div className="flex gap-2">
+                            <button type="button" onClick={() => duplicateTestRecord(group.id, record.id)} className="min-h-9 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700">Duplicate Test</button>
+                            <button type="button" onClick={() => deleteTestRecord(group.id, record.id)} className="min-h-9 rounded-xl border border-rose-200 bg-white px-3 text-xs font-bold text-rose-700">Delete Test</button>
+                          </div>
+                        )}
+                      </div>
+                      <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
+                        {recordSectionTitle("Section 1 - Location Information")}
+                        {[
+                          ["Location", "location"],
+                          ["Station (ft)", "stationFt", "station_ft"],
+                          ["Reference To Center Line", "referenceToCenterLine", "reference_to_center_line"],
+                          ["Elevation", "elevation"],
+                          ["Compacted Depth (in)", "compactedDepth", "compacted_depth"],
+                          ["Method Of Compaction", "methodOfCompaction", "method_of_compaction"]
+                        ].map(([label, key, snakeKey]) => (
+                          <Field key={key} label={label}>
+                            <input value={record[key] || ""} disabled={isReadOnly} onChange={(event) => updateTestRecord(group.id, record.id, { [key]: event.target.value, ...(snakeKey ? { [snakeKey]: event.target.value } : {}) })} className={inputClass()} />
+                          </Field>
+                        ))}
+
+                        {recordSectionTitle("Section 2 - Nuclear Test Inputs")}
+                        {[
+                          ["A. Wet Density (lbs/ft3)", "wetDensity", "wet_density"],
+                          ["B. Moisture Unit Mass (lbs/ft3)", "moistureUnitMass", "moisture_unit_mass"]
+                        ].map(([label, key, snakeKey]) => (
+                          <Field key={key} label={label}>
+                            <input value={record[key] || ""} disabled={isReadOnly} onChange={(event) => updateTestRecord(group.id, record.id, { [key]: event.target.value, ...(snakeKey ? { [snakeKey]: event.target.value } : {}) })} className={inputClass()} />
+                          </Field>
+                        ))}
+
+                        {recordSectionTitle("Section 3 - Auto Calculated")}
+                        {calculatedCard("C. Dry Density (lbs/ft3)", record.dryDensity || record.dry_density, { formula: "A - B" })}
+                        {calculatedCard("D. Moisture Content (%)", record.moistureContent || record.moisture_content, { danger: record.moistureOutOfRange || record.moisture_out_of_range, formula: "(B / C) x 100" })}
+                        {calculatedCard("J. Percent Dry Density (%)", record.percentDryDensity || record.percent_dry_density, { formula: "(C / H) x 100" })}
+
+                        {recordSectionTitle("Section 4 - Test Status")}
+                        <Field label="Test Result">
+                          <select
+                            value={record.densityResult || record.density_result || ""}
+                            disabled={isReadOnly}
+                            onChange={(event) => updateTestRecord(group.id, record.id, { densityResult: event.target.value, density_result: event.target.value, resultOverridden: true, result_overridden: true })}
+                            className={inputClass()}
+                          >
+                            <option value="">Select</option>
+                            <option>PASS</option>
+                            <option>FAIL</option>
+                            <option>RETEST</option>
+                          </select>
+                        </Field>
+                        <Field label="Test Status">
+                          <select
+                            value={record.testStatus || record.test_status || "Pending"}
+                            disabled={isReadOnly}
+                            onChange={(event) => updateTestRecord(group.id, record.id, { testStatus: event.target.value, test_status: event.target.value })}
+                            className={inputClass()}
+                          >
+                            <option>Tested</option>
+                            <option>Retest Required</option>
+                            <option>Pending</option>
+                            <option>Approved</option>
+                          </select>
+                        </Field>
+                        <div className={`rounded-2xl border px-4 py-3 ${resultTone(record.densityResult || record.density_result)}`}>
+                          <p className="text-xs font-bold uppercase tracking-[0.14em]">Density Result</p>
+                          <p className="mt-1 text-2xl font-bold">{record.densityResult || record.density_result || "-"}</p>
+                          {(record.resultOverridden || record.result_overridden) && <p className="mt-1 text-xs font-bold">Manual Override</p>}
+                        </div>
+
+                        <div className="md:col-span-3">
+                          <Field label="Remarks">
+                            <textarea
+                              value={record.remarks || ""}
+                              disabled={isReadOnly}
+                              onChange={(event) => updateTestRecord(group.id, record.id, { remarks: event.target.value })}
+                              rows={4}
+                              className={`${inputClass()} py-3 leading-6`}
+                              placeholder="Material within specification. Retest required due to moisture. Gauge recalibrated. Soft area observed."
+                            />
+                          </Field>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  {!groupRecords.length && <p className="rounded-2xl border border-dashed border-slate-300 bg-white p-4 text-sm font-semibold text-slate-600">No test data yet for this material. Add test data to begin.</p>}
+                </div>
+              </div>
+            );
+          })}
+          {!materialGroups.length && (
+            <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center">
+              <p className="text-sm font-semibold text-slate-600">No materials added yet.</p>
+              {!isReadOnly && <button type="button" onClick={addMaterialGroup} className="mt-3 inline-flex min-h-10 items-center rounded-xl bg-slate-950 px-4 text-sm font-bold text-white">Add Material Type</button>}
+            </div>
+          )}
+
+          {!isReadOnly && materialGroups.length > 0 && (
+            <button
+              type="button"
+              onClick={addMaterialGroup}
+              className="flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50 px-4 text-sm font-bold text-slate-700 transition hover:border-slate-400 hover:bg-slate-100"
+            >
+              <Plus className="h-5 w-5" /> Add Another Material Type
+            </button>
           )}
         </div>
       </section>
 
+      {(requiredMissing.length > 0 || materialGroups.length === 0 || groupsIncomplete.length > 0) && (
+        <p className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm font-bold text-amber-900">
+          Missing required fields: {[
+            ...requiredMissing.map(([, label]) => label),
+            ...(materialGroups.length === 0 ? ["Add at least one material with test data"] : []),
+            ...(groupsIncomplete.length ? [`Complete material type, name, and at least one test on ${groupsIncomplete.length} material${groupsIncomplete.length > 1 ? "s" : ""}`] : [])
+          ].join(", ")}
+        </p>
+      )}
+
+      <div className="sticky bottom-0 z-20 -mx-4 flex flex-col gap-2 border-t border-slate-200 bg-white/95 p-4 backdrop-blur sm:mx-0 sm:flex-row sm:justify-end sm:rounded-2xl sm:border">
+        <button type="button" onClick={onBack} className="min-h-11 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-800">Back</button>
+        {!isReadOnly && <button type="button" onClick={() => saveGroups(materialGroups)} className="min-h-11 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-800">Save Draft</button>}
+        {!isReadOnly && <button type="button" onClick={completeReport} disabled={!canComplete} className="min-h-11 rounded-2xl bg-emerald-700 px-4 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-600">Finish Report</button>}
+      </div>
+    </div>
+  );
+}
+
+function AsphaltCompactionReportPage({ log, activityId, reportId, onChange, onBack }) {
+  const activity = (log.activities || []).find((item) => item.id === activityId);
+  const persistedReport = (activity?.reports || []).find((item) => item.id === reportId);
+  const [localReport, setLocalReport] = useState(persistedReport || null);
+  const report = localReport || persistedReport;
+  const isReadOnly = [DAILY_LOG_STATUS.SUBMITTED, DAILY_LOG_STATUS.APPROVED].includes(log.status);
+
+  const requiredMissing = [
+    ["serialNumber", "Serial Number"],
+    ["gaugeModel", "Gauge Model"],
+    ["calibrationDueDate", "Calibration Due Date"],
+    ["standardizedGauge", "Gauge Standardization"],
+    ["standardDensity", "Standard Count Density"],
+    ["standardMoisture", "Standard Count Moisture"]
+  ].filter(([key]) => !String(report?.[key] || "").trim());
+
+  const materialGroups = report?.materialGroups || [];
+  const hasTestData = materialGroups.some((g) => (g.testRecords || []).length > 0);
+  const canComplete = report && requiredMissing.length === 0 && hasTestData;
+
+  if (!activity || !report) {
+    return (
       <section className={cardClass()}>
-        <h2 className="text-lg font-bold text-slate-950">Specifications</h2>
-        <p className="mt-1 text-sm font-semibold text-slate-500">Stored once at report level and shared by all test records.</p>
-        <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
-          {[
-            ["E. Maximum Dry Density (lbs/ft3)", "maximumDryDensity", "maximum_dry_density"],
-            ["F. Percent Optimum Moisture (%)", "percentOptimumMoisture", "percent_optimum_moisture"],
-            ["G. Percent of Plus #4 (4.75 mm) (%)", "percentPassingNo4", "percent_passing_no4"],
-            ["H. Corrected Maximum Dry Density (lbs/ft3)", "correctedMaximumDryDensity", "corrected_maximum_dry_density"],
-            ["I. Corrected Optimum Moisture (%)", "correctedOptimumMoisture", "corrected_optimum_moisture"],
-            ["K. Percent Minimum Density Required (%)", "percentMinimumDensityRequired", "percent_minimum_density_required"]
-          ].map(([label, key, snakeKey]) => (
-            <Field key={key} label={label}>
-              <input
-                value={report[key] || report[snakeKey] || ""}
-                disabled={isReadOnly}
-                onChange={(event) => updateReport({ [key]: event.target.value, [snakeKey]: event.target.value })}
-                className={inputClass()}
-              />
-            </Field>
-          ))}
-          <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2">
-            <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-400">Allowed Moisture Range</p>
-            <p className="mt-1 text-sm font-bold text-slate-950">{getCompactionMoistureRange(report)}</p>
+        <h1 className="text-xl font-bold text-slate-950">Asphalt Compaction Report Not Found</h1>
+        <button type="button" onClick={onBack} className="mt-4 min-h-10 rounded-xl border border-slate-200 px-4 text-sm font-bold">Back</button>
+      </section>
+    );
+  }
+
+  function saveReport(nextReport) {
+    const normalized = { ...nextReport, updatedAt: new Date().toISOString() };
+    setLocalReport(normalized);
+    const nextLog = saveDailyLog({
+      ...log,
+      activities: (log.activities || []).map((item) => (
+        item.id === activityId
+          ? { ...item, reports: (item.reports || []).map((r) => (r.id === normalized.id ? normalized : r)), updatedAt: new Date().toISOString() }
+          : item
+      )),
+      updatedAt: new Date().toISOString()
+    });
+    onChange(nextLog);
+  }
+
+  function updateReport(patch) {
+    if (isReadOnly) return;
+    saveReport({ ...report, ...patch, status: "draft" });
+  }
+
+  function addMaterialGroup() {
+    updateReport({
+      materialGroups: [
+        ...(report.materialGroups || []),
+        { id: crypto.randomUUID(), mixId: "", marshallValue: "", requiredCompaction: "", testRecords: [] }
+      ]
+    });
+  }
+
+  function updateMaterialGroup(groupId, patch) {
+    updateReport({
+      materialGroups: (report.materialGroups || []).map((g) => {
+        if (g.id !== groupId) return g;
+        const updated = { ...g, ...patch };
+        if ("marshallValue" in patch || "requiredCompaction" in patch) {
+          updated.testRecords = (updated.testRecords || []).map((r) => calculateAsphaltTestRecord(r, updated));
+        }
+        return updated;
+      })
+    });
+  }
+
+  function deleteMaterialGroup(groupId) {
+    updateReport({ materialGroups: (report.materialGroups || []).filter((g) => g.id !== groupId) });
+  }
+
+  function addTestRecord(groupId) {
+    const group = (report.materialGroups || []).find((g) => g.id === groupId);
+    if (!group) return;
+    const nextNumber = (group.testRecords || []).length + 1;
+    const newRecord = calculateAsphaltTestRecord({ id: crypto.randomUUID(), testNo: nextNumber, location: "", fieldDensity: "", compactionPercent: "", result: "" }, group);
+    updateReport({
+      materialGroups: (report.materialGroups || []).map((g) =>
+        g.id === groupId ? { ...g, testRecords: [...(g.testRecords || []), newRecord] } : g
+      )
+    });
+  }
+
+  function updateTestRecord(groupId, recordId, patch) {
+    updateReport({
+      materialGroups: (report.materialGroups || []).map((g) => {
+        if (g.id !== groupId) return g;
+        return { ...g, testRecords: (g.testRecords || []).map((r) => r.id === recordId ? calculateAsphaltTestRecord({ ...r, ...patch }, g) : r) };
+      })
+    });
+  }
+
+  function deleteTestRecord(groupId, recordId) {
+    updateReport({
+      materialGroups: (report.materialGroups || []).map((g) => {
+        if (g.id !== groupId) return g;
+        return {
+          ...g,
+          testRecords: (g.testRecords || [])
+            .filter((r) => r.id !== recordId)
+            .map((r, i) => ({ ...r, testNo: i + 1 }))
+        };
+      })
+    });
+  }
+
+  function completeReport() {
+    if (!canComplete) return;
+    saveReport({ ...report, status: "completed", completedAt: new Date().toISOString() });
+    onBack();
+  }
+
+  const outOfCalibration = Boolean(
+    report.calibrationDueDate && log.date && report.calibrationDueDate < log.date
+  );
+
+  function resultTone(result) {
+    if (result === "PASS") return "border-emerald-300 bg-emerald-50 text-emerald-800";
+    if (result === "FAIL") return "border-rose-300 bg-rose-50 text-rose-800";
+    return "border-slate-200 bg-white text-slate-400";
+  }
+
+  return (
+    <div className="space-y-4">
+      <section className="overflow-hidden rounded-2xl border-b-4 border-accent-500 bg-gradient-to-br from-navy-800 via-navy-900 to-navy-950 p-4 shadow-sm sm:p-5">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-300">Asphalt Compaction Report</p>
+            <h1 className="mt-2 text-2xl font-bold tracking-tight text-white">Compaction Report</h1>
+            <p className="mt-1 text-sm font-semibold text-slate-300">{report.projectName}</p>
           </div>
+          <span className="w-fit rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs font-bold uppercase tracking-[0.12em] text-white">{report.status || "Draft"}</span>
         </div>
       </section>
 
       <section className={cardClass()}>
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <h2 className="text-lg font-bold text-slate-950">Test Records</h2>
-          {!isReadOnly && <button type="button" onClick={addTestRecord} className="min-h-10 rounded-xl bg-slate-950 px-4 text-sm font-bold text-white">Add Test Data</button>}
+        <h2 className="text-lg font-bold text-slate-950">Gauge Information</h2>
+        <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
+          <Field label="Serial Number *"><input value={report.serialNumber || ""} disabled={isReadOnly} onChange={(e) => updateReport({ serialNumber: e.target.value })} className={inputClass()} /></Field>
+          <Field label="Gauge Model *"><input value={report.gaugeModel || ""} disabled={isReadOnly} onChange={(e) => updateReport({ gaugeModel: e.target.value })} className={inputClass()} /></Field>
+          <Field label="Calibration Due Date *"><input type="date" value={report.calibrationDueDate || ""} disabled={isReadOnly} onChange={(e) => updateReport({ calibrationDueDate: e.target.value })} className={`${inputClass()} ${outOfCalibration ? "border-rose-400 bg-rose-50" : ""}`} /></Field>
+          <Field label="Did you standardize the nuclear gauge? *">
+            <select value={report.standardizedGauge || ""} disabled={isReadOnly} onChange={(e) => updateReport({ standardizedGauge: e.target.value })} className={inputClass()}>
+              <option value="">Select</option>
+              <option>Yes</option>
+              <option>No</option>
+            </select>
+          </Field>
+          <Field label="Standard Count Density *"><input type="number" value={report.standardDensity || ""} disabled={isReadOnly} onChange={(e) => updateReport({ standardDensity: e.target.value })} className={inputClass()} /></Field>
+          <Field label="Standard Count Moisture *"><input type="number" value={report.standardMoisture || ""} disabled={isReadOnly} onChange={(e) => updateReport({ standardMoisture: e.target.value })} className={inputClass()} /></Field>
         </div>
-        <div className="mt-4 space-y-4">
-          {records.map((record) => (
-            <div key={record.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <h3 className="text-base font-bold text-slate-950">Test No. {record.testNo || record.test_no}</h3>
-                {!isReadOnly && (
-                  <div className="flex gap-2">
-                    <button type="button" onClick={() => duplicateTestRecord(record.id)} className="min-h-9 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700">Duplicate Test</button>
-                    <button type="button" onClick={() => deleteTestRecord(record.id)} className="min-h-9 rounded-xl border border-rose-200 bg-white px-3 text-xs font-bold text-rose-700">Delete Test</button>
-                  </div>
-                )}
-              </div>
-              <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
-                {recordSectionTitle("Section 1 - Location Information")}
-                {[
-                  ["Location", "location"],
-                  ["Station (ft)", "stationFt", "station_ft"],
-                  ["Reference To Center Line", "referenceToCenterLine", "reference_to_center_line"],
-                  ["Elevation", "elevation"],
-                  ["Compacted Depth (in)", "compactedDepth", "compacted_depth"],
-                  ["Method Of Compaction", "methodOfCompaction", "method_of_compaction"]
-                ].map(([label, key, snakeKey]) => (
-                  <Field key={key} label={label}>
-                    <input value={record[key] || ""} disabled={isReadOnly} onChange={(event) => updateTestRecord(record.id, { [key]: event.target.value, ...(snakeKey ? { [snakeKey]: event.target.value } : {}) })} className={inputClass()} />
-                  </Field>
-                ))}
+        {outOfCalibration && (
+          <p className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 p-3 text-sm font-bold text-rose-800">⚠ OUT OF CALIBRATION — Calibration expired before the report date ({log.date}). Do not use this gauge until recalibrated.</p>
+        )}
+        {String(report.standardizedGauge || "").toLowerCase() === "no" && (
+          <p className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 p-3 text-sm font-bold text-rose-800">Nuclear gauge must be standardized before testing.</p>
+        )}
+      </section>
 
-                {recordSectionTitle("Section 2 - Nuclear Test Inputs")}
-                {[
-                  ["A. Wet Density (lbs/ft3)", "wetDensity", "wet_density"],
-                  ["B. Moisture Unit Mass (lbs/ft3)", "moistureUnitMass", "moisture_unit_mass"]
-                ].map(([label, key, snakeKey]) => (
-                  <Field key={key} label={label}>
-                    <input value={record[key] || ""} disabled={isReadOnly} onChange={(event) => updateTestRecord(record.id, { [key]: event.target.value, ...(snakeKey ? { [snakeKey]: event.target.value } : {}) })} className={inputClass()} />
-                  </Field>
-                ))}
+      {materialGroups.map((group, groupIndex) => (
+        <section key={group.id} className={cardClass()}>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <h2 className="text-lg font-bold text-slate-950">Material {groupIndex + 1}</h2>
+            {!isReadOnly && materialGroups.length > 1 && (
+              <button type="button" onClick={() => deleteMaterialGroup(group.id)} className="min-h-9 rounded-xl border border-rose-200 bg-white px-3 text-xs font-bold text-rose-700">Remove Material</button>
+            )}
+          </div>
+          <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
+            <Field label="Material Mix ID *">
+              <input value={group.mixId || ""} disabled={isReadOnly} onChange={(e) => updateMaterialGroup(group.id, { mixId: e.target.value })} className={inputClass()} placeholder="e.g. SM-9.5A, BM-25.0" />
+            </Field>
+            <Field label="Marshall Value from Plant (pcf) *">
+              <input type="number" value={group.marshallValue || ""} disabled={isReadOnly} onChange={(e) => updateMaterialGroup(group.id, { marshallValue: e.target.value })} className={inputClass()} placeholder="e.g. 148.5" />
+            </Field>
+            <Field label="Required Compaction (%) *">
+              <input type="number" value={group.requiredCompaction || ""} disabled={isReadOnly} onChange={(e) => updateMaterialGroup(group.id, { requiredCompaction: e.target.value })} className={inputClass()} placeholder="e.g. 92" />
+            </Field>
+          </div>
 
-                {recordSectionTitle("Section 3 - Auto Calculated")}
-                {calculatedCard("C. Dry Density (lbs/ft3)", record.dryDensity || record.dry_density, { formula: "A - B" })}
-                {calculatedCard("D. Moisture Content (%)", record.moistureContent || record.moisture_content, { danger: record.moistureOutOfRange || record.moisture_out_of_range, formula: "(B / C) x 100" })}
-                {calculatedCard("J. Percent Dry Density (%)", record.percentDryDensity || record.percent_dry_density, { formula: "(C / H) x 100" })}
-
-                {recordSectionTitle("Section 4 - Test Status")}
-                <Field label="Test Result">
-                  <select
-                    value={record.densityResult || record.density_result || ""}
-                    disabled={isReadOnly}
-                    onChange={(event) => updateTestRecord(record.id, { densityResult: event.target.value, density_result: event.target.value, resultOverridden: true, result_overridden: true })}
-                    className={inputClass()}
-                  >
-                    <option value="">Select</option>
-                    <option>PASS</option>
-                    <option>FAIL</option>
-                    <option>RETEST</option>
-                  </select>
-                </Field>
-                <Field label="Test Status">
-                  <select
-                    value={record.testStatus || record.test_status || "Pending"}
-                    disabled={isReadOnly}
-                    onChange={(event) => updateTestRecord(record.id, { testStatus: event.target.value, test_status: event.target.value })}
-                    className={inputClass()}
-                  >
-                    <option>Tested</option>
-                    <option>Retest Required</option>
-                    <option>Pending</option>
-                    <option>Approved</option>
-                  </select>
-                </Field>
-                <div className={`rounded-2xl border px-4 py-3 ${resultTone(record.densityResult || record.density_result)}`}>
-                  <p className="text-xs font-bold uppercase tracking-[0.14em]">Density Result</p>
-                  <p className="mt-1 text-2xl font-bold">{record.densityResult || record.density_result || "-"}</p>
-                  {(record.resultOverridden || record.result_overridden) && <p className="mt-1 text-xs font-bold">Manual Override</p>}
-                </div>
-
-                <div className="md:col-span-3">
-                  <Field label="Remarks">
-                    <textarea
-                      value={record.remarks || ""}
-                      disabled={isReadOnly}
-                      onChange={(event) => updateTestRecord(record.id, { remarks: event.target.value })}
-                      rows={4}
-                      className={`${inputClass()} py-3 leading-6`}
-                      placeholder="Material within specification. Retest required due to moisture. Gauge recalibrated. Soft area observed."
-                    />
-                  </Field>
-                </div>
-              </div>
+          <div className="mt-5">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <h3 className="text-sm font-bold text-slate-950">Test Data</h3>
+              {!isReadOnly && (
+                <button type="button" onClick={() => addTestRecord(group.id)} className="min-h-9 rounded-xl bg-slate-950 px-3 text-sm font-bold text-white">+ Add Test Data</button>
+              )}
             </div>
-          ))}
-          {!records.length && <p className="rounded-2xl border border-dashed border-slate-300 bg-white p-4 text-sm font-semibold text-slate-600">No test records yet. Add test data to begin.</p>}
+            <div className="mt-3 space-y-3">
+              {(group.testRecords || []).map((record) => (
+                <div key={record.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <h4 className="text-sm font-bold text-slate-950">Test No. {record.testNo}</h4>
+                    {!isReadOnly && (
+                      <button type="button" onClick={() => deleteTestRecord(group.id, record.id)} className="min-h-8 rounded-xl border border-rose-200 bg-white px-3 text-xs font-bold text-rose-700">Delete</button>
+                    )}
+                  </div>
+                  <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
+                    <Field label="Test Location *">
+                      <input value={record.location || ""} disabled={isReadOnly} onChange={(e) => updateTestRecord(group.id, record.id, { location: e.target.value })} className={inputClass()} placeholder="e.g. STA 10+00, Lane 1" />
+                    </Field>
+                    <Field label="Field Density (pcf) *">
+                      <input type="number" value={record.fieldDensity || ""} disabled={isReadOnly} onChange={(e) => updateTestRecord(group.id, record.id, { fieldDensity: e.target.value })} className={inputClass()} placeholder="e.g. 138.2" />
+                    </Field>
+                    <div className={`rounded-2xl border px-3 py-2 ${record.result === "PASS" ? "border-emerald-200 bg-emerald-50" : record.result === "FAIL" ? "border-rose-200 bg-rose-50" : "border-slate-200 bg-slate-100"}`}>
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">Compaction %</p>
+                        <span className="inline-flex items-center gap-1 rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-700">
+                          <Calculator className="h-3 w-3" /> Calc
+                        </span>
+                      </div>
+                      <p className="mt-2 text-sm font-bold text-slate-950">{record.compactionPercent ? `${record.compactionPercent}%` : "-"}</p>
+                      <p className="mt-1 text-xs font-semibold text-slate-500">Field Density ÷ Marshall × 100</p>
+                    </div>
+                    <div className={`rounded-2xl border px-4 py-3 md:col-span-3 ${resultTone(record.result)}`}>
+                      <p className="text-xs font-bold uppercase tracking-[0.14em]">Result</p>
+                      <p className="mt-1 text-2xl font-bold">{record.result || "-"}</p>
+                      {group.requiredCompaction && record.compactionPercent && (
+                        <p className="mt-1 text-xs font-semibold">Required: {group.requiredCompaction}% · Achieved: {record.compactionPercent}%</p>
+                      )}
+                      {record.exceededLimit && (
+                        <p className="mt-2 inline-flex items-center gap-1 rounded-full bg-amber-100 border border-amber-300 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-amber-800">
+                          ⚠ Exceeded allowed limit (&gt;102%)
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {!(group.testRecords || []).length && (
+                <p className="rounded-2xl border border-dashed border-slate-300 bg-white p-3 text-sm font-semibold text-slate-600">No test data yet. Click &quot;+ Add Test Data&quot; to begin.</p>
+              )}
+            </div>
+          </div>
+        </section>
+      ))}
+
+      {!isReadOnly && (
+        <button type="button" onClick={addMaterialGroup} className="w-full min-h-11 rounded-2xl border-2 border-dashed border-slate-300 bg-white text-sm font-bold text-slate-700 hover:border-blue-400 hover:text-blue-700 transition-colors">
+          + Add Different Material
+        </button>
+      )}
+
+      <section className={cardClass()}>
+        <h2 className="text-lg font-bold text-slate-950">Cores</h2>
+        <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
+          <Field label="Were cores taken?">
+            <select value={report.coresTaken || ""} disabled={isReadOnly} onChange={(e) => updateReport({ coresTaken: e.target.value })} className={inputClass()}>
+              <option value="">Select</option>
+              <option>Yes</option>
+              <option>No</option>
+            </select>
+          </Field>
+          {report.coresTaken === "Yes" && (
+            <>
+              <Field label="Number of Cores">
+                <input type="number" value={report.coreCount || ""} disabled={isReadOnly} onChange={(e) => updateReport({ coreCount: e.target.value })} className={inputClass()} placeholder="e.g. 3" />
+              </Field>
+              <Field label="Core Locations">
+                <input value={report.coreLocations || ""} disabled={isReadOnly} onChange={(e) => updateReport({ coreLocations: e.target.value })} className={inputClass()} placeholder="e.g. STA 10+00, 12+50, 15+00" />
+              </Field>
+              <div className="md:col-span-3">
+                <Field label="Core Notes">
+                  <textarea value={report.coreNotes || ""} disabled={isReadOnly} onChange={(e) => updateReport({ coreNotes: e.target.value })} rows={3} className={`${inputClass()} py-3 leading-6`} placeholder="Core results, lab submission, observations..." />
+                </Field>
+              </div>
+            </>
+          )}
         </div>
       </section>
 
@@ -1967,6 +2592,876 @@ function CompactionReportPage({ log, activityId, reportId, onChange, onBack }) {
   );
 }
 
+function SurfaceInfiltrationReportPage({ log, activityId, reportId, onChange, onBack }) {
+  const activity = (log.activities || []).find((item) => item.id === activityId);
+  const persistedReport = (activity?.reports || []).find((item) => item.id === reportId);
+  const [localReport, setLocalReport] = useState(persistedReport || null);
+  const report = localReport || persistedReport;
+  const isReadOnly = [DAILY_LOG_STATUS.SUBMITTED, DAILY_LOG_STATUS.APPROVED].includes(log.status);
+
+  const testRecords = report?.testRecords || [];
+  const canComplete = report && testRecords.length > 0;
+
+  if (!activity || !report) {
+    return (
+      <section className={cardClass()}>
+        <h1 className="text-xl font-bold text-slate-950">Surface Infiltration Report Not Found</h1>
+        <button type="button" onClick={onBack} className="mt-4 min-h-10 rounded-xl border border-slate-200 px-4 text-sm font-bold">Back</button>
+      </section>
+    );
+  }
+
+  function saveReport(nextReport) {
+    const normalized = { ...nextReport, updatedAt: new Date().toISOString() };
+    setLocalReport(normalized);
+    const nextLog = saveDailyLog({
+      ...log,
+      activities: (log.activities || []).map((item) => (
+        item.id === activityId
+          ? { ...item, reports: (item.reports || []).map((r) => (r.id === normalized.id ? normalized : r)), updatedAt: new Date().toISOString() }
+          : item
+      )),
+      updatedAt: new Date().toISOString()
+    });
+    onChange(nextLog);
+  }
+
+  function updateReport(patch) {
+    if (isReadOnly) return;
+    saveReport({ ...report, ...patch, status: "draft" });
+  }
+
+  function addTestRecord() {
+    const nextNo = testRecords.length + 1;
+    const newRecord = calculateInfiltrationRate({
+      id: crypto.randomUUID(), testNo: nextNo,
+      identificationNumber: "", location: "", dateOfTest: log.date || "",
+      ageOfPavingUnit: "", typeOfPavingUnit: "", thicknessOfPavingUnit: "",
+      timePrewetting: "", rainLastEvent: "", weightInfiltratedWater: "",
+      insideDiameter: "", timeInfiltration: "", infiltrationRate: ""
+    });
+    updateReport({ testRecords: [...testRecords, newRecord] });
+  }
+
+  function updateTestRecord(recordId, patch) {
+    updateReport({
+      testRecords: testRecords.map((r) => {
+        if (r.id !== recordId) return r;
+        const updated = { ...r, ...patch };
+        if ("weightInfiltratedWater" in patch || "insideDiameter" in patch || "timeInfiltration" in patch) {
+          return calculateInfiltrationRate(updated);
+        }
+        return updated;
+      })
+    });
+  }
+
+  function deleteTestRecord(recordId) {
+    updateReport({ testRecords: testRecords.filter((r) => r.id !== recordId) });
+  }
+
+  function completeReport() {
+    saveReport({ ...report, status: "completed", completedAt: new Date().toISOString() });
+    onBack();
+  }
+
+  return (
+    <div className="space-y-4">
+      <section className="overflow-hidden rounded-2xl border-b-4 border-accent-500 bg-gradient-to-br from-navy-800 via-navy-900 to-navy-950 p-4 shadow-sm sm:p-5">
+        <div>
+          <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-300">ASTM C1781</p>
+          <h1 className="mt-2 text-2xl font-bold tracking-tight text-white">Surface Infiltration Rate Report</h1>
+          <p className="mt-1 text-sm font-semibold text-slate-300">{report.projectName}</p>
+        </div>
+      </section>
+
+      <section className={cardClass()}>
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-bold text-slate-950">Test Records</h2>
+          <span className="text-xs font-semibold text-slate-500">{testRecords.length} record{testRecords.length !== 1 ? "s" : ""}</span>
+        </div>
+        <p className="mt-1 text-xs font-semibold text-slate-400">Formula: IR = (126870 × W) ÷ (D² × T)</p>
+
+        <div className="mt-4 space-y-6">
+          {testRecords.map((record, index) => (
+            <div key={record.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-bold text-slate-700">Test {index + 1}</p>
+                {!isReadOnly && (
+                  <button type="button" onClick={() => deleteTestRecord(record.id)} className="min-h-8 rounded-xl border border-rose-200 bg-white px-3 text-xs font-bold text-rose-700">Remove</button>
+                )}
+              </div>
+              <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
+                <Field label="Identification Number">
+                  <input value={record.identificationNumber || ""} disabled={isReadOnly} onChange={(e) => updateTestRecord(record.id, { identificationNumber: e.target.value })} className={inputClass()} placeholder="e.g. 1C" />
+                </Field>
+                <Field label="Location" extraClass="md:col-span-2">
+                  <input value={record.location || ""} disabled={isReadOnly} onChange={(e) => updateTestRecord(record.id, { location: e.target.value })} className={inputClass()} placeholder="e.g. Rock Creek Trail STA 403+30" />
+                </Field>
+                <Field label="Date of Test">
+                  <input type="date" value={record.dateOfTest || ""} disabled={isReadOnly} onChange={(e) => updateTestRecord(record.id, { dateOfTest: e.target.value })} className={inputClass()} />
+                </Field>
+                <Field label="Age of Paving Unit (Days)">
+                  <input type="number" value={record.ageOfPavingUnit || ""} disabled={isReadOnly} onChange={(e) => updateTestRecord(record.id, { ageOfPavingUnit: e.target.value })} className={inputClass()} placeholder="e.g. 1" />
+                </Field>
+                <Field label="Type of Paving Unit">
+                  <input value={record.typeOfPavingUnit || ""} disabled={isReadOnly} onChange={(e) => updateTestRecord(record.id, { typeOfPavingUnit: e.target.value })} className={inputClass()} placeholder="e.g. Porous Asphalt" />
+                </Field>
+                <Field label="Thickness of Paving Unit (in)">
+                  <input type="number" value={record.thicknessOfPavingUnit || ""} disabled={isReadOnly} onChange={(e) => updateTestRecord(record.id, { thicknessOfPavingUnit: e.target.value })} className={inputClass()} placeholder="e.g. 4.50" />
+                </Field>
+                <Field label="Time Elapsed During Prewetting (sec)">
+                  <input type="number" value={record.timePrewetting || ""} disabled={isReadOnly} onChange={(e) => updateTestRecord(record.id, { timePrewetting: e.target.value })} className={inputClass()} placeholder="e.g. 10" />
+                </Field>
+                <Field label="Amount of Rain During Last Event (in)">
+                  <input value={record.rainLastEvent || ""} disabled={isReadOnly} onChange={(e) => updateTestRecord(record.id, { rainLastEvent: e.target.value })} className={inputClass()} placeholder="N/A or e.g. 0.5" />
+                </Field>
+              </div>
+
+              <div className="mt-3 grid grid-cols-1 gap-3 rounded-2xl border border-blue-100 bg-blue-50 p-3 md:grid-cols-3">
+                <p className="text-xs font-bold uppercase tracking-[0.14em] text-blue-700 md:col-span-3">Calculation Inputs</p>
+                <Field label="Weight of Infiltrated Water (lb) — W">
+                  <input type="number" value={record.weightInfiltratedWater || ""} disabled={isReadOnly} onChange={(e) => updateTestRecord(record.id, { weightInfiltratedWater: e.target.value })} className={inputClass()} placeholder="e.g. 40" />
+                </Field>
+                <Field label="Inside Diameter of Infiltration Ring (in) — D">
+                  <input type="number" value={record.insideDiameter || ""} disabled={isReadOnly} onChange={(e) => updateTestRecord(record.id, { insideDiameter: e.target.value })} className={inputClass()} placeholder="e.g. 11.75" />
+                </Field>
+                <Field label="Time Elapsed During Infiltration Test (sec) — T">
+                  <input type="number" value={record.timeInfiltration || ""} disabled={isReadOnly} onChange={(e) => updateTestRecord(record.id, { timeInfiltration: e.target.value })} className={inputClass()} placeholder="e.g. 71" />
+                </Field>
+              </div>
+
+              <div className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs font-bold uppercase tracking-[0.14em] text-emerald-700">Infiltration Rate (in/h)</p>
+                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em] text-emerald-700">
+                    Calculated
+                  </span>
+                </div>
+                <p className="mt-2 text-2xl font-bold text-emerald-900">{record.infiltrationRate ? `${record.infiltrationRate} in/h` : "—"}</p>
+                <p className="mt-1 text-xs font-semibold text-emerald-600">(126870 × W) ÷ (D² × T)</p>
+              </div>
+            </div>
+          ))}
+
+          {!isReadOnly && (
+            <button type="button" onClick={addTestRecord} className="w-full min-h-11 rounded-2xl border-2 border-dashed border-slate-300 bg-white text-sm font-bold text-slate-700 hover:border-blue-400 hover:text-blue-700 transition-colors">
+              + Add Test Record
+            </button>
+          )}
+          {!testRecords.length && (
+            <p className="text-center text-sm font-semibold text-slate-500">No test records yet. Click &quot;+ Add Test Record&quot; to begin.</p>
+          )}
+        </div>
+      </section>
+
+      <div className="sticky bottom-0 z-20 -mx-4 flex flex-col gap-2 border-t border-slate-200 bg-white/95 p-4 backdrop-blur sm:mx-0 sm:flex-row sm:justify-end sm:rounded-2xl sm:border">
+        <button type="button" onClick={onBack} className="min-h-11 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-800">Back</button>
+        {!isReadOnly && <button type="button" onClick={() => saveReport(report)} className="min-h-11 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-800">Save Draft</button>}
+        {!isReadOnly && <button type="button" onClick={completeReport} disabled={!canComplete} className="min-h-11 rounded-2xl bg-emerald-700 px-4 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-600">Finish Report</button>}
+      </div>
+    </div>
+  );
+}
+
+const VTM12_CURVES = {
+  A: { maxDryDensity: 141.8, optimumMoisture: 6.1 },
+  B: { maxDryDensity: 139.1, optimumMoisture: 6.7 },
+  C: { maxDryDensity: 136.3, optimumMoisture: 7.4 },
+  D: { maxDryDensity: 134.1, optimumMoisture: 8.0 },
+  E: { maxDryDensity: 132.0, optimumMoisture: 8.5 },
+  F: { maxDryDensity: 129.3, optimumMoisture: 9.2 },
+  G: { maxDryDensity: 126.6, optimumMoisture: 10.0 },
+  H: { maxDryDensity: 124.2, optimumMoisture: 10.7 },
+  I: { maxDryDensity: 121.7, optimumMoisture: 11.4 },
+  J: { maxDryDensity: 119.3, optimumMoisture: 12.2 },
+  K: { maxDryDensity: 117.0, optimumMoisture: 13.0 },
+  L: { maxDryDensity: 114.6, optimumMoisture: 14.1 },
+  M: { maxDryDensity: 112.0, optimumMoisture: 15.2 },
+  N: { maxDryDensity: 109.6, optimumMoisture: 16.4 },
+  O: { maxDryDensity: 107.1, optimumMoisture: 17.6 },
+  P: { maxDryDensity: 104.7, optimumMoisture: 19.2 },
+  Q: { maxDryDensity: 102.4, optimumMoisture: 20.3 },
+  R: { maxDryDensity: 99.9,  optimumMoisture: 21.5 },
+  S: { maxDryDensity: 97.4,  optimumMoisture: 22.7 },
+  T: { maxDryDensity: 94.6,  optimumMoisture: 24.4 },
+  U: { maxDryDensity: 92.1,  optimumMoisture: 25.8 },
+  V: { maxDryDensity: 89.9,  optimumMoisture: 27.4 },
+  W: { maxDryDensity: 87.5,  optimumMoisture: 29.5 },
+  X: { maxDryDensity: 85.0,  optimumMoisture: 30.5 },
+  Y: { maxDryDensity: 83.0,  optimumMoisture: 31.5 },
+  Z: { maxDryDensity: 81.1,  optimumMoisture: 32.5 }
+};
+
+// SVG chart of VTM-12 Set "C" moisture-density curves (Figure 1).
+// All 26 curves are rendered as solid black lines; the selected curve is heavier.
+// If field moisture and density are provided, the test point is plotted as an ×.
+function ProctorCurvesChart({ selectedCurve, moistureContent, fieldDryDensity, wetDensity, onSelectCurve, isReadOnly }) {
+  const [hoverCurve, setHoverCurve] = useState("");
+  const W = 560, H = 420;
+  const ml = 46, mr = 10, mt = 12, mb = 44;
+  const gw = W - ml - mr, gh = H - mt - mb;
+  const moistMin = 2, moistMax = 36;
+  const densMin = 78, densMax = 146;
+
+  function toX(w) { return ml + (w - moistMin) / (moistMax - moistMin) * gw; }
+  function toY(d) { return mt + gh - (d - densMin) / (densMax - densMin) * gh; }
+
+  const K_FACTOR = 0.0048;
+  const HALF_SPAN = 7;
+  const PTS = 60;
+
+  // Sample one curve as {w, d} points; used for both the drawn path and hit-testing.
+  function curveSamples(mdd, omc) {
+    const k = K_FACTOR * mdd;
+    const pts = [];
+    for (let i = 0; i <= PTS; i++) {
+      const w = (omc - HALF_SPAN) + HALF_SPAN * 2 * i / PTS;
+      const d = mdd - k * (w - omc) * (w - omc);
+      pts.push({ w, d });
+    }
+    return pts;
+  }
+
+  function samplesToPath(pts) {
+    let path = "";
+    let first = true;
+    for (const { w, d } of pts) {
+      if (w < moistMin || w > moistMax || d < densMin || d > densMax) { first = true; continue; }
+      path += `${first ? "M" : "L"} ${toX(w).toFixed(1)} ${toY(d).toFixed(1)} `;
+      first = false;
+    }
+    return path.trim();
+  }
+
+  // Precompute each curve's drawn path once.
+  const curveList = Object.entries(VTM12_CURVES).map(([letter, c]) => ({
+    letter,
+    mdd: c.maxDryDensity,
+    omc: c.optimumMoisture,
+    d: samplesToPath(curveSamples(c.maxDryDensity, c.optimumMoisture))
+  })).filter((c) => c.d);
+
+  const mc = parseFloat(moistureContent);
+  const fd = parseFloat(fieldDryDensity);
+  const wd = parseFloat(wetDensity);
+  // One-point molded dry density — the point overlaid on the family of curves to pick
+  // the curve. Computed live from wet density (D) and moisture (F): D / (1 + w/100).
+  const moldedDry = (!isNaN(wd) && !isNaN(mc) && wd > 0) ? wd / (1 + mc / 100) : NaN;
+
+  const inRange = (w, d) => w >= moistMin && w <= moistMax && d >= densMin && d <= densMax;
+  const hasMolded = !isNaN(mc) && !isNaN(moldedDry) && inRange(mc, moldedDry);
+  const hasField = !isNaN(mc) && !isNaN(fd) && inRange(mc, fd);
+
+  const canSelect = !isReadOnly && typeof onSelectCurve === "function";
+
+  // Suggested curve = family curve nearest (in plotted pixels) to the one-point test point.
+  // Falls back to the field-density point if the molded point isn't available yet.
+  const sx = hasMolded ? toX(mc) : (hasField ? toX(mc) : null);
+  const sy = hasMolded ? toY(moldedDry) : (hasField ? toY(fd) : null);
+  let suggested = "";
+  if (sx !== null && sy !== null) {
+    let best = Infinity;
+    Object.entries(VTM12_CURVES).forEach(([letter, { maxDryDensity: mdd, optimumMoisture: omc }]) => {
+      curveSamples(mdd, omc).forEach(({ w, d }) => {
+        const dist = (toX(w) - sx) ** 2 + (toY(d) - sy) ** 2;
+        if (dist < best) { best = dist; suggested = letter; }
+      });
+    });
+  }
+  const showSuggestApply = canSelect && suggested && suggested !== selectedCurve;
+
+  function styleFor(letter) {
+    if (letter === selectedCurve) return { stroke: "#000", width: 3, dash: "" };
+    if (canSelect && letter === hoverCurve) return { stroke: "#1d4ed8", width: 2.2, dash: "" };
+    if (letter === suggested) return { stroke: "#2563eb", width: 1.6, dash: "4 3" };
+    return { stroke: "#000", width: 0.75, dash: "" };
+  }
+
+  // Draw emphasized curves (suggested / hovered / selected) last so they sit on top.
+  const emphasized = [...new Set([suggested, hoverCurve, selectedCurve].filter(Boolean))];
+  const baseCurves = curveList.filter((c) => !emphasized.includes(c.letter));
+  const topCurves = emphasized.map((l) => curveList.find((c) => c.letter === l)).filter(Boolean);
+
+  const xTicks = [], yTicks = [];
+  for (let m = 4; m <= 34; m += 2) xTicks.push(m);
+  for (let d = 80; d <= 144; d += 4) yTicks.push(d);
+
+  function renderCurve({ letter, mdd, omc, d }) {
+    const s = styleFor(letter);
+    const labeled = omc >= moistMin && omc <= moistMax && mdd >= densMin && mdd <= densMax;
+    const isEmph = letter === selectedCurve || letter === suggested || (canSelect && letter === hoverCurve);
+    return (
+      <g key={letter}>
+        <path d={d} fill="none" stroke={s.stroke} strokeWidth={s.width} strokeDasharray={s.dash} />
+        {labeled && (
+          <text x={toX(omc)} y={toY(mdd) - (isEmph ? 7 : 2)} textAnchor="middle"
+            fontSize={isEmph ? 11 : 6} fontWeight="bold" fill={s.stroke}>{letter}</text>
+        )}
+      </g>
+    );
+  }
+
+  return (
+    <div className="mt-2 md:col-span-3">
+      <p className="mb-1 text-[10px] font-bold uppercase tracking-[0.14em] text-blue-600">
+        Fig. 1 — Typical Moisture-Density Curves, Set &quot;C&quot; (VTM-12)
+        {selectedCurve ? <span className="ml-2 text-blue-900">· Curve {selectedCurve} selected</span> : null}
+      </p>
+      <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-orange-700">
+          <span className="inline-block h-2.5 w-2.5 rounded-full bg-orange-600" /> 1-Pt test point (live)
+        </span>
+        <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-500">
+          <span className="text-slate-400">✕</span> Field density
+        </span>
+        {canSelect && (
+          <span className="text-[11px] font-semibold text-slate-500">· Tap any curve to select it.</span>
+        )}
+        {showSuggestApply && (
+          <button type="button" onClick={() => onSelectCurve(suggested)}
+            className="inline-flex min-h-8 items-center rounded-xl border border-blue-300 bg-blue-50 px-3 text-[11px] font-bold text-blue-800 hover:bg-blue-100">
+            Suggested: Curve {suggested} — tap to apply
+          </button>
+        )}
+        {!hasMolded && (
+          <span className="inline-flex items-center rounded-lg border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
+            Enter A &amp; B (mold weights) + F (moisture) to plot the live 1-Pt test point
+          </span>
+        )}
+      </div>
+      <div className="overflow-x-auto">
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full min-w-[300px]"
+        style={{ border: "1px solid #bfdbfe", borderRadius: "12px", background: "white" }}>
+        {/* Grid */}
+        {xTicks.map((m) => (
+          <line key={m} x1={toX(m)} y1={mt} x2={toX(m)} y2={mt + gh} stroke="#e2e8f0" strokeWidth="0.5" />
+        ))}
+        {yTicks.map((d) => (
+          <line key={d} x1={ml} y1={toY(d)} x2={ml + gw} y2={toY(d)} stroke="#e2e8f0" strokeWidth="0.5" />
+        ))}
+
+        {/* Base curves — thin solid black (emphasized ones drawn later, on top) */}
+        {baseCurves.map(renderCurve)}
+
+        {/* Emphasized curves — suggested (dashed blue), hovered (blue), selected (heavy black) */}
+        {topCurves.map(renderCurve)}
+
+        {/* Transparent wide hit-areas so a curve can be tapped/clicked to select it */}
+        {canSelect && curveList.map(({ letter, d }) => (
+          <path key={`hit-${letter}`} d={d} fill="none" stroke="transparent" strokeWidth="11"
+            style={{ cursor: "pointer" }}
+            onMouseEnter={() => setHoverCurve(letter)}
+            onMouseLeave={() => setHoverCurve((prev) => (prev === letter ? "" : prev))}
+            onClick={() => onSelectCurve(letter)}>
+            <title>Curve {letter} — MDD {VTM12_CURVES[letter]?.maxDryDensity} lb/ft³, OMC {VTM12_CURVES[letter]?.optimumMoisture}%</title>
+          </path>
+        ))}
+
+        {/* Field density point — light grey × (kept for reference; matches the PDF) */}
+        {hasField && (() => {
+          const px = toX(mc), py = toY(fd), s = 4;
+          return (
+            <g>
+              <line x1={px - s} y1={py - s} x2={px + s} y2={py + s} stroke="#94a3b8" strokeWidth="1.8" />
+              <line x1={px + s} y1={py - s} x2={px - s} y2={py + s} stroke="#94a3b8" strokeWidth="1.8" />
+              <text x={px + s + 3} y={py + 3} fontSize="7.5" fontWeight="bold" fill="#64748b">Field</text>
+            </g>
+          );
+        })()}
+
+        {/* One-point molded test point — live marker used to read the family of curves */}
+        {hasMolded && (() => {
+          const px = toX(mc), py = toY(moldedDry);
+          return (
+            <g>
+              <circle cx={px} cy={py} r={4.5} fill="#ea580c" stroke="#7c2d12" strokeWidth="1" />
+              <text x={px + 7} y={py + 3} fontSize="8.5" fontWeight="bold" fill="#9a3412">1-Pt Test</text>
+            </g>
+          );
+        })()}
+
+        {/* Graph border */}
+        <rect x={ml} y={mt} width={gw} height={gh} fill="none" stroke="#000" strokeWidth="1" />
+
+        {/* X-axis tick labels */}
+        {xTicks.map((m) => (
+          <text key={m} x={toX(m)} y={mt + gh + 14} textAnchor="middle" fontSize="8" fill="#475569">{m}</text>
+        ))}
+
+        {/* Y-axis tick labels */}
+        {yTicks.map((d) => (
+          <text key={d} x={ml - 3} y={toY(d) + 3} textAnchor="end" fontSize="8" fill="#475569">{d}</text>
+        ))}
+
+        {/* Axis titles */}
+        <text x={ml + gw / 2} y={H - 4} textAnchor="middle" fontSize="9" fontWeight="bold" fill="#0f172a">
+          MOISTURE CONTENT (%)
+        </text>
+        <text
+          x={10} y={mt + gh / 2}
+          textAnchor="middle" fontSize="9" fontWeight="bold" fill="#0f172a"
+          transform={`rotate(-90, 10, ${mt + gh / 2})`}
+        >
+          DRY DENSITY (lb/ft³)
+        </text>
+      </svg>
+      </div>
+    </div>
+  );
+}
+
+function calculateProctorRecord(record = {}) {
+  // A. mold+soil weight, B. mold weight → C = A−B → D = C×30 (wet density)
+  const moldAndSoil = parseFloat(record.moldAndSoilWeight);
+  const mold = parseFloat(record.moldWeight);
+  let wetSoilWeight = null;
+  let wetDensity = null;
+  if (!isNaN(moldAndSoil) && !isNaN(mold) && moldAndSoil > mold) {
+    wetSoilWeight = moldAndSoil - mold;
+    wetDensity = wetSoilWeight * 30;
+  }
+
+  const curve = record.selectedCurve ? VTM12_CURVES[record.selectedCurve] : null;
+  const maxDryDensityFromCurve = curve ? curve.maxDryDensity : null;
+  const optimumMoistureFromCurve = curve ? curve.optimumMoisture : null;
+
+  let correctedMaxDryDensity = null;
+  let correctedOptimumMoisture = null;
+
+  if (record.hasOversizedCorrection && maxDryDensityFromCurve !== null) {
+    const Pc = parseFloat(record.percentPlusNo4) / 100;
+    const Pf = 1 - Pc;
+    const sg = parseFloat(record.bulkSpecificGravity);
+    const Wc = parseFloat(record.moistureContentPlusNo4) / 100;
+    const Wf = optimumMoistureFromCurve !== null ? optimumMoistureFromCurve / 100 : null;
+
+    if (!isNaN(Pc) && !isNaN(sg) && Pc >= 0.1 && sg > 0) {
+      const Df = maxDryDensityFromCurve;
+      const Dc = 62.4 * sg;
+      const denom = Pc * Df + Pf * Dc;
+      if (denom > 0) correctedMaxDryDensity = (Df * Dc) / denom;
+    }
+    if (!isNaN(Pc) && !isNaN(Wc) && Wf !== null) {
+      correctedOptimumMoisture = (Pc * Wc + (1 - Pc) * Wf) * 100;
+    }
+  }
+
+  const effectiveMDD = correctedMaxDryDensity ?? maxDryDensityFromCurve;
+  const fieldDD = parseFloat(record.fieldDryDensity);
+  const pctCompaction = effectiveMDD && !isNaN(fieldDD) && fieldDD > 0
+    ? (fieldDD / effectiveMDD) * 100 : null;
+  const required = parseFloat(record.requiredCompaction);
+  const compactionResult = pctCompaction !== null && !isNaN(required)
+    ? (pctCompaction >= required ? "PASS" : "FAIL") : "";
+
+  return {
+    ...record,
+    wetSoilWeight: wetSoilWeight !== null ? wetSoilWeight.toFixed(2) : (record.wetSoilWeight || ""),
+    wetDensity: wetDensity !== null ? wetDensity.toFixed(1) : (record.wetDensity || ""),
+    maxDryDensityFromCurve: maxDryDensityFromCurve !== null ? String(maxDryDensityFromCurve) : "",
+    optimumMoistureFromCurve: optimumMoistureFromCurve !== null ? String(optimumMoistureFromCurve) : "",
+    correctedMaxDryDensity: correctedMaxDryDensity !== null ? correctedMaxDryDensity.toFixed(1) : "",
+    correctedOptimumMoisture: correctedOptimumMoisture !== null ? correctedOptimumMoisture.toFixed(1) : "",
+    percentCompaction: pctCompaction !== null ? pctCompaction.toFixed(1) : "",
+    compactionResult
+  };
+}
+
+function ProctorReportPage({ log, activityId, reportId, onChange, onBack }) {
+  const activity = (log.activities || []).find((item) => item.id === activityId);
+  const persistedReport = (activity?.reports || []).find((item) => item.id === reportId);
+  const [localReport, setLocalReport] = useState(persistedReport || null);
+  const [pdfGenerating, setPdfGenerating] = useState(false);
+  const report = localReport || persistedReport;
+  const isReadOnly = [DAILY_LOG_STATUS.SUBMITTED, DAILY_LOG_STATUS.APPROVED].includes(log.status);
+  const testRecords = report?.testRecords || [];
+  const canComplete = testRecords.length > 0;
+
+  async function downloadReportPdf() {
+    if (!report) return;
+    setPdfGenerating(true);
+    try {
+      await generateProctorStandalonePdf(report, { download: true });
+    } catch (err) {
+      window.alert("Could not generate PDF: " + (err.message || "Unknown error"));
+    } finally {
+      setPdfGenerating(false);
+    }
+  }
+
+  if (!activity || !report) {
+    return (
+      <section className={cardClass()}>
+        <h1 className="text-xl font-bold text-slate-950">One-Point Proctor Report Not Found</h1>
+        <button type="button" onClick={onBack} className="mt-4 min-h-10 rounded-xl border border-slate-200 px-4 text-sm font-bold">Back</button>
+      </section>
+    );
+  }
+
+  function saveReport(nextReport) {
+    const normalized = { ...nextReport, updatedAt: new Date().toISOString() };
+    setLocalReport(normalized);
+    const nextLog = saveDailyLog({
+      ...log,
+      activities: (log.activities || []).map((item) =>
+        item.id === activityId
+          ? { ...item, reports: (item.reports || []).map((r) => (r.id === normalized.id ? normalized : r)), updatedAt: new Date().toISOString() }
+          : item
+      ),
+      updatedAt: new Date().toISOString()
+    });
+    onChange(nextLog);
+  }
+
+  function updateReport(patch) {
+    if (isReadOnly) return;
+    saveReport({ ...report, ...patch });
+  }
+
+  function addTestRecord() {
+    const nextNo = testRecords.length + 1;
+    const blank = calculateProctorRecord({
+      id: crypto.randomUUID(), testNo: nextNo,
+      location: "", materialDescription: "", moistureMethod: "Speedy (AASHTO T 217)",
+      moldAndSoilWeight: "", moldWeight: "", wetSoilWeight: "", wetDensity: "",
+      speedyDialReading: "", moistureContent: "",
+      selectedCurve: "", withinFamilyCurves: "yes",
+      hasOversizedCorrection: false,
+      percentPlusNo4: "", bulkSpecificGravity: "", moistureContentPlusNo4: "",
+      fieldDryDensity: "", requiredCompaction: ""
+    });
+    updateReport({ testRecords: [...testRecords, blank] });
+  }
+
+  function updateTestRecord(recordId, patch) {
+    updateReport({
+      testRecords: testRecords.map((r) => {
+        if (r.id !== recordId) return r;
+        return calculateProctorRecord({ ...r, ...patch });
+      })
+    });
+  }
+
+  function deleteTestRecord(recordId) {
+    updateReport({ testRecords: testRecords.filter((r) => r.id !== recordId) });
+  }
+
+  function completeReport() {
+    saveReport({ ...report, status: "completed", completedAt: new Date().toISOString() });
+    onBack();
+  }
+
+  return (
+    <div className="space-y-4">
+      <section className="overflow-hidden rounded-2xl border-b-4 border-accent-500 bg-gradient-to-br from-navy-800 via-navy-900 to-navy-950 p-4 shadow-sm sm:p-5">
+        <div>
+          <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-300">VTM-12 · AASHTO T 272</p>
+          <h1 className="mt-2 text-2xl font-bold tracking-tight text-white">One-Point Proctor Report</h1>
+          <p className="mt-1 text-sm font-semibold text-slate-300">{report.projectName}</p>
+        </div>
+      </section>
+
+      <section className={cardClass()}>
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-bold text-slate-950">Test Records</h2>
+          <span className="text-xs font-semibold text-slate-500">{testRecords.length} record{testRecords.length !== 1 ? "s" : ""}</span>
+        </div>
+        <p className="mt-1 text-xs font-semibold text-slate-400">% Compaction = (Field Dry Density ÷ Max Dry Density) × 100</p>
+
+        <div className="mt-4 space-y-6">
+          {testRecords.map((record, index) => (
+            <div key={record.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-bold text-slate-700">Test {index + 1}</p>
+                {!isReadOnly && (
+                  <button type="button" onClick={() => deleteTestRecord(record.id)} className="min-h-8 rounded-xl border border-rose-200 bg-white px-3 text-xs font-bold text-rose-700">Remove</button>
+                )}
+              </div>
+
+              <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
+                <Field label="Location / Station" extraClass="md:col-span-2">
+                  <input value={record.location || ""} disabled={isReadOnly} onChange={(e) => updateTestRecord(record.id, { location: e.target.value })} className={inputClass()} placeholder="e.g. STA 12+50 RT" />
+                </Field>
+                <Field label="Material Description">
+                  <input value={record.materialDescription || ""} disabled={isReadOnly} onChange={(e) => updateTestRecord(record.id, { materialDescription: e.target.value })} className={inputClass()} placeholder="e.g. Class I Subgrade" />
+                </Field>
+              </div>
+
+              <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-4">
+                <Field label="A. Weight of Mold + Wet Soil (lb)">
+                  <input type="number" step="0.01" value={record.moldAndSoilWeight || ""} disabled={isReadOnly} onChange={(e) => updateTestRecord(record.id, { moldAndSoilWeight: e.target.value })} className={inputClass()} placeholder="e.g. 13.62" />
+                </Field>
+                <Field label="B. Weight of Mold (lb)">
+                  <input type="number" step="0.01" value={record.moldWeight || ""} disabled={isReadOnly} onChange={(e) => updateTestRecord(record.id, { moldWeight: e.target.value })} className={inputClass()} placeholder="e.g. 9.14" />
+                </Field>
+                <Field label="C. Wet Soil Weight = A−B (lb)">
+                  <input readOnly value={record.wetSoilWeight || "—"} className={`${inputClass()} bg-slate-100 font-bold text-slate-600`} />
+                </Field>
+                <Field label="D. Wet Density = C×30 (lb/ft³)">
+                  <input readOnly value={record.wetDensity || "—"} className={`${inputClass()} bg-slate-100 font-bold text-slate-700`} />
+                </Field>
+              </div>
+              <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
+                <Field label='E. "Speedy" Dial Reading'>
+                  <input type="number" value={record.speedyDialReading || ""} disabled={isReadOnly} onChange={(e) => updateTestRecord(record.id, { speedyDialReading: e.target.value })} className={inputClass()} placeholder="e.g. 11" />
+                </Field>
+                <Field label='F. Moisture Content % (from "Speedy" chart)'>
+                  <input type="number" value={record.moistureContent || ""} disabled={isReadOnly} onChange={(e) => updateTestRecord(record.id, { moistureContent: e.target.value })} className={inputClass()} placeholder="e.g. 11.0" />
+                </Field>
+                <Field label="Moisture Method">
+                  <select value={record.moistureMethod || "Speedy (AASHTO T 217)"} disabled={isReadOnly} onChange={(e) => updateTestRecord(record.id, { moistureMethod: e.target.value })} className={inputClass()}>
+                    <option value="Speedy (AASHTO T 217)">Speedy (AASHTO T 217)</option>
+                    <option value="Hot Plate / Burner (ASTM D4959)">Hot Plate / Burner (ASTM D4959)</option>
+                    <option value="Drying Oven (ASTM D4959)">Drying Oven (ASTM D4959)</option>
+                  </select>
+                </Field>
+              </div>
+
+              <div className="mt-3 grid grid-cols-1 gap-3 rounded-2xl border border-blue-100 bg-blue-50 p-3 md:grid-cols-3">
+                <p className="text-xs font-bold uppercase tracking-[0.14em] text-blue-700 md:col-span-3">Curve Selection — Typical Moisture Density Curves Set &quot;C&quot; (Fig. 1)</p>
+                <Field label="Select Curve (A–Z)" extraClass="md:col-span-3 lg:col-span-1">
+                  <select value={record.selectedCurve || ""} disabled={isReadOnly} onChange={(e) => updateTestRecord(record.id, { selectedCurve: e.target.value })} className={inputClass()}>
+                    <option value="">— Select Curve —</option>
+                    {"ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("").map((c) => (
+                      <option key={c} value={c}>{c} — MDD {VTM12_CURVES[c]?.maxDryDensity} lb/ft³, OMC {VTM12_CURVES[c]?.optimumMoisture}%</option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="G. Max Dry Density from Fig. 1 (lb/ft³)">
+                  <input readOnly value={record.maxDryDensityFromCurve || "—"} className={`${inputClass()} bg-blue-100 text-blue-900 font-bold`} />
+                </Field>
+                <Field label="H. Optimum Moisture Content, % from Fig. 1">
+                  <input readOnly value={record.optimumMoistureFromCurve || "—"} className={`${inputClass()} bg-blue-100 text-blue-900 font-bold`} />
+                </Field>
+                <Field label="Point Falls Within Family of Curves?">
+                  <select value={record.withinFamilyCurves || "yes"} disabled={isReadOnly} onChange={(e) => updateTestRecord(record.id, { withinFamilyCurves: e.target.value })} className={inputClass()}>
+                    <option value="yes">Yes</option>
+                    <option value="no">No — Full Proctor Required</option>
+                  </select>
+                </Field>
+                <ProctorCurvesChart
+                  selectedCurve={record.selectedCurve}
+                  moistureContent={record.moistureContent}
+                  fieldDryDensity={record.fieldDryDensity}
+                  wetDensity={record.wetDensity}
+                  isReadOnly={isReadOnly}
+                  onSelectCurve={(letter) => updateTestRecord(record.id, { selectedCurve: letter })}
+                />
+              </div>
+
+              <div className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-3">
+                <p className="text-xs font-bold uppercase tracking-[0.14em] text-emerald-700">I. Field Density (from TL-125 / Nuclear Gauge)</p>
+                <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                  <Field label="I. Field Density lb/ft³ (from TL-125)">
+                    <input type="number" step="0.1" value={record.fieldDryDensity || ""} disabled={isReadOnly} onChange={(e) => updateTestRecord(record.id, { fieldDryDensity: e.target.value })} className={inputClass()} placeholder="e.g. 120.4" />
+                  </Field>
+                  <Field label="Required Compaction (%)">
+                    <input type="number" value={record.requiredCompaction || ""} disabled={isReadOnly} onChange={(e) => updateTestRecord(record.id, { requiredCompaction: e.target.value })} className={inputClass()} placeholder="e.g. 95" />
+                  </Field>
+                </div>
+              </div>
+
+              <div className="mt-3 rounded-2xl border border-amber-100 bg-amber-50 p-3">
+                <div className="flex items-center gap-3">
+                  <input type="checkbox" id={`oversized-${record.id}`} checked={!!record.hasOversizedCorrection} disabled={isReadOnly} onChange={(e) => updateTestRecord(record.id, { hasOversizedCorrection: e.target.checked })} className="h-4 w-4 rounded" />
+                  <label htmlFor={`oversized-${record.id}`} className="text-xs font-bold uppercase tracking-[0.14em] text-amber-700">J. Oversized Particle Correction (≥10% retained on No. 4 / 4.75 mm sieve)</label>
+                </div>
+                {record.hasOversizedCorrection && (
+                  <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
+                    <Field label="J. No.4 (+4.75mm) Material, %">
+                      <input type="number" value={record.percentPlusNo4 || ""} disabled={isReadOnly} onChange={(e) => updateTestRecord(record.id, { percentPlusNo4: e.target.value })} className={inputClass()} placeholder="e.g. 36.9" />
+                    </Field>
+                    <Field label="Bulk Specific Gravity of +No. 4 Material">
+                      <input type="number" step="0.01" value={record.bulkSpecificGravity || ""} disabled={isReadOnly} onChange={(e) => updateTestRecord(record.id, { bulkSpecificGravity: e.target.value })} className={inputClass()} placeholder="e.g. 2.65" />
+                    </Field>
+                    <Field label="OM Content of +No. 4 Material, Wc (%)">
+                      <input type="number" step="0.1" value={record.moistureContentPlusNo4 || ""} disabled={isReadOnly} onChange={(e) => updateTestRecord(record.id, { moistureContentPlusNo4: e.target.value })} className={inputClass()} placeholder="e.g. 2.0" />
+                    </Field>
+                    <Field label="K. Corrected Max Density (lb/ft³)">
+                      <input readOnly value={record.correctedMaxDryDensity || "—"} className={`${inputClass()} bg-amber-100 text-amber-900 font-bold`} />
+                    </Field>
+                    <Field label="Corrected Optimum Moisture (%)">
+                      <input readOnly value={record.correctedOptimumMoisture || "—"} className={`${inputClass()} bg-amber-100 text-amber-900 font-bold`} />
+                    </Field>
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-3 rounded-2xl border border-emerald-300 bg-emerald-100 p-3">
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                  <Field label="L. % Compaction (Calculated)">
+                    <input readOnly value={record.percentCompaction ? `${record.percentCompaction}%` : "—"} className={`${inputClass()} font-bold ${record.compactionResult === "PASS" ? "bg-emerald-200 text-emerald-900" : record.compactionResult === "FAIL" ? "bg-rose-100 text-rose-800" : "bg-white text-slate-500"}`} />
+                  </Field>
+                  {record.compactionResult && (
+                    <div className={`flex items-center rounded-xl px-4 py-2 text-sm font-bold ${record.compactionResult === "PASS" ? "bg-emerald-200 text-emerald-900" : "bg-rose-100 text-rose-900"}`}>
+                      Result: {record.compactionResult}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+
+          {!isReadOnly && (
+            <button type="button" onClick={addTestRecord} className="w-full min-h-11 rounded-2xl border-2 border-dashed border-slate-300 bg-white text-sm font-bold text-slate-700 hover:border-blue-400 hover:text-blue-700 transition-colors">
+              + Add Test Record
+            </button>
+          )}
+          {!testRecords.length && (
+            <p className="text-center text-sm font-semibold text-slate-500">No test records yet. Click &quot;+ Add Test Record&quot; to begin.</p>
+          )}
+        </div>
+      </section>
+
+      <div className="sticky bottom-0 z-20 -mx-4 flex flex-col gap-2 border-t border-slate-200 bg-white/95 p-4 backdrop-blur sm:mx-0 sm:flex-row sm:justify-end sm:rounded-2xl sm:border">
+        <button type="button" onClick={onBack} className="min-h-11 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-800">Back</button>
+        {canComplete && (
+          <button
+            type="button"
+            onClick={downloadReportPdf}
+            disabled={pdfGenerating}
+            className="min-h-11 rounded-2xl border border-slate-300 bg-white px-4 text-sm font-bold text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {pdfGenerating ? "Generating…" : "Download PDF"}
+          </button>
+        )}
+        {!isReadOnly && <button type="button" onClick={() => saveReport(report)} className="min-h-11 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-800">Save Draft</button>}
+        {!isReadOnly && <button type="button" onClick={completeReport} disabled={!canComplete} className="min-h-11 rounded-2xl bg-emerald-700 px-4 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-600">Finish Report</button>}
+      </div>
+    </div>
+  );
+}
+
+const SAMPLE_TYPE_OPTIONS = [
+  "Soil",
+  "Concrete cylinders",
+  "Grout cubes",
+  "Asphalt cores or plugs"
+];
+
+function SamplesCollectionReportPage({ log, activityId, reportId, onChange, onBack }) {
+  const activity = (log.activities || []).find((item) => item.id === activityId);
+  const persistedReport = (activity?.reports || []).find((item) => item.id === reportId);
+  const [localReport, setLocalReport] = useState(persistedReport || null);
+  const [pdfGenerating, setPdfGenerating] = useState(false);
+  const report = localReport || persistedReport;
+  const isReadOnly = [DAILY_LOG_STATUS.SUBMITTED, DAILY_LOG_STATUS.APPROVED].includes(log.status);
+  const canComplete = Boolean(
+    String(report?.sampleType || "").trim() &&
+    String(report?.castDate || "").trim() &&
+    String(report?.specimenCount || "").trim()
+  );
+
+  async function downloadReportPdf() {
+    if (!report) return;
+    setPdfGenerating(true);
+    try {
+      await generateSamplesStandalonePdf(report, { download: true });
+    } catch (err) {
+      window.alert("Could not generate PDF: " + (err.message || "Unknown error"));
+    } finally {
+      setPdfGenerating(false);
+    }
+  }
+
+  if (!activity || !report) {
+    return (
+      <section className={cardClass()}>
+        <h1 className="text-xl font-bold text-slate-950">Samples Collection Report Not Found</h1>
+        <button type="button" onClick={onBack} className="mt-4 min-h-10 rounded-xl border border-slate-200 px-4 text-sm font-bold">Back</button>
+      </section>
+    );
+  }
+
+  function saveReport(nextReport) {
+    const normalized = { ...nextReport, updatedAt: new Date().toISOString() };
+    setLocalReport(normalized);
+    const nextLog = saveDailyLog({
+      ...log,
+      activities: (log.activities || []).map((item) =>
+        item.id === activityId
+          ? { ...item, reports: (item.reports || []).map((r) => (r.id === normalized.id ? normalized : r)), updatedAt: new Date().toISOString() }
+          : item
+      ),
+      updatedAt: new Date().toISOString()
+    });
+    onChange(nextLog);
+  }
+
+  function updateReport(patch) {
+    if (isReadOnly) return;
+    saveReport({ ...report, ...patch });
+  }
+
+  function completeReport() {
+    saveReport({ ...report, status: "completed", completedAt: new Date().toISOString() });
+    onBack();
+  }
+
+  return (
+    <div className="space-y-4">
+      <section className="overflow-hidden rounded-2xl border-b-4 border-accent-500 bg-gradient-to-br from-navy-800 via-navy-900 to-navy-950 p-4 shadow-sm sm:p-5">
+        <div>
+          <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-300">Field Sampling Record</p>
+          <h1 className="mt-2 text-2xl font-bold tracking-tight text-white">Samples Collection Report</h1>
+          <p className="mt-1 text-sm font-semibold text-slate-300">{report.projectName}</p>
+        </div>
+      </section>
+
+      <section className={cardClass()}>
+        <h2 className="text-lg font-bold text-slate-950">Collection Details</h2>
+        <p className="mt-1 text-xs font-semibold text-slate-400">Project name is carried over from the daily log.</p>
+
+        <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+          <Field label="Project Name">
+            <input readOnly value={report.projectName || "—"} className={`${inputClass()} bg-slate-100 font-bold text-slate-600`} />
+          </Field>
+          <Field label="Project Number">
+            <input readOnly value={report.projectNumber || report.project_number || "—"} className={`${inputClass()} bg-slate-100 font-bold text-slate-600`} />
+          </Field>
+          <Field label="Sample Type *">
+            <select value={report.sampleType || ""} disabled={isReadOnly} onChange={(e) => updateReport({ sampleType: e.target.value })} className={inputClass()}>
+              <option value="">— Select sample type —</option>
+              {SAMPLE_TYPE_OPTIONS.map((option) => (
+                <option key={option} value={option}>{option}</option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Cast Date *">
+            <input type="date" value={report.castDate || ""} disabled={isReadOnly} onChange={(e) => updateReport({ castDate: e.target.value })} className={inputClass()} />
+          </Field>
+          <Field label="Samples / Specimens Count *">
+            <input type="number" min="0" step="1" value={report.specimenCount || ""} disabled={isReadOnly} onChange={(e) => updateReport({ specimenCount: e.target.value })} className={inputClass()} placeholder="e.g. 4" />
+          </Field>
+          <Field label="Date Collected">
+            <input type="date" value={report.date || ""} disabled={isReadOnly} onChange={(e) => updateReport({ date: e.target.value })} className={inputClass()} />
+          </Field>
+          <Field label="Comments" extraClass="md:col-span-2">
+            <textarea value={report.comments || ""} disabled={isReadOnly} onChange={(e) => updateReport({ comments: e.target.value })} rows={4} className={`${inputClass()} min-h-28 max-w-full resize-y py-3 leading-6`} placeholder="Sample IDs, cure conditions, pickup notes, lab destination, etc." />
+          </Field>
+        </div>
+      </section>
+
+      <div className="sticky bottom-0 z-20 -mx-4 flex flex-col gap-2 border-t border-slate-200 bg-white/95 p-4 backdrop-blur sm:mx-0 sm:flex-row sm:justify-end sm:rounded-2xl sm:border">
+        <button type="button" onClick={onBack} className="min-h-11 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-800">Back</button>
+        {canComplete && (
+          <button
+            type="button"
+            onClick={downloadReportPdf}
+            disabled={pdfGenerating}
+            className="min-h-11 rounded-2xl border border-slate-300 bg-white px-4 text-sm font-bold text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {pdfGenerating ? "Generating…" : "Download PDF"}
+          </button>
+        )}
+        {!isReadOnly && <button type="button" onClick={() => saveReport(report)} className="min-h-11 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-800">Save Draft</button>}
+        {!isReadOnly && <button type="button" onClick={completeReport} disabled={!canComplete} className="min-h-11 rounded-2xl bg-emerald-700 px-4 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-600">Finish Report</button>}
+      </div>
+    </div>
+  );
+}
+
 const DAILY_LOG_TABS = [
   { id: "draft", label: "Draft" },
   { id: "submitted", label: "Submitted" },
@@ -1974,7 +3469,189 @@ const DAILY_LOG_TABS = [
   { id: "approved", label: "Approved" }
 ];
 
-function DailyLogsPage({ logCollections, initialTab = "draft", onOpenLog, onCreateLog, onDeleteLog, onRecallLog, onDownloadLogPdf }) {
+// Landing chooser shown when the technician opens Daily Logs: field testing
+// records vs lab testing records (cylinder breaks, strength results).
+function ReportsHome({ logCollections, navigate }) {
+  const fieldCount = (logCollections.draftLogs.length || 0)
+    + (logCollections.submittedLogs.length || 0)
+    + (logCollections.returnedLogs.length || 0)
+    + (logCollections.approvedLogs.length || 0);
+  const options = [
+    {
+      key: "field",
+      title: "Field Reports",
+      description: "Daily field logs — concrete placement and density/compaction testing recorded on site.",
+      meta: `${fieldCount} report${fieldCount === 1 ? "" : "s"}`,
+      icon: ClipboardCheck,
+      enabled: true,
+      onClick: () => navigate("/technician/dashboard?view=daily-logs")
+    },
+    {
+      key: "lab",
+      title: "Lab Reports",
+      description: "Laboratory testing records — cylinder breaks, strength verification, and material lab results.",
+      meta: "Soil · Asphalt · Concrete",
+      icon: FlaskConical,
+      enabled: true,
+      onClick: () => navigate("/technician/dashboard?view=lab-reports")
+    }
+  ];
+
+  return (
+    <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+      <div className="border-b-4 border-accent-500 bg-gradient-to-br from-navy-800 via-navy-900 to-navy-950 px-5 py-5 sm:px-7">
+        <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">Field Operations</p>
+        <h1 className="mt-1 text-2xl font-bold text-white sm:text-3xl">Reports</h1>
+        <p className="mt-1 text-xs font-semibold text-slate-400">Choose a reporting category to continue.</p>
+      </div>
+      <div className="grid grid-cols-1 gap-4 p-5 sm:p-7 md:grid-cols-2">
+        {options.map(({ key, title, description, meta, icon: Icon, enabled, onClick }) => (
+          <button
+            key={key}
+            type="button"
+            onClick={enabled ? onClick : undefined}
+            disabled={!enabled}
+            className={`group flex flex-col items-start gap-3 rounded-2xl border p-5 text-left transition ${
+              enabled
+                ? "cursor-pointer border-slate-200 bg-white hover:border-blue-300 hover:bg-blue-50/40 hover:shadow-sm"
+                : "cursor-not-allowed border-dashed border-slate-200 bg-slate-50"
+            }`}
+          >
+            <div className="flex w-full items-center justify-between">
+              <span className={`inline-flex h-11 w-11 items-center justify-center rounded-2xl ${enabled ? "bg-blue-50 text-blue-700" : "bg-slate-100 text-slate-400"}`}>
+                <Icon className="h-5 w-5" />
+              </span>
+              <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.14em] ${enabled ? "bg-blue-50 text-blue-700" : "bg-slate-100 text-slate-500"}`}>
+                {meta}
+              </span>
+            </div>
+            <div>
+              <h2 className={`text-lg font-bold ${enabled ? "text-slate-950" : "text-slate-500"}`}>{title}</h2>
+              <p className="mt-1 text-sm font-medium leading-6 text-slate-500">{description}</p>
+            </div>
+            {enabled && (
+              <span className="mt-1 inline-flex items-center gap-1 text-sm font-bold text-blue-700">
+                Open <Plus className="h-4 w-4 rotate-45 opacity-0" />
+                <span aria-hidden="true">→</span>
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+// Lab report taxonomy. Editors are not built yet, so each type is listed as a
+// catalog entry; statuses make it clear what's available vs upcoming.
+const LAB_REPORT_SECTIONS = [
+  {
+    key: "soil",
+    title: "Soil",
+    icon: Layers3,
+    tone: "amber",
+    reports: [
+      { label: "Proctor — Standard", description: "Standard Proctor moisture-density (ASTM D698 / AASHTO T99).", route: "/technician/lab/proctor" },
+      { label: "Proctor — Modified", description: "Modified Proctor moisture-density (ASTM D1557 / AASHTO T180 / VTM-1).", route: "/technician/lab/proctor" },
+      { label: "Sieve Analysis", description: "Washed particle size distribution / gradation (ASTM D422).", route: "/technician/lab/gradation" },
+      { label: "Atterberg Limits", description: "Liquid limit, plastic limit, plasticity index (ASTM D4318).", route: "/technician/lab/atterberg" },
+      { label: "Hydrometer Analysis", description: "Sieve + hydrometer particle size & USDA texture (ASTM D422).", route: "/technician/lab/hydrometer" },
+      { label: "CBR (California Bearing Ratio)", description: "Subgrade bearing ratio — soaked/unsoaked, single or 3-point (ASTM D1883 / AASHTO T 193).", route: "/technician/lab/cbr" }
+    ]
+  },
+  {
+    key: "asphalt",
+    title: "Asphalt",
+    icon: Layers3,
+    tone: "slate",
+    reports: [
+      { label: "Bulk Specific Gravity", description: "Bulk specific gravity & density of compacted asphalt (AASHTO T-166 / ASTM D2726).", route: "/technician/lab/asphalt-bsg" }
+    ]
+  },
+  {
+    key: "concrete",
+    title: "Concrete",
+    icon: HardHat,
+    tone: "blue",
+    reports: [
+      { label: "Cylinder Break", description: "Compressive strength of concrete cylinders.", route: "/technician/lab/cylinder-break" },
+      { label: "Core Break", description: "Compressive strength of drilled cores (ASTM C42).", route: "/technician/lab/core-break" }
+    ]
+  },
+  {
+    key: "grout",
+    title: "Grout",
+    icon: HardHat,
+    tone: "blue",
+    reports: [
+      { label: "Cube Break", description: "Grout compressive strength of 2\"×2\" cubes (ASTM C109/C1107).", route: "/technician/lab/grout-cube-break" }
+    ]
+  }
+];
+
+const LAB_SECTION_TONE = {
+  amber: { chip: "bg-amber-50 text-amber-700" },
+  slate: { chip: "bg-slate-100 text-slate-600" },
+  blue: { chip: "bg-blue-50 text-blue-700" }
+};
+
+function LabReportsPage({ navigate }) {
+  return (
+    <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+      <div className="border-b-4 border-accent-500 bg-gradient-to-br from-navy-800 via-navy-900 to-navy-950 px-5 py-5 sm:px-7">
+        <button type="button" onClick={() => navigate("/technician/dashboard?view=reports-home")} className="text-xs font-bold text-slate-400 hover:text-white">&larr; Reports</button>
+        <h1 className="mt-1 text-2xl font-bold text-white sm:text-3xl">Lab Reports</h1>
+        <p className="mt-1 text-xs font-semibold text-slate-400">Laboratory testing records by material.</p>
+      </div>
+
+      <div className="space-y-6 p-5 sm:p-7">
+        {LAB_REPORT_SECTIONS.map(({ key, title, icon: Icon, tone, reports }) => (
+          <div key={key}>
+            <div className="flex items-center gap-2.5">
+              <span className={`inline-flex h-8 w-8 items-center justify-center rounded-xl ${LAB_SECTION_TONE[tone].chip}`}>
+                <Icon className="h-4 w-4" />
+              </span>
+              <h2 className="text-base font-bold text-slate-950">{title}</h2>
+              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-500">{reports.length}</span>
+            </div>
+            <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              {reports.map((reportType) => {
+                const enabled = Boolean(reportType.route);
+                return (
+                  <button
+                    key={reportType.label}
+                    type="button"
+                    onClick={enabled ? () => navigate(reportType.route) : undefined}
+                    disabled={!enabled}
+                    className={`flex h-full flex-col gap-1.5 rounded-2xl border p-4 text-left transition ${
+                      enabled
+                        ? "cursor-pointer border-slate-200 bg-white hover:border-blue-300 hover:bg-blue-50/40 hover:shadow-sm"
+                        : "cursor-not-allowed border-dashed border-slate-200 bg-slate-50"
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <span className={`inline-flex h-9 w-9 items-center justify-center rounded-xl ring-1 ${enabled ? "bg-blue-50 text-blue-700 ring-blue-100" : "bg-white text-slate-400 ring-slate-200"}`}>
+                        <FlaskConical className="h-4 w-4" />
+                      </span>
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em] ${enabled ? "bg-emerald-50 text-emerald-700" : "bg-slate-200 text-slate-500"}`}>
+                        {enabled ? "Available" : "Coming soon"}
+                      </span>
+                    </div>
+                    <p className={`mt-1 text-sm font-bold ${enabled ? "text-slate-900" : "text-slate-700"}`}>{reportType.label}</p>
+                    <p className="text-xs font-medium leading-5 text-slate-500">{reportType.description}</p>
+                    {enabled && <span className="mt-1 text-sm font-bold text-blue-700" aria-hidden="true">Open →</span>}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function DailyLogsPage({ navigate, logCollections, initialTab = "draft", onOpenLog, onCreateLog, onDeleteLog, onRecallLog, onDownloadLogPdf }) {
   const [activeTab, setActiveTab] = useState(initialTab);
   const [searchTerm, setSearchTerm] = useState("");
   useEffect(() => {
@@ -2011,15 +3688,21 @@ function DailyLogsPage({ logCollections, initialTab = "draft", onOpenLog, onCrea
 
   return (
     <>
-      <section className={cardClass()}>
-        <div className="flex items-center justify-between gap-3">
-          {commandCenterTitle("Daily Logs", "Review Daily Field Logs by status.")}
-          <button type="button" onClick={onCreateLog} className="min-h-10 shrink-0 rounded-xl bg-slate-950 px-3 text-sm font-bold text-white sm:min-h-11 sm:rounded-2xl sm:px-4">
-            <span className="sm:hidden">+ New</span>
-            <span className="hidden sm:inline">+ Create Daily Log</span>
-          </button>
+      <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+        <div className="border-b-4 border-accent-500 bg-gradient-to-br from-navy-800 via-navy-900 to-navy-950 px-5 py-5 sm:px-7">
+          <button type="button" onClick={() => navigate("/technician/dashboard?view=reports-home")} className="text-xs font-bold text-slate-400 hover:text-white">&larr; Reports</button>
+          <div className="mt-1 flex items-start justify-between gap-3">
+            <div>
+              <h1 className="text-2xl font-bold text-white sm:text-3xl">Daily Logs</h1>
+              <p className="mt-1 text-xs font-semibold text-slate-400">Review Daily Field Logs by status.</p>
+            </div>
+            <button type="button" onClick={onCreateLog} className="inline-flex min-h-10 shrink-0 items-center rounded-xl bg-accent-500 px-3 text-sm font-bold text-white shadow-lg shadow-accent-950/30 transition hover:bg-accent-600 sm:min-h-11 sm:rounded-2xl sm:px-4">
+              <span className="sm:hidden">+ New</span>
+              <span className="hidden sm:inline">+ Create Daily Log</span>
+            </button>
+          </div>
         </div>
-        <div className="mt-3">
+        <div className="p-5 sm:p-7">
           <StatusTabs tabs={DAILY_LOG_TABS} activeTab={activeTab} onChange={setActiveTab} counts={tabCounts} />
         </div>
       </section>
@@ -2152,8 +3835,9 @@ function TechnicianProfilePage({ profile, companyName, projectOptions, logCollec
 
   return (
     <div className="space-y-4">
-      <section className={cardClass()}>
-        {commandCenterTitle("Profile")}
+      <section className="overflow-hidden rounded-2xl border-b-4 border-accent-500 bg-gradient-to-br from-navy-800 via-navy-900 to-navy-950 p-4 shadow-sm sm:p-5">
+        <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-300">Command Center</p>
+        <h1 className="mt-1 text-2xl font-bold tracking-tight text-white">Profile</h1>
       </section>
 
       <section className={cardClass()}>
@@ -2326,6 +4010,9 @@ export default function FieldEngineerWorkspace({
   error,
   navigate
 }) {
+  const { companyRole, isPlatformAdmin, modulePermissions } = useAuth();
+  const canCreateDailyLog = canAccessModule(modulePermissions, companyRole, isPlatformAdmin, "daily_logs", "create_edit");
+  const canCreateTimesheet = canAccessModule(modulePermissions, companyRole, isPlatformAdmin, "timesheets", "create_edit");
   const [dailyLogs, setDailyLogs] = useState([]);
   const [activeLog, setActiveLog] = useState(null);
   const [timeCards, setTimeCards] = useState([]);
@@ -2334,6 +4021,12 @@ export default function FieldEngineerWorkspace({
     "command-center",
     "concrete-report",
     "compaction-report",
+    "asphalt-report",
+    "infiltration-report",
+    "proctor-report",
+    "samples-report",
+    "reports-home",
+    "lab-reports",
     "daily-logs",
     "create-daily-log",
     "draft-logs",
@@ -2485,9 +4178,20 @@ export default function FieldEngineerWorkspace({
   }
 
   function createLog() {
+    // Only offer projects where the user may create daily logs.
+    const dailyLogProjects = projectOptions.filter((p) =>
+      meetsLevel(moduleLevelForProject(modulePermissions, companyRole, isPlatformAdmin, p.id, "daily_logs"), "create_edit"));
+    const fallbackProject = dailyLogProjects[0] || {};
+    const defaultAllowed = dailyLogProjects.some((p) => String(p.id) === String(defaultProjectId));
+    const resolvedProjectId = (defaultAllowed && defaultProjectId) || fallbackProject.id || null;
+    const resolvedProjectLabel = (defaultAllowed && projectLabel) || fallbackProject.name || "";
+    if (!resolvedProjectId) {
+      window.alert("You don't have create access to Daily Logs on any assigned project. Ask your company admin for access.");
+      return;
+    }
     const log = saveDailyLog(createDailyLog({
-      projectLabel,
-      defaultProjectId,
+      projectLabel: resolvedProjectLabel,
+      defaultProjectId: resolvedProjectId,
       technicianName: profile?.full_name || "Field Technician",
       companyId: profile?.company_id || profile?.organization_id || null,
       companyName,
@@ -2736,12 +4440,15 @@ export default function FieldEngineerWorkspace({
     return `/technician/daily-log/${log.id}/activity/${activityId}/compaction-report/${report?.id || "new"}?returnTo=${encodeURIComponent(`/technician/daily-log/${log.id}`)}`;
   }
 
+  function getAsphaltReportRoute(log, activityId, report) {
+    return `/technician/daily-log/${log.id}/activity/${activityId}/asphalt-report/${report?.id || "new"}?returnTo=${encodeURIComponent(`/technician/daily-log/${log.id}`)}`;
+  }
+
+  function getInfiltrationReportRoute(log, activityId, report) {
+    return `/technician/daily-log/${log.id}/activity/${activityId}/infiltration-report/${report?.id || "new"}?returnTo=${encodeURIComponent(`/technician/daily-log/${log.id}`)}`;
+  }
+
   function openReportRoute(reportUrl) {
-    const isDesktop = window.matchMedia("(min-width: 1024px)").matches;
-    if (isDesktop) {
-      window.open(reportUrl, "_blank", "noopener,noreferrer");
-      return;
-    }
     navigate(reportUrl);
   }
 
@@ -2793,8 +4500,6 @@ export default function FieldEngineerWorkspace({
       openReportRoute(getConcreteReportRoute(log, activityId, existingDraftReport));
       return existingDraftReport;
     }
-    const reportYear = new Date(log.date || Date.now()).getFullYear();
-    const nextSequence = String((activity.concreteReports || []).length + 1).padStart(6, "0");
     const report = createConcreteReport({
       dailyLogId: log.id,
       daily_log_id: log.id,
@@ -2806,7 +4511,6 @@ export default function FieldEngineerWorkspace({
       technician_id: log.technicianId || log.userId || userId || "",
       technicianName: log.technicianName || profile?.full_name || "",
       status: "draft",
-      reportNumber: `CR-${reportYear}-${nextSequence}`,
       placementLocation: activity.location || "",
       dateSampled: log.date || "",
       weatherCondition: log.weatherCondition || log.weather || "",
@@ -2848,16 +4552,12 @@ export default function FieldEngineerWorkspace({
       }
       return existingActivityReport;
     }
-    const reportYear = new Date(log.date || Date.now()).getFullYear();
-    const nextSequence = String((activity.reports || []).length + 1).padStart(6, "0");
     const report = {
       id: crypto.randomUUID(),
       type: "Compaction Report",
       reportType: "Compaction Report",
       report_type: "Compaction Report",
       status: "draft",
-      reportNumber: `CDR-${reportYear}-${nextSequence}`,
-      report_number: `CDR-${reportYear}-${nextSequence}`,
       dailyLogId: log.id,
       daily_log_id: log.id,
       activityId,
@@ -2955,6 +4655,242 @@ export default function FieldEngineerWorkspace({
     openReportRoute(getCompactionReportRoute(log, activityId, report || { id: reportId }));
   }
 
+  function createAsphaltReportForActivity(log, activityId) {
+    const activity = (log.activities || []).find((item) => item.id === activityId);
+    if (!activity) return null;
+    const existingActivityReport = [...(activity.concreteReports || []), ...(activity.reports || [])][0];
+    if (existingActivityReport) {
+      const type = String(existingActivityReport.type || existingActivityReport.reportType || "").toLowerCase();
+      if (type.includes("asphalt")) {
+        openReportRoute(getAsphaltReportRoute(log, activityId, existingActivityReport));
+      } else {
+        window.alert("Only one report can be attached to each activity.");
+      }
+      return existingActivityReport;
+    }
+    const report = {
+      id: crypto.randomUUID(),
+      type: "Asphalt Compaction Report",
+      reportType: "Asphalt Compaction Report",
+      report_type: "Asphalt Compaction Report",
+      status: "draft",
+      dailyLogId: log.id,
+      daily_log_id: log.id,
+      activityId,
+      activity_id: activityId,
+      projectName: log.projectName || projectLabel,
+      project_name: log.projectName || projectLabel,
+      projectNumber: log.projectNumber || log.project_number || String(defaultProjectId || ""),
+      project_number: log.projectNumber || log.project_number || String(defaultProjectId || ""),
+      date: log.date || new Date().toISOString().slice(0, 10),
+      client: log.client || log.clientName || companyName || "",
+      serialNumber: "",
+      gaugeModel: "",
+      calibrationDueDate: "",
+      standardizedGauge: "",
+      standardDensity: "",
+      standardMoisture: "",
+      materialGroups: [{ id: crypto.randomUUID(), mixId: "", marshallValue: "", requiredCompaction: "", testRecords: [] }],
+      coresTaken: "",
+      coreCount: "",
+      coreLocations: "",
+      coreNotes: "",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    const nextLog = saveDailyLog({
+      ...log,
+      activities: log.activities.map((item) => (
+        item.id === activityId
+          ? { ...item, reports: [...(item.reports || []), report], updatedAt: new Date().toISOString() }
+          : item
+      )),
+      updatedAt: new Date().toISOString()
+    });
+    refreshLogs(nextLog);
+    openReportRoute(getAsphaltReportRoute(nextLog, activityId, report));
+    return report;
+  }
+
+  function openAsphaltReport(log, activityId, reportId) {
+    if (!log?.id || !activityId || !reportId) return;
+    const activity = (log.activities || []).find((item) => item.id === activityId);
+    const report = (activity?.reports || []).find((item) => item.id === reportId);
+    openReportRoute(getAsphaltReportRoute(log, activityId, report || { id: reportId }));
+  }
+
+  function createInfiltrationReportForActivity(log, activityId) {
+    const activity = (log.activities || []).find((item) => item.id === activityId);
+    if (!activity) return null;
+    const existing = [...(activity.concreteReports || []), ...(activity.reports || [])][0];
+    if (existing) {
+      const type = String(existing.type || existing.reportType || "").toLowerCase();
+      if (type.includes("infiltration")) {
+        openReportRoute(getInfiltrationReportRoute(log, activityId, existing));
+      } else {
+        window.alert("Only one report can be attached to each activity.");
+      }
+      return existing;
+    }
+    const report = {
+      id: crypto.randomUUID(),
+      type: "Surface Infiltration Report",
+      reportType: "Surface Infiltration Report",
+      report_type: "Surface Infiltration Report",
+      status: "draft",
+      dailyLogId: log.id,
+      daily_log_id: log.id,
+      activityId,
+      activity_id: activityId,
+      projectName: log.projectName || projectLabel,
+      project_name: log.projectName || projectLabel,
+      projectNumber: log.projectNumber || log.project_number || String(defaultProjectId || ""),
+      project_number: log.projectNumber || log.project_number || String(defaultProjectId || ""),
+      date: log.date || new Date().toISOString().slice(0, 10),
+      testRecords: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    const nextLog = saveDailyLog({
+      ...log,
+      activities: log.activities.map((item) => (
+        item.id === activityId
+          ? { ...item, reports: [...(item.reports || []), report], updatedAt: new Date().toISOString() }
+          : item
+      )),
+      updatedAt: new Date().toISOString()
+    });
+    refreshLogs(nextLog);
+    openReportRoute(getInfiltrationReportRoute(nextLog, activityId, report));
+    return report;
+  }
+
+  function openInfiltrationReport(log, activityId, reportId) {
+    if (!log?.id || !activityId || !reportId) return;
+    const activity = (log.activities || []).find((item) => item.id === activityId);
+    const report = (activity?.reports || []).find((item) => item.id === reportId);
+    openReportRoute(getInfiltrationReportRoute(log, activityId, report || { id: reportId }));
+  }
+
+  function getProctorReportRoute(log, activityId, report) {
+    return `/technician/daily-log/${log.id}/activity/${activityId}/proctor-report/${report?.id || "new"}?returnTo=${encodeURIComponent(`/technician/daily-log/${log.id}`)}`;
+  }
+
+  function createProctorReportForActivity(log, activityId) {
+    const activity = (log.activities || []).find((item) => item.id === activityId);
+    if (!activity) return null;
+    const existing = [...(activity.concreteReports || []), ...(activity.reports || [])][0];
+    if (existing) {
+      const type = String(existing.type || existing.reportType || "").toLowerCase();
+      if (type.includes("proctor")) {
+        navigate(getProctorReportRoute(log, activityId, existing));
+      } else {
+        window.alert("Only one report can be attached to each activity.");
+      }
+      return existing;
+    }
+    const report = {
+      id: crypto.randomUUID(),
+      type: "One-Point Proctor Report",
+      reportType: "One-Point Proctor Report",
+      report_type: "One-Point Proctor Report",
+      status: "draft",
+      dailyLogId: log.id,
+      daily_log_id: log.id,
+      activityId,
+      activity_id: activityId,
+      projectName: log.projectName || projectLabel,
+      project_name: log.projectName || projectLabel,
+      projectNumber: log.projectNumber || log.project_number || String(defaultProjectId || ""),
+      project_number: log.projectNumber || log.project_number || String(defaultProjectId || ""),
+      date: log.date || new Date().toISOString().slice(0, 10),
+      client: log.client || "",
+      testRecords: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    const nextLog = saveDailyLog({
+      ...log,
+      activities: (log.activities || []).map((item) =>
+        item.id === activityId
+          ? { ...item, reports: [...(item.reports || []), report], updatedAt: new Date().toISOString() }
+          : item
+      ),
+      updatedAt: new Date().toISOString()
+    });
+    refreshLogs(nextLog);
+    navigate(getProctorReportRoute(nextLog, activityId, report));
+    return report;
+  }
+
+  function openProctorReport(log, activityId, reportId) {
+    if (!log?.id || !activityId || !reportId) return;
+    const activity = (log.activities || []).find((item) => item.id === activityId);
+    const report = (activity?.reports || []).find((item) => item.id === reportId);
+    navigate(getProctorReportRoute(log, activityId, report || { id: reportId }));
+  }
+
+  function getSamplesReportRoute(log, activityId, report) {
+    return `/technician/daily-log/${log.id}/activity/${activityId}/samples-report/${report?.id || "new"}?returnTo=${encodeURIComponent(`/technician/daily-log/${log.id}`)}`;
+  }
+
+  function createSamplesReportForActivity(log, activityId) {
+    const activity = (log.activities || []).find((item) => item.id === activityId);
+    if (!activity) return null;
+    const existing = [...(activity.concreteReports || []), ...(activity.reports || [])][0];
+    if (existing) {
+      const type = String(existing.type || existing.reportType || "").toLowerCase();
+      if (type.includes("sample")) {
+        navigate(getSamplesReportRoute(log, activityId, existing));
+      } else {
+        window.alert("Only one report can be attached to each activity.");
+      }
+      return existing;
+    }
+    const report = {
+      id: crypto.randomUUID(),
+      type: "Samples Collection Report",
+      reportType: "Samples Collection Report",
+      report_type: "Samples Collection Report",
+      status: "draft",
+      dailyLogId: log.id,
+      daily_log_id: log.id,
+      activityId,
+      activity_id: activityId,
+      projectName: log.projectName || projectLabel,
+      project_name: log.projectName || projectLabel,
+      projectNumber: log.projectNumber || log.project_number || String(defaultProjectId || ""),
+      project_number: log.projectNumber || log.project_number || String(defaultProjectId || ""),
+      date: log.date || new Date().toISOString().slice(0, 10),
+      client: log.client || "",
+      sampleType: "",
+      castDate: "",
+      specimenCount: "",
+      comments: "",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    const nextLog = saveDailyLog({
+      ...log,
+      activities: (log.activities || []).map((item) =>
+        item.id === activityId
+          ? { ...item, reports: [...(item.reports || []), report], updatedAt: new Date().toISOString() }
+          : item
+      ),
+      updatedAt: new Date().toISOString()
+    });
+    refreshLogs(nextLog);
+    navigate(getSamplesReportRoute(nextLog, activityId, report));
+    return report;
+  }
+
+  function openSamplesReport(log, activityId, reportId) {
+    if (!log?.id || !activityId || !reportId) return;
+    const activity = (log.activities || []).find((item) => item.id === activityId);
+    const report = (activity?.reports || []).find((item) => item.id === reportId);
+    navigate(getSamplesReportRoute(log, activityId, report || { id: reportId }));
+  }
+
   function backToDailyLog(logId = selectedDailyLog?.id) {
     if (!logId) return;
     navigate(`/technician/daily-log/${logId}`);
@@ -3013,7 +4949,7 @@ export default function FieldEngineerWorkspace({
   const isTimeCardReadOnly = selectedTimeCard && [TIME_CARD_STATUS.SUBMITTED, TIME_CARD_STATUS.PENDING_REVIEW, TIME_CARD_STATUS.APPROVED, TIME_CARD_STATUS.COMPLETED].includes(selectedTimeCard.status);
 
   return (
-    <div className="w-full max-w-full overflow-x-hidden bg-slate-100 px-4 py-5 sm:px-6 lg:p-8">
+    <div className="w-full max-w-full bg-slate-100 px-4 py-5 sm:px-6 lg:p-8" style={{ overflowX: "clip" }}>
       <div className="mx-auto w-full max-w-[1500px] space-y-4 sm:space-y-5">
         {loading && <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4 text-sm font-bold text-blue-900">Loading Field Operations Workspace...</div>}
         {error && <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm font-bold text-rose-800">{error}</div>}
@@ -3023,6 +4959,9 @@ export default function FieldEngineerWorkspace({
             profile={profile}
             logCollections={logCollections}
             timeCardCollections={timeCardCollections}
+            assignedProjects={projectOptions}
+            canCreateDailyLog={canCreateDailyLog}
+            canCreateTimesheet={canCreateTimesheet}
             onOpenLog={openLog}
             onOpenTimeCard={openTimeCard}
             onCreateLog={createLog}
@@ -3043,6 +4982,7 @@ export default function FieldEngineerWorkspace({
           ) : (
             <DailyLogEditor
               log={selectedDailyLog}
+              projectOptions={projectOptions}
               onChange={refreshLogs}
               onSubmitted={(submittedLog) => {
                 refreshLogs(submittedLog);
@@ -3054,6 +4994,14 @@ export default function FieldEngineerWorkspace({
               onOpenConcreteReport={openConcreteReport}
               onCreateCompactionReport={createCompactionReportForActivity}
               onOpenCompactionReport={openCompactionReport}
+              onCreateAsphaltReport={createAsphaltReportForActivity}
+              onOpenAsphaltReport={openAsphaltReport}
+              onCreateInfiltrationReport={createInfiltrationReportForActivity}
+              onOpenInfiltrationReport={openInfiltrationReport}
+              onCreateProctorReport={createProctorReportForActivity}
+              onOpenProctorReport={openProctorReport}
+              onCreateSamplesReport={createSamplesReportForActivity}
+              onOpenSamplesReport={openSamplesReport}
             />
           )
         )}
@@ -3078,9 +5026,58 @@ export default function FieldEngineerWorkspace({
           />
         )}
 
+        {currentView === "asphalt-report" && selectedDailyLog && (
+          <AsphaltCompactionReportPage
+            log={selectedDailyLog}
+            activityId={activeActivityId}
+            reportId={activeReportId}
+            onChange={refreshLogs}
+            onBack={() => backToDailyLog(selectedDailyLog.id)}
+          />
+        )}
+
+        {currentView === "infiltration-report" && selectedDailyLog && (
+          <SurfaceInfiltrationReportPage
+            log={selectedDailyLog}
+            activityId={activeActivityId}
+            reportId={activeReportId}
+            onChange={refreshLogs}
+            onBack={() => backToDailyLog(selectedDailyLog.id)}
+          />
+        )}
+
+        {currentView === "proctor-report" && selectedDailyLog && (
+          <ProctorReportPage
+            log={selectedDailyLog}
+            activityId={activeActivityId}
+            reportId={activeReportId}
+            onChange={refreshLogs}
+            onBack={() => backToDailyLog(selectedDailyLog.id)}
+          />
+        )}
+
+        {currentView === "samples-report" && selectedDailyLog && (
+          <SamplesCollectionReportPage
+            log={selectedDailyLog}
+            activityId={activeActivityId}
+            reportId={activeReportId}
+            onChange={refreshLogs}
+            onBack={() => backToDailyLog(selectedDailyLog.id)}
+          />
+        )}
+
+        {currentView === "reports-home" && (
+          <ReportsHome logCollections={logCollections} navigate={navigate} />
+        )}
+
+        {currentView === "lab-reports" && (
+          <LabReportsPage navigate={navigate} />
+        )}
+
         {Object.prototype.hasOwnProperty.call(logTabByView, currentView) && (
           <DailyLogsPage
             key={currentView}
+            navigate={navigate}
             logCollections={logCollections}
             initialTab={logTabByView[currentView]}
             onOpenLog={openLog}
@@ -3132,8 +5129,14 @@ export default function FieldEngineerWorkspace({
         )}
 
         {currentView === "notifications" && (
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <SimplePanel icon={Bell} kicker="Command Center" title="Notifications" description="Manager review, returned correction, upload, and approval events will appear here." />
+          <div className="space-y-4">
+            <section className="overflow-hidden rounded-2xl border-b-4 border-accent-500 bg-gradient-to-br from-navy-800 via-navy-900 to-navy-950 p-4 shadow-sm sm:p-5">
+              <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-300">Command Center</p>
+              <h1 className="mt-1 text-2xl font-bold tracking-tight text-white">Notifications</h1>
+            </section>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <SimplePanel icon={Bell} kicker="Activity" title="No notifications yet" description="Manager review, returned correction, upload, and approval events will appear here." />
+            </div>
           </div>
         )}
 

@@ -19,8 +19,10 @@ import {
 } from "lucide-react";
 import { supabase } from "../services/supabase";
 import { useAuth } from "../context/AuthContext";
+import { isUnscoped, meetsLevel } from "../utils/moduleAccess";
 import { MODULE_NAMES } from "../config/branding";
 import { sendTimesheetDecisionEmail } from "../services/notificationService";
+import { logAuditEvent } from "../services/auditLogService";
 import { DAILY_LOG_STATUS } from "../services/dailyLogService";
 import { createDailyLogPdfSignedUrl } from "../services/dailyLogPdfService";
 import { WEEK_DAYS, approveTimeCard, formatTimeCardStatus, getRowTotal, rejectTimeCard, TIME_CARD_STATUS } from "../services/timeCardService";
@@ -488,14 +490,14 @@ function SummaryLegendRow({ color, label, count, onClick }) {
 
 function KpiCard({ label, value, icon: Icon, chipClass }) {
   return (
-    <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
       <div className="flex items-center justify-between gap-3">
-        <p className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">{label}</p>
+        <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">{label}</p>
         <span className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl ${chipClass}`}>
           <Icon className="h-4 w-4" />
         </span>
       </div>
-      <p className="mt-3 text-3xl font-bold text-slate-950">{value}</p>
+      <p className="mt-2 text-2xl font-bold text-slate-900">{value}</p>
     </div>
   );
 }
@@ -504,7 +506,7 @@ function ManagerDashboard() {
   const navigate = useNavigate();
   // Approval emails deep-link to a specific timesheet via ?timesheet=TS-….
   const highlightedTimesheet = new URLSearchParams(window.location.search).get("timesheet") || "";
-  const { profile } = useAuth();
+  const { profile, companyRole, isPlatformAdmin, modulePermissions } = useAuth();
   const [projects, setProjects] = useState([]);
   const [dailyLogs, setDailyLogs] = useState([]);
   const [timeCards, setTimeCards] = useState([]);
@@ -554,14 +556,25 @@ function ManagerDashboard() {
     loadWorkspace();
   }, []);
 
+  // Visibility follows the access level the admin granted: approve+ on a
+  // project's Daily Logs = oversight (see all on that project); otherwise the
+  // viewer sees only logs routed to them or that they submitted.
+  const myId = profile?.id;
+  const canSeeLog = (log) =>
+    isUnscoped(companyRole, isPlatformAdmin) ||
+    meetsLevel(modulePermissions?.[String(log.project_id)]?.daily_logs, "approve") ||
+    log.reviewer_user_id === myId ||
+    log.technician_id === myId;
   const describedLogs = useMemo(() => (
     dailyLogs
+      .filter(canSeeLog)
       .map(describeDailyLogRow)
       .map((log) => ({ ...log, bucket: logStatusBucket(log.status) }))
       .filter((log) => log.bucket)
       // Most recent first: newest log date, then most recent submission.
       .sort((a, b) => String(b.logDate).localeCompare(String(a.logDate)) || a.agingHours - b.agingHours)
-  ), [dailyLogs]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  ), [dailyLogs, companyRole, isPlatformAdmin, modulePermissions, myId]);
 
   const logCounts = useMemo(() => {
     const pending = describedLogs.filter((log) => log.bucket === "pending").length;
@@ -676,6 +689,12 @@ function ManagerDashboard() {
   async function approveTimesheet(card) {
     const reviewerName = profile?.full_name || "Manager";
     const approved = approveTimeCard(card, reviewerName);
+    logAuditEvent({
+      action: "timesheet_approved",
+      entityType: "timesheet",
+      entityId: card.id,
+      newValue: { reviewer: reviewerName, totalHours: card.totalHours || card.total_hours }
+    });
     // Wait for the shared record before refetching so the row lands on the
     // Approved tab instead of briefly reappearing as pending.
     await syncTimesheet(approved);
@@ -704,6 +723,12 @@ function ManagerDashboard() {
     if (!comments || !comments.trim()) return;
     const reviewerName = profile?.full_name || "Manager";
     const rejected = rejectTimeCard(card, comments.trim());
+    logAuditEvent({
+      action: "timesheet_rejected",
+      entityType: "timesheet",
+      entityId: card.id,
+      newValue: { reviewer: reviewerName, comments: comments.trim() }
+    });
     await syncTimesheet(rejected);
     await refreshTimeCards();
     sendTimesheetDecisionEmail(rejected, { decision: "rejected", reviewerName, comments: comments.trim() })
@@ -776,37 +801,38 @@ function ManagerDashboard() {
     { label: "Open Digital Deliverables", icon: FileText, onClick: () => navigate("/project/1/field-reports/concrete-test-log") }
   ];
 
-  const today = new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+  const greeting = (() => {
+    const h = new Date().getHours();
+    return h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
+  })();
 
   return (
-    <div className="w-full max-w-full overflow-x-hidden bg-slate-100 px-4 py-5 sm:px-6 lg:p-8">
-      <div className="mx-auto w-full max-w-[1500px] space-y-5">
-        <section className="overflow-hidden rounded-3xl border border-slate-200 shadow-sm">
-          <div className="bg-gradient-to-r from-slate-950 via-slate-900 to-blue-950 px-5 py-6 sm:px-8">
-            <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-              <div className="min-w-0">
-                <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">Project Operations Overview</p>
-                <h1 className="mt-1 text-3xl font-bold text-white sm:text-4xl">{MODULE_NAMES.commandCenter}</h1>
-                <p className="mt-2 flex items-center gap-2 text-xs font-semibold text-slate-400">
-                  <CalendarDays className="h-4 w-4" /> {today}
-                </p>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                {pendingDailyLogs.length > 0 && (
-                  <span className="inline-flex items-center gap-2 rounded-full border border-amber-400/40 bg-amber-400/10 px-3 py-1.5 text-xs font-bold text-amber-300">
-                    <Clock className="h-3.5 w-3.5" />
-                    {pendingDailyLogs.length} daily {pendingDailyLogs.length === 1 ? "log" : "logs"} awaiting your review
-                  </span>
-                )}
-                <button
-                  type="button"
-                  onClick={() => navigate("/qc/dashboard")}
-                  className="inline-flex min-h-11 items-center justify-center rounded-2xl bg-blue-600 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-blue-500"
-                >
-                  Open {MODULE_NAMES.validationCenter}
-                </button>
-              </div>
-            </div>
+    <div className="w-full max-w-full overflow-x-hidden bg-slate-50 px-4 py-5 sm:px-6 lg:p-8">
+      <div className="mx-auto w-full max-w-[1500px] space-y-5 sm:space-y-6">
+        <section className="flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h1 className="text-xl font-bold tracking-tight text-slate-900 sm:text-2xl">
+              {greeting}{profile?.full_name ? `, ${profile.full_name}` : ""}
+            </h1>
+            <p className="mt-0.5 text-[13px] font-medium text-slate-500">
+              {pendingDailyLogs.length > 0
+                ? `${pendingDailyLogs.length} daily ${pendingDailyLogs.length === 1 ? "log" : "logs"} awaiting your review`
+                : "No reviews pending"}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {pendingDailyLogs.length > 0 && (
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-bold text-amber-700">
+                <Clock className="h-3.5 w-3.5" /> {pendingDailyLogs.length} pending
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={() => navigate("/qc/dashboard")}
+              className="inline-flex h-10 items-center justify-center gap-1.5 rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
+            >
+              Open {MODULE_NAMES.validationCenter}
+            </button>
           </div>
         </section>
 

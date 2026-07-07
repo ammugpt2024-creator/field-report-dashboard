@@ -14,6 +14,7 @@ import {
   updateDailyLogReviewInSupabase
 } from "../services/dailyLogService";
 import { createDailyLogPdfSignedUrl, openDailyLogPdf, regenerateDailyLogPdf } from "../services/dailyLogPdfService";
+import { logAuditEvent } from "../services/auditLogService";
 import { sendDailyLogApprovalEmail } from "../services/notificationService";
 
 function Section({ kicker, title, children }) {
@@ -64,6 +65,12 @@ export default function DailyLogReview() {
     setSavingDecision(true);
     try {
       await updateDailyLogReviewInSupabase(nextLog);
+      logAuditEvent({
+        action: "report_returned",
+        entityType: "daily_report",
+        entityId: nextLog.id,
+        newValue: { status: nextLog.status }
+      });
       navigate("/manager/dashboard");
     } catch (error) {
       window.alert(error.message || "The review decision could not be saved to the server. Please try again.");
@@ -84,6 +91,12 @@ export default function DailyLogReview() {
       const approved = approveDailyLog(log, reviewerName, signature);
       setLog(approved);
       await updateDailyLogReviewInSupabase(approved);
+      logAuditEvent({
+        action: "report_approved",
+        entityType: "daily_report",
+        entityId: approved.id,
+        newValue: { status: approved.status, approvedBy: reviewerName }
+      });
 
       // Regenerate the PDF so it carries the QC reviewer signature and the
       // approval date, replacing the stored copy at the same path.
@@ -170,7 +183,7 @@ export default function DailyLogReview() {
   return (
     <div className="w-full max-w-full overflow-x-hidden bg-slate-100 px-4 py-5 sm:px-6 lg:p-8">
       <div className="mx-auto w-full max-w-[1400px] space-y-5">
-        <section className="rounded-3xl bg-slate-950 p-5 text-white shadow-sm sm:p-7">
+        <section className="overflow-hidden rounded-3xl border-b-4 border-accent-500 bg-gradient-to-br from-navy-800 via-navy-900 to-navy-950 p-5 text-white shadow-sm sm:p-7">
           <button type="button" onClick={() => navigate(-1)} className="inline-flex min-h-10 items-center gap-2 rounded-2xl bg-white/10 px-4 text-sm font-bold text-white">
             <ArrowLeft className="h-4 w-4" />
             Back

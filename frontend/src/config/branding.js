@@ -7,7 +7,7 @@ export const BRAND = {
 };
 
 export const MODULE_NAMES = {
-  commandCenter: 'Command Center',
+  commandCenter: 'Dashboard',
   projectHub: 'Project Operations',
   fieldOps: 'Field Operations',
   materialAssurance: 'Field Operations',
