@@ -453,8 +453,12 @@ create table if not exists public.daily_log_signatures (
   created_at timestamptz default now() not null
 );
 
+-- daily_logs is created later (006_create_daily_log_workflow); on a fresh
+-- database this FK is added there instead. The guard keeps this file replayable
+-- against databases where daily_logs already exists.
 do $$ begin
-  if not exists (select 1 from pg_constraint where conname = 'daily_log_signatures_daily_log_id_fkey') then
+  if to_regclass('public.daily_logs') is not null
+     and not exists (select 1 from pg_constraint where conname = 'daily_log_signatures_daily_log_id_fkey') then
     alter table public.daily_log_signatures add constraint daily_log_signatures_daily_log_id_fkey FOREIGN KEY (daily_log_id) REFERENCES daily_logs(id) ON DELETE CASCADE;
   end if;
 end $$;
