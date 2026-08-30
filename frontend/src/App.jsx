@@ -46,6 +46,7 @@ import PlatformAdminDashboard from "./pages/PlatformAdminDashboard";
 import CompanyDetail from "./pages/CompanyDetail";
 import CompanyAdminDashboard from "./pages/CompanyAdminDashboard";
 import AcceptInvite from "./pages/AcceptInvite";
+import ResetPassword from "./pages/ResetPassword";
 
 function App() {
 
@@ -81,9 +82,22 @@ function App() {
   // Invitation / password-recovery links sign the user in with a one-time
   // token; send them to the set-password screen before anything else.
   const authFlow = sessionStorage.getItem("qcore-auth-flow");
-  if (authFlow || window.location.pathname === "/welcome") {
+  const authPath = window.location.pathname;
+
+  // Recovery gets its own screen. AcceptInvite is written for brand-new
+  // invitees and redirects anyone who already has a profile row straight into
+  // the app — which is every password-reset user, so they never see a form.
+  if (authFlow === "recovery" || authPath === "/reset-password") {
     sessionStorage.removeItem("qcore-auth-flow");
-    if (window.location.pathname !== "/welcome") {
+    if (authPath !== "/reset-password") {
+      window.history.replaceState(null, "", "/reset-password");
+    }
+    return <ResetPassword />;
+  }
+
+  if (authFlow || authPath === "/welcome") {
+    sessionStorage.removeItem("qcore-auth-flow");
+    if (authPath !== "/welcome") {
       window.history.replaceState(null, "", "/welcome");
     }
     return <AcceptInvite />;
