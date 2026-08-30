@@ -61,9 +61,22 @@ function ResetPassword() {
       setBusy(false);
       return;
     }
-    // The recovery session is already this user signed in, so send them
-    // straight into the app. Full reload so the auth context rebuilds.
-    window.location.replace("/");
+    // End the recovery session so the new password has to be used to get in.
+    const { error: signOutError } = await supabase.auth.signOut();
+    if (signOutError) {
+      // signOut() revokes the token server-side before clearing local state,
+      // so a network failure would leave them signed in on the old session.
+      // Drop the stored session ourselves — the password is already changed.
+      Object.keys(localStorage)
+        .filter((key) => key.startsWith("sb-") && key.endsWith("-auth-token"))
+        .forEach((key) => localStorage.removeItem(key));
+    }
+
+    // Full reload so the auth context rebuilds with no session and shows
+    // login. The marker rides in the URL because signing out re-renders the
+    // app into Login once before this redirect lands, and that throwaway
+    // mount would consume a stored flag.
+    window.location.replace("/?password_reset=1");
   }
 
   return (
@@ -109,7 +122,7 @@ function ResetPassword() {
           </div>
           <h2 className="mt-2 text-xl font-bold text-slate-900">Choose a new password</h2>
           <p className="mt-1 text-sm font-medium text-slate-500">
-            Pick something you haven't used before. You'll be signed in once it's saved.
+            Pick something you haven't used before. You'll sign in with it next.
           </p>
 
           {email && (
@@ -156,7 +169,7 @@ function ResetPassword() {
               disabled={busy || !longEnough || !matches}
               className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-blue-700 text-sm font-bold text-white hover:bg-blue-800 disabled:opacity-50"
             >
-              {busy ? <><Loader2 className="h-4 w-4 animate-spin" />Saving your password…</> : "Save password & continue"}
+              {busy ? <><Loader2 className="h-4 w-4 animate-spin" />Saving your password…</> : "Save password"}
             </button>
           </form>
           </>

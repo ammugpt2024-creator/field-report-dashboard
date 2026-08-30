@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../services/supabase";
 import { getRoleHomeRoute } from "../utils/navigation";
@@ -13,6 +13,11 @@ function Login() {
   // A re-clicked or expired invite/recovery link lands here with an error
   // hash; explain it instead of showing a bare login form.
   const [notice, setNotice] = useState(() => {
+    // Set by the reset screen, which signs the user out so the new password
+    // has to be used to get back in.
+    if (new URLSearchParams(window.location.search).has("password_reset")) {
+      return "Your password has been updated. Sign in with your new password.";
+    }
     if (sessionStorage.getItem("qcore-auth-error")) {
       sessionStorage.removeItem("qcore-auth-error");
       return "That link has expired or was already used. Invitation and reset links work once — ask your admin to resend your invite, or use “Forgot password?” below to set a new password.";
@@ -20,6 +25,12 @@ function Login() {
     return "";
   });
   const navigate = useNavigate();
+
+  // Drop the marker once it has been read so a refresh doesn't repeat it.
+  useEffect(() => {
+    if (!new URLSearchParams(window.location.search).has("password_reset")) return;
+    window.history.replaceState(null, "", window.location.pathname);
+  }, []);
 
   async function handleForgotPassword() {
     if (!email) {
