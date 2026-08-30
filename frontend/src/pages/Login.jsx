@@ -40,7 +40,13 @@ function Login() {
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
       redirectTo: window.location.origin
     });
-    setNotice(error ? error.message : `Password reset email sent to ${email}. Check your inbox.`);
+    // Supabase deliberately reports success for addresses with no account, so
+    // the form can't be used to discover which emails are registered. Promise
+    // only what we actually know, or a missing account looks like a mail
+    // delivery problem.
+    setNotice(error
+      ? error.message
+      : `If an account exists for ${email}, a reset link is on its way. Check your inbox, including spam.`);
   }
 
   async function handleLogin() {
