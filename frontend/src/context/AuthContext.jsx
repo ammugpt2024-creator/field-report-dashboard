@@ -88,8 +88,15 @@ export function AuthProvider({ children }) {
     try {
       // First sign-in after a Company Admin / employee invitation: attach this
       // account to its pending roster row before resolving membership.
-      const { error: claimError } = await supabase.rpc("claim_company_invite");
-      if (claimError) console.warn("Pending invite could not be claimed:", claimError.message);
+      // Exception: while an invite link is being handed off the invitee has not
+      // set a password yet. Claiming here creates their profiles row and flips
+      // the roster row to active before setup finishes — AcceptInvite claims it
+      // itself once the password is saved.
+      const invitePending = sessionStorage.getItem("qcore-auth-flow") === "invite";
+      if (!invitePending) {
+        const { error: claimError } = await supabase.rpc("claim_company_invite");
+        if (claimError) console.warn("Pending invite could not be claimed:", claimError.message);
+      }
       const [membershipRes, platformRes] = await Promise.all([
         supabase.from("company_users").select("company_id, role, status").eq("user_id", userId).eq("status", "active").maybeSingle(),
         supabase.from("platform_admins").select("user_id, status").eq("user_id", userId).eq("status", "active").maybeSingle()

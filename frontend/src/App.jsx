@@ -84,9 +84,8 @@ function App() {
   const authFlow = sessionStorage.getItem("qcore-auth-flow");
   const authPath = window.location.pathname;
 
-  // Recovery gets its own screen. AcceptInvite is written for brand-new
-  // invitees and redirects anyone who already has a profile row straight into
-  // the app — which is every password-reset user, so they never see a form.
+  // Recovery gets its own screen: a password-reset user always has a profile
+  // row, so they must never be routed through the invite path.
   if (authFlow === "recovery" || authPath === "/reset-password") {
     sessionStorage.removeItem("qcore-auth-flow");
     if (authPath !== "/reset-password") {
@@ -95,12 +94,14 @@ function App() {
     return <ResetPassword />;
   }
 
+  // The link type is the only reliable signal that an account has never had a
+  // password, so pass it down rather than dropping it here. AcceptInvite clears
+  // the key once it has read it, so a re-render can't lose the invite context.
   if (authFlow || authPath === "/welcome") {
-    sessionStorage.removeItem("qcore-auth-flow");
     if (authPath !== "/welcome") {
       window.history.replaceState(null, "", "/welcome");
     }
-    return <AcceptInvite />;
+    return <AcceptInvite flow={authFlow || ""} />;
   }
 
   function RoleHome() {

@@ -8,7 +8,7 @@ import loginBg from "../assets/login-bg.png";
 // Invite acceptance: the link in the invitation email signs the invitee in
 // with a one-time token and lands here so they can set their password and be
 // attached to their company before entering the app.
-function AcceptInvite() {
+function AcceptInvite({ flow = "" }) {
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [show, setShow] = useState(false);
@@ -22,6 +22,14 @@ function AcceptInvite() {
   useEffect(() => {
     let active = true;
     (async () => {
+      // An `invite` link is only ever issued for an account that was just
+      // created, so it has no password yet. That fact — not the presence of a
+      // profiles row — decides whether the password form is required: the row
+      // is created during this very sign-in by claim_company_invite, so a
+      // profile check here would always find one and skip the form.
+      const fromInviteLink = flow === "invite";
+      sessionStorage.removeItem("qcore-auth-flow");
+
       const { data } = await supabase.auth.getUser();
       const user = data?.user;
       if (!active) return;
@@ -30,24 +38,26 @@ function AcceptInvite() {
       // password form for a dead link.
       if (!user) { setPhase("expired"); return; }
 
-      // If the account is already set up (a profile exists), an old invite link
-      // must NOT let anyone re-create the password. Attach any still-pending
-      // invite, then drop them into the app instead of the set-password screen.
-      const { data: profile } = await supabase
-        .from("profiles").select("id").eq("id", user.id).maybeSingle();
-      if (!active) return;
-      if (profile) {
-        try { await supabase.rpc("claim_company_invite"); } catch { /* already linked */ }
-        window.location.replace("/");
-        return;
+      if (!fromInviteLink) {
+        // Magic-link sign-in, used when the address already had an account.
+        // Only skip the password step when that account is genuinely set up; a
+        // missing profile means setup never finished, so still ask.
+        const { data: profile } = await supabase
+          .from("profiles").select("id").eq("id", user.id).maybeSingle();
+        if (!active) return;
+        if (profile) {
+          try { await supabase.rpc("claim_company_invite"); } catch { /* already linked */ }
+          window.location.replace("/");
+          return;
+        }
       }
 
-      // Genuinely new invitee with a valid link — let them set a password.
+      // New invitee with a valid link — let them set a password.
       setIdentity({ name: user.user_metadata?.full_name || "", email: user.email || "" });
       setPhase("form");
     })();
     return () => { active = false; };
-  }, []);
+  }, [flow]);
 
   const longEnough = password.length >= 8;
   const matches = confirm.length > 0 && password === confirm;
