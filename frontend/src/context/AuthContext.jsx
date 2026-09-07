@@ -88,12 +88,18 @@ export function AuthProvider({ children }) {
     try {
       // First sign-in after a Company Admin / employee invitation: attach this
       // account to its pending roster row before resolving membership.
-      // Exception: while an invite link is being handed off the invitee has not
-      // set a password yet. Claiming here creates their profiles row and flips
-      // the roster row to active before setup finishes — AcceptInvite claims it
-      // itself once the password is saved.
-      const invitePending = sessionStorage.getItem("qcore-auth-flow") === "invite";
-      if (!invitePending) {
+      // Do not claim while an auth link is being handed off on /welcome. The
+      // claim creates the profiles row, and AcceptInvite reads "a profile
+      // exists" as "this account is already set up" - so claiming here makes it
+      // skip the set-password screen. This must cover EVERY link type, not just
+      // type=invite: an address that already has an auth account gets a
+      // magiclink instead, whose hash carries no invite marker at all.
+      // AcceptInvite claims it itself, either after the password is saved or
+      // when it confirms the account was genuinely set up already.
+      const authHandoff =
+        sessionStorage.getItem("qcore-auth-flow") === "invite" ||
+        window.location.pathname === "/welcome";
+      if (!authHandoff) {
         const { error: claimError } = await supabase.rpc("claim_company_invite");
         if (claimError) console.warn("Pending invite could not be claimed:", claimError.message);
       }
