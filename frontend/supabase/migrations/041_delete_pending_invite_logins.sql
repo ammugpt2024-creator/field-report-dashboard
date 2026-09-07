@@ -98,6 +98,17 @@ begin
   update profiles set company_id = null where company_id = target_company;
   delete from companies where id = target_company;
 
+  -- audit_logs.actor_user_id has no ON DELETE action, and platform-level rows
+  -- (company_id is null) are not touched by the company-scoped sweep above.
+  -- logAuditEvent falls back to a null company_id whenever it cannot resolve
+  -- one -- precisely the case for a member who had not claimed their invite --
+  -- so such a row would make the auth.users deletes below raise a foreign-key
+  -- violation and roll this entire function back. Detach them instead: the
+  -- audit entry is kept, it just no longer names a deleted account.
+  update audit_logs set actor_user_id = null
+   where actor_user_id = any (member_ids)
+      or actor_user_id in (select id from auth.users where lower(email) = any (pending_emails));
+
   -- Accepted members whose login belonged only to this company.
   delete from auth.users u
   where u.id = any (member_ids)
