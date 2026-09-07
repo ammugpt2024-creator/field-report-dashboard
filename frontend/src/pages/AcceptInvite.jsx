@@ -38,18 +38,20 @@ function AcceptInvite({ flow = "" }) {
       // password form for a dead link.
       if (!user) { setPhase("expired"); return; }
 
-      if (!fromInviteLink) {
-        // Magic-link sign-in, used when the address already had an account.
-        // Only skip the password step when that account is genuinely set up; a
-        // missing profile means setup never finished, so still ask.
-        const { data: profile } = await supabase
-          .from("profiles").select("id").eq("id", user.id).maybeSingle();
-        if (!active) return;
-        if (profile) {
-          try { await supabase.rpc("claim_company_invite"); } catch { /* already linked */ }
-          window.location.replace("/");
-          return;
-        }
+      // Whether this account has ever set a password is the only thing that
+      // actually matters here, so record it explicitly rather than inferring it.
+      // The profiles row is not a safe proxy: it can be created by a database
+      // trigger the moment the account exists, and claim_company_invite creates
+      // one too -- either way it is present before the person has chosen a
+      // password, which is exactly how invitees were being waved straight
+      // through into the app.
+      // An invite link is only ever issued for a freshly created account, so it
+      // never has a password - treat it as conclusive on its own.
+      const passwordAlreadySet = !fromInviteLink && user.user_metadata?.password_set === true;
+      if (passwordAlreadySet) {
+        try { await supabase.rpc("claim_company_invite"); } catch { /* already linked */ }
+        window.location.replace("/");
+        return;
       }
 
       // New invitee with a valid link — let them set a password.
@@ -76,7 +78,7 @@ function AcceptInvite({ flow = "" }) {
     }
     setBusy(true);
     try {
-      const { error: passwordError } = await supabase.auth.updateUser({ password });
+      const { error: passwordError } = await supabase.auth.updateUser({ password, data: { password_set: true } });
       if (passwordError) throw passwordError;
 
       // Attach this account to its pending company invitation.
