@@ -469,20 +469,16 @@ export async function updateMemberDetails(member, { full_name, role }) {
 // Remove an employee from the company entirely: drop their project assignments
 // first, then the roster row. (Their auth account is left intact — they simply
 // lose access to this company.)
+// Removes the roster row, the person's project assignments, and - when the
+// login belongs to no other company and is not a platform admin - the auth
+// account itself. Deleting the login matters: an orphaned account cannot be
+// re-invited (Supabase refuses "already registered"), so the invitation
+// silently degrades to a magic link that signs the person straight in.
+// The RPC audits itself, so no logAuditEvent call here.
 export async function removeMember(member) {
-  if (member.user_id) {
-    await supabase.from('project_assignments').delete()
-      .eq('company_id', member.company_id).eq('user_id', member.user_id);
-  }
-  const { error } = await supabase.from('company_users').delete().eq('id', member.id);
+  const { data, error } = await supabase.rpc('remove_company_member', { p_member: member.id });
   if (error) throw error;
-  logAuditEvent({
-    companyId: member.company_id,
-    action: 'user_removed',
-    entityType: 'company_user',
-    entityId: member.id,
-    oldValue: { email: member.invited_email, role: member.role }
-  });
+  return data || { removed: true };
 }
 
 // Edit a project's core details.
