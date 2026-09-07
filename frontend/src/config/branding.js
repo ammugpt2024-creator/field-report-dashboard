@@ -10,7 +10,7 @@ export const MODULE_NAMES = {
   commandCenter: 'Dashboard',
   projectHub: 'Project Operations',
   fieldOps: 'Field Operations',
-  materialAssurance: 'Field Operations',
+  materialAssurance: 'Quality Records',
   concreteQualityReports: 'Concrete Quality Reports',
   strengthVerification: 'Strength Verification',
   labIntelligence: 'Lab Intelligence',

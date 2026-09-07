@@ -92,7 +92,7 @@ function ProjectWorkspace() {
 
           onClick: () =>
             navigate(
-              `/project/${projectId}/field-reports/daily-report/create`
+              `/project/${projectId}/field-reports`
             ),
 
           primary: true
@@ -103,7 +103,7 @@ function ProjectWorkspace() {
 
           onClick: () =>
             navigate(
-              `/project/${projectId}/field-reports/daily-report`
+              `/project/${projectId}/field-reports`
             ),
 
           primary: false

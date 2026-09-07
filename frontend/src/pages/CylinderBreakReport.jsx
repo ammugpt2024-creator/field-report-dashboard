@@ -33,7 +33,7 @@ function resultTone(result) {
 
 function CylinderBreakReport() {
   const navigate = useNavigate();
-  const { reportId } = useParams();
+  const { reportId, projectId } = useParams();
   const { profile } = useAuth();
   const [report, setReport] = useState(null);
   const [lookupMode, setLookupMode] = useState("set"); // "set" | "date"
@@ -48,9 +48,9 @@ function CylinderBreakReport() {
       setReport(existing);
       setSetNumberInput(existing.setNumber || "");
     } else {
-      setReport(createCylinderBreakReport({ technicianName: profile?.full_name || "" }));
+      setReport(createCylinderBreakReport({ technicianName: profile?.full_name || "", projectId }));
     }
-  }, [reportId, profile?.full_name]);
+  }, [reportId, projectId, profile?.full_name]);
 
   const specifiedStrengthPsi = useMemo(
     () => report?.specifiedStrengthPsi || parsePsi(report?.specifiedStrength) || "",
@@ -58,6 +58,13 @@ function CylinderBreakReport() {
   );
 
   if (!report) return null;
+
+  // When opened from a project's Lab Intelligence workspace, navigate back to
+  // that project's list; otherwise fall back to the technician lab list.
+  const listRoute = report.projectId
+    ? `/project/${report.projectId}/lab-reports`
+    : "/technician/lab/cylinder-break";
+  const listLabel = report.projectId ? "Lab Intelligence" : "Cylinder Break Reports";
 
   function persist(next) {
     const saved = saveCylinderBreak(next);
@@ -191,7 +198,7 @@ function CylinderBreakReport() {
   function submitReport() {
     if (!canSubmit) return;
     persist({ ...report, status: CYLINDER_BREAK_STATUS.SUBMITTED, submittedAt: new Date().toISOString() });
-    navigate("/technician/lab/cylinder-break");
+    navigate(listRoute);
   }
 
   const isLinked = Boolean(report.logId || report.projectName);
@@ -201,8 +208,8 @@ function CylinderBreakReport() {
       <div className="mx-auto w-full max-w-[1200px] space-y-4">
         <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
           <div className="border-b-4 border-accent-500 bg-gradient-to-br from-navy-800 via-navy-900 to-navy-950 px-5 py-5 sm:px-7">
-            <button type="button" onClick={() => navigate("/technician/lab/cylinder-break")} className="inline-flex items-center gap-1 text-xs font-bold text-slate-400 hover:text-white">
-              <ArrowLeft className="h-3.5 w-3.5" /> Cylinder Break Reports
+            <button type="button" onClick={() => navigate(listRoute)} className="inline-flex items-center gap-1 text-xs font-bold text-slate-400 hover:text-white">
+              <ArrowLeft className="h-3.5 w-3.5" /> {listLabel}
             </button>
             <div className="mt-1 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <div>

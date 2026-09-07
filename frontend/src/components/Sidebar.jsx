@@ -37,6 +37,7 @@ const navByRole = {
   ],
   manager: [
     { label: MODULE_NAMES.commandCenter, path: "/manager/dashboard", icon: LayoutDashboard },
+    { label: "Projects", path: "/projects", icon: FolderKanban },
     { label: MODULE_NAMES.projectHub, path: "/project/1", icon: FolderKanban },
     { label: "Teams", path: "/manager/dashboard?view=teams", icon: Users },
     { label: "Workflow Monitoring", path: "/qc/dashboard", icon: Workflow },

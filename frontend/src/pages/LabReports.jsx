@@ -1,79 +1,71 @@
 import { useParams, useNavigate } from 'react-router-dom';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
-  Plus,
   ChevronLeft,
-  Beaker,
-  TestTube,
-  Droplets,
-  Zap,
+  FlaskConical,
   Download,
-  Eye
+  Eye,
+  Trash2
 } from 'lucide-react';
+import {
+  CYLINDER_BREAK_STATUS,
+  deleteCylinderBreak,
+  formatCylinderBreakStatus,
+  getCylinderBreaks
+} from '../services/labCylinderService';
+import { openCylinderBreakPdf } from '../services/cylinderBreakPdfService';
+import LabReportCatalog from '../components/lab/LabReportCatalog';
+
+function statusColor(status) {
+  switch (status) {
+    case CYLINDER_BREAK_STATUS.APPROVED:
+      return 'bg-green-100 text-green-800';
+    case CYLINDER_BREAK_STATUS.SUBMITTED:
+      return 'bg-blue-100 text-blue-800';
+    case CYLINDER_BREAK_STATUS.RETURNED:
+      return 'bg-red-100 text-red-800';
+    default:
+      return 'bg-yellow-100 text-yellow-800';
+  }
+}
+
+// Summarise pass/fail across the cylinders that already have a break result.
+function resultSummary(report) {
+  const withResult = (report.breaks || []).filter((b) => b.result);
+  if (!withResult.length) return '—';
+  const pass = withResult.filter((b) => String(b.result).toUpperCase() === 'PASS').length;
+  return `${pass}/${withResult.length} PASS`;
+}
+
+function reportDate(report) {
+  const value = report.updatedAt || report.createdAt;
+  return value ? new Date(value).toLocaleDateString() : '—';
+}
 
 function LabReports() {
   const { projectId } = useParams();
   const navigate = useNavigate();
 
-  // Sample lab reports data
-  const [reports] = useState([
-    {
-      id: 1,
-      number: 'LR-2024-001',
-      date: '2024-05-18',
-      testType: 'Concrete Compression',
-      specimen: 'Concrete Cylinder #1-3',
-      result: '32.5 MPa',
-      status: 'Completed',
-      technician: 'Dr. Ahmed Khan',
-    },
-    {
-      id: 2,
-      number: 'LR-2024-002',
-      date: '2024-05-17',
-      testType: 'Soil Compaction',
-      specimen: 'Soil Sample - Zone A',
-      result: '95% Modified Proctor',
-      status: 'Completed',
-      technician: 'Dr. Sarah Lee',
-    },
-    {
-      id: 3,
-      number: 'LR-2024-003',
-      date: '2024-05-16',
-      testType: 'Aggregate Testing',
-      specimen: 'Coarse Aggregate',
-      result: 'Pass - Gradation OK',
-      status: 'Pending',
-      technician: 'Dr. Michael Brown',
-    },
-  ]);
+  const [allReports, setAllReports] = useState(() => getCylinderBreaks());
 
-  const getTestIcon = (testType) => {
-    switch (testType) {
-      case 'Concrete Compression':
-        return <Zap className="w-5 h-5" />;
-      case 'Soil Compaction':
-        return <Droplets className="w-5 h-5" />;
-      case 'Aggregate Testing':
-        return <TestTube className="w-5 h-5" />;
-      default:
-        return <Beaker className="w-5 h-5" />;
-    }
-  };
+  // Only show records that belong to this project, newest first.
+  const reports = useMemo(
+    () =>
+      allReports
+        .filter((report) => String(report.projectId) === String(projectId))
+        .sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0)),
+    [allReports, projectId]
+  );
 
-  const getStatusColor = (status) => {
-    switch (status) {
-      case 'Completed':
-        return 'bg-green-100 text-green-800';
-      case 'Pending':
-        return 'bg-yellow-100 text-yellow-800';
-      case 'Failed':
-        return 'bg-red-100 text-red-800';
-      default:
-        return 'bg-gray-100 text-gray-800';
-    }
-  };
+  function openReport(report) {
+    navigate(`/lab-reports/${report.id}/edit`);
+  }
+
+  function removeReport(report) {
+    if (!window.confirm('Delete this lab intelligence record?')) return;
+    deleteCylinderBreak(report.id);
+    setAllReports(getCylinderBreaks());
+  }
 
   return (
     <div className="w-full max-w-full overflow-x-hidden bg-gradient-to-br from-gray-50 to-gray-100">
@@ -93,19 +85,25 @@ function LabReports() {
                 <p className="text-slate-300 text-sm mt-1">Manage laboratory verification records and compliance documentation.</p>
               </div>
             </div>
-            <button
-              onClick={() => navigate(`/project/${projectId}/lab-reports/create`)}
-              className="flex min-h-11 w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-accent-500 to-accent-600 px-4 py-2 font-semibold text-white shadow-lg shadow-accent-950/30 transition hover:from-accent-600 hover:to-accent-700 sm:w-auto"
-            >
-              <Plus className="w-5 h-5" />
-              Create Lab Report
-            </button>
           </div>
         </div>
       </div>
 
       {/* Main Content */}
       <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
+        {/* Create a new lab record — shared catalog so this matches the
+            technician Lab Reports view. Only Cylinder Break is available today. */}
+        <div className="mb-8">
+          <h2 className="mb-3 text-lg font-bold text-gray-900">Create a lab record</h2>
+          <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-md sm:p-6">
+            <LabReportCatalog
+              navigate={navigate}
+              resolveRoute={(key) => (key === 'cylinder-break' ? `/project/${projectId}/lab-reports/create` : null)}
+            />
+          </div>
+        </div>
+
+        <h2 className="mb-3 text-lg font-bold text-gray-900">Records</h2>
         <div className="bg-white rounded-xl shadow-md overflow-hidden border border-gray-200">
           {reports.length > 0 ? (
             <>
@@ -113,68 +111,68 @@ function LabReports() {
               <table className="w-full table-fixed">
                 <thead>
                   <tr className="bg-gray-50 border-b border-gray-200">
-                    <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                      Report #
-                    </th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                      Date
-                    </th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                      Test Type
-                    </th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                      Specimen
-                    </th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                      Result
-                    </th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                      Status
-                    </th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                      Field Engineer
-                    </th>
-                    <th className="px-6 py-4 text-center text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                      Actions
-                    </th>
+                    <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Report #</th>
+                    <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Date</th>
+                    <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Set / Project</th>
+                    <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Cylinders</th>
+                    <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Result</th>
+                    <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Status</th>
+                    <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Tested By</th>
+                    <th className="px-6 py-4 text-center text-xs font-semibold text-gray-600 uppercase tracking-wider">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-200">
-                  {reports.map((report, idx) => (
-                    <tr key={idx} className="hover:bg-gray-50 transition-colors">
+                  {reports.map((report) => (
+                    <tr
+                      key={report.id}
+                      className="hover:bg-gray-50 transition-colors cursor-pointer"
+                      onClick={() => openReport(report)}
+                    >
                       <td className="px-6 py-4">
-                        <span className="font-semibold text-gray-900">{report.number}</span>
+                        <span className="font-semibold text-gray-900">{report.reportNumber}</span>
                       </td>
-                      <td className="px-6 py-4 text-sm text-gray-600">{report.date}</td>
+                      <td className="px-6 py-4 text-sm text-gray-600">{reportDate(report)}</td>
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-2 text-sm text-gray-900">
-                          {getTestIcon(report.testType)}
-                          {report.testType}
+                          <FlaskConical className="w-5 h-5 text-gray-400" />
+                          <span className="min-w-0">
+                            <span className="block font-medium">Set {report.setNumber || '—'}</span>
+                            <span className="block truncate text-xs text-gray-500">{report.projectName || 'No project linked'}</span>
+                          </span>
                         </div>
                       </td>
-                      <td className="px-6 py-4 text-sm text-gray-600">{report.specimen}</td>
+                      <td className="px-6 py-4 text-sm text-gray-600">{(report.breaks || []).length}</td>
                       <td className="px-6 py-4">
-                        <span className="font-semibold text-gray-900 text-sm">{report.result}</span>
+                        <span className="font-semibold text-gray-900 text-sm">{resultSummary(report)}</span>
                       </td>
                       <td className="px-6 py-4">
-                        <span className={`inline-flex px-3 py-1 rounded-full text-xs font-medium ${getStatusColor(report.status)}`}>
-                          {report.status}
+                        <span className={`inline-flex px-3 py-1 rounded-full text-xs font-medium ${statusColor(report.status)}`}>
+                          {formatCylinderBreakStatus(report.status)}
                         </span>
                       </td>
-                      <td className="px-6 py-4 text-sm text-gray-600">{report.technician}</td>
+                      <td className="px-6 py-4 text-sm text-gray-600">{report.technicianName || '—'}</td>
                       <td className="px-6 py-4">
-                        <div className="flex items-center justify-center gap-3">
+                        <div className="flex items-center justify-center gap-3" onClick={(e) => e.stopPropagation()}>
                           <button
+                            onClick={() => openReport(report)}
                             className="p-2 hover:bg-blue-50 rounded-lg transition-colors text-blue-600"
-                            title="View Report"
+                            title="Open record"
                           >
                             <Eye className="w-4 h-4" />
                           </button>
                           <button
+                            onClick={() => openCylinderBreakPdf(report)}
                             className="p-2 hover:bg-green-50 rounded-lg transition-colors text-green-600"
                             title="Export PDF"
                           >
                             <Download className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => removeReport(report)}
+                            className="p-2 hover:bg-red-50 rounded-lg transition-colors text-red-600"
+                            title="Delete record"
+                          >
+                            <Trash2 className="w-4 h-4" />
                           </button>
                         </div>
                       </td>
@@ -184,43 +182,55 @@ function LabReports() {
               </table>
             </div>
             <div className="space-y-4 p-4 lg:hidden">
-              {reports.map((report, idx) => (
-                <article key={idx} className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+              {reports.map((report) => (
+                <article
+                  key={report.id}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => openReport(report)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') openReport(report); }}
+                  className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm"
+                >
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div className="min-w-0">
-                      <h3 className="break-words text-lg font-bold text-gray-900">{report.number}</h3>
-                      <p className="mt-1 text-sm font-semibold text-gray-600">{report.date}</p>
+                      <h3 className="break-words text-lg font-bold text-gray-900">{report.reportNumber}</h3>
+                      <p className="mt-1 text-sm font-semibold text-gray-600">{reportDate(report)}</p>
                     </div>
-                    <span className={`inline-flex w-fit rounded-full px-3 py-1 text-xs font-medium ${getStatusColor(report.status)}`}>
-                      {report.status}
+                    <span className={`inline-flex w-fit rounded-full px-3 py-1 text-xs font-medium ${statusColor(report.status)}`}>
+                      {formatCylinderBreakStatus(report.status)}
                     </span>
                   </div>
                   <div className="mt-4 grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
                     <div>
-                      <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Test Type</p>
-                      <p className="mt-1 flex items-center gap-2 font-semibold text-gray-800">{getTestIcon(report.testType)} {report.testType}</p>
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Set / Project</p>
+                      <p className="mt-1 font-semibold text-gray-800">Set {report.setNumber || '—'}</p>
+                      <p className="truncate text-xs text-gray-500">{report.projectName || 'No project linked'}</p>
                     </div>
                     <div>
-                      <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Specimen</p>
-                      <p className="mt-1 font-semibold text-gray-800">{report.specimen}</p>
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Cylinders</p>
+                      <p className="mt-1 font-semibold text-gray-800">{(report.breaks || []).length}</p>
                     </div>
                     <div>
                       <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Result</p>
-                      <p className="mt-1 font-semibold text-gray-800">{report.result}</p>
+                      <p className="mt-1 font-semibold text-gray-800">{resultSummary(report)}</p>
                     </div>
                     <div>
-                      <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Field Engineer</p>
-                      <p className="mt-1 font-semibold text-gray-800">{report.technician}</p>
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Tested By</p>
+                      <p className="mt-1 font-semibold text-gray-800">{report.technicianName || '—'}</p>
                     </div>
                   </div>
-                  <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                    <button className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-blue-50 px-4 py-2 font-semibold text-blue-700">
+                  <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-3" onClick={(e) => e.stopPropagation()}>
+                    <button onClick={() => openReport(report)} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-blue-50 px-4 py-2 font-semibold text-blue-700">
                       <Eye className="h-4 w-4" />
-                      View Report
+                      Open
                     </button>
-                    <button className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-green-50 px-4 py-2 font-semibold text-green-700">
+                    <button onClick={() => openCylinderBreakPdf(report)} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-green-50 px-4 py-2 font-semibold text-green-700">
                       <Download className="h-4 w-4" />
-                      Export PDF
+                      PDF
+                    </button>
+                    <button onClick={() => removeReport(report)} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-red-50 px-4 py-2 font-semibold text-red-700">
+                      <Trash2 className="h-4 w-4" />
+                      Delete
                     </button>
                   </div>
                 </article>
@@ -229,18 +239,24 @@ function LabReports() {
             </>
           ) : (
             <div className="px-6 py-12 text-center">
-              <p className="text-gray-600">No concrete quality reports found</p>
+              <span className="mx-auto inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-gray-100 text-gray-400">
+                <FlaskConical className="h-6 w-6" />
+              </span>
+              <p className="mt-3 text-gray-600">No lab intelligence records yet.</p>
+              <p className="mt-1 text-sm text-gray-500">Use “Create a lab record” above to start one.</p>
             </div>
           )}
         </div>
 
         {/* Results Summary */}
-        <div className="mt-4 text-sm text-gray-600">
-          Showing <span className="font-semibold">{reports.length}</span> concrete quality reports
-        </div>
+        {reports.length > 0 && (
+          <div className="mt-4 text-sm text-gray-600">
+            Showing <span className="font-semibold">{reports.length}</span> lab intelligence record{reports.length === 1 ? '' : 's'}
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
-export default LabReports
+export default LabReports;

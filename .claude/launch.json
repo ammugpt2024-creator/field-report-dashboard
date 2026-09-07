@@ -4,8 +4,26 @@
     {
       "name": "qcore-frontend",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev", "--prefix", "frontend", "--", "--port", "5199", "--strictPort"],
+      "runtimeArgs": [
+        "run",
+        "dev",
+        "--prefix",
+        "frontend",
+        "--",
+        "--port",
+        "5199",
+        "--strictPort"
+      ],
       "port": 5199,
+      "autoPort": false
+    },
+    {
+      "name": "resume-preview",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "C:/Users/indra/AppData/Local/Temp/claude/C--Field-report-project-field-report-dashboard/05ba6c42-7b3d-40cc-9dfd-220337f4fabe/scratchpad/render/server.js"
+      ],
+      "port": 5203,
       "autoPort": false
     }
   ]

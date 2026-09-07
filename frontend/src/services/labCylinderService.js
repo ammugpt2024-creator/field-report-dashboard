@@ -5,7 +5,8 @@ const STORAGE_KEY = "qcore:lab-cylinder-breaks";
 export const CYLINDER_BREAK_STATUS = {
   DRAFT: "draft",
   SUBMITTED: "submitted",
-  APPROVED: "approved"
+  APPROVED: "approved",
+  RETURNED: "returned"
 };
 
 export const FRACTURE_TYPES = ["Type 1 - Cone", "Type 2 - Cone & Split", "Type 3 - Cone & Shear", "Type 4 - Shear", "Type 5 - Columnar", "Type 6 - Other"];
@@ -298,6 +299,9 @@ export function createCylinderBreakReport(seed = {}) {
     id: crypto.randomUUID(),
     reportNumber: `CB-${year}-${String(Date.now()).slice(-6)}`,
     status: CYLINDER_BREAK_STATUS.DRAFT,
+    // Project this record belongs to, when created from a project's Lab
+    // Intelligence workspace. Drives the project-scoped list and back nav.
+    projectId: seed.projectId != null ? String(seed.projectId) : null,
     setNumber: "",
     logId: null,
     projectName: "",
@@ -326,6 +330,42 @@ export function formatCylinderBreakStatus(status) {
   return {
     [CYLINDER_BREAK_STATUS.DRAFT]: "Draft",
     [CYLINDER_BREAK_STATUS.SUBMITTED]: "Submitted",
-    [CYLINDER_BREAK_STATUS.APPROVED]: "Approved"
+    [CYLINDER_BREAK_STATUS.APPROVED]: "Approved",
+    [CYLINDER_BREAK_STATUS.RETURNED]: "Returned"
   }[status] || "Draft";
+}
+
+export function getSubmittedLabReports() {
+  return readAll().filter((r) => r.status !== CYLINDER_BREAK_STATUS.DRAFT);
+}
+
+export function approveLabReport(id, { reviewerName = "Manager" } = {}) {
+  const rows = readAll();
+  const index = rows.findIndex((r) => String(r.id) === String(id));
+  if (index < 0) return null;
+  rows[index] = {
+    ...rows[index],
+    status: CYLINDER_BREAK_STATUS.APPROVED,
+    approvedBy: reviewerName,
+    approvedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+  writeAll(rows);
+  return rows[index];
+}
+
+export function returnLabReport(id, { reviewerName = "Manager", comments = "" } = {}) {
+  const rows = readAll();
+  const index = rows.findIndex((r) => String(r.id) === String(id));
+  if (index < 0) return null;
+  rows[index] = {
+    ...rows[index],
+    status: CYLINDER_BREAK_STATUS.RETURNED,
+    returnedBy: reviewerName,
+    returnedAt: new Date().toISOString(),
+    returnComments: comments,
+    updatedAt: new Date().toISOString()
+  };
+  writeAll(rows);
+  return rows[index];
 }

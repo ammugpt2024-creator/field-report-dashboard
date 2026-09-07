@@ -219,13 +219,20 @@ export function filterDailyLogsForAccess(logs, access = {}) {
 
     const logProjectId = log.projectId ?? log.project_id ?? null;
     const logProjectName = normalizeComparable(log.projectName || log.project_name);
+    const hasProjectConstraint = projectId != null || Boolean(projectName);
+    // A log with no project of its own (e.g. one a manager just created) should
+    // not be excluded by the project gate — ownership below decides who sees it,
+    // mirroring how companyMatches/userMatches pass when that data is absent.
+    const hasLogProject = logProjectId != null || Boolean(logProjectName);
     const hasProjectIds = logProjectId != null && projectId != null;
     const hasProjectNames = Boolean(logProjectName && projectName);
     const projectIdMatches = hasProjectIds && String(logProjectId) === String(projectId);
     const projectNameMatches = hasProjectNames && logProjectName === projectName;
-    const projectMatches = hasProjectIds && hasProjectNames
-      ? projectIdMatches && projectNameMatches
-      : projectIdMatches || projectNameMatches;
+    const projectMatches = !hasProjectConstraint || !hasLogProject || (
+      hasProjectIds && hasProjectNames
+        ? projectIdMatches && projectNameMatches
+        : projectIdMatches || projectNameMatches
+    );
 
     const assignedUserIds = Array.isArray(log.assignedUserIds) ? log.assignedUserIds.map(String) : [];
     const assignedUserNames = Array.isArray(log.assignedUserNames) ? log.assignedUserNames.map(normalizeComparable) : [];
@@ -250,7 +257,15 @@ export function filterDailyLogsForAccess(logs, access = {}) {
       userName && (ownerNames.includes(userName) || assignedUserNames.includes(userName))
     );
 
-    return companyMatches && projectMatches && userMatches;
+    // A user always sees logs they created/own/are assigned to, regardless of
+    // the workspace's defaulted project context. Without this, a log a manager
+    // just created (stamped with the default project) is hidden when that
+    // project doesn't match their current context, leaving a blank editor page.
+    const ownedByUser =
+      (userId && (ownerIds.includes(String(userId)) || assignedUserIds.includes(String(userId)))) ||
+      (userName && (ownerNames.includes(userName) || assignedUserNames.includes(userName)));
+
+    return ownedByUser || (companyMatches && projectMatches && userMatches);
   });
 }
 

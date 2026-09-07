@@ -36,6 +36,9 @@ import TimesheetsPage from "./pages/TimesheetsPage";
 import TimeOff from "./pages/TimeOff";
 import ProjectWorkspace from "./pages/ProjectWorkspace";
 import FieldReports from "./pages/FieldReports";
+import FieldReportCreate from "./pages/FieldReportCreate";
+import ProjectsList from "./pages/ProjectsList";
+import InspectionWorkflows from "./pages/InspectionWorkflows";
 import LabReports from "./pages/LabReports";
 import ConcreteTestLog from "./pages/ConcreteTestLog";
 import ConcreteTestLogDetails from "./pages/ConcreteTestLogDetails";
@@ -364,6 +367,11 @@ function App() {
         />
 
         <Route
+          path="/projects"
+          element={<RequireRole roles={MANAGER_ROLES}><ProjectsList /></RequireRole>}
+        />
+
+        <Route
           path="/project/:projectId"
           element={<ProjectWorkspace />}
         />
@@ -374,8 +382,33 @@ function App() {
         />
 
         <Route
+          path="/project/:projectId/field-reports/create"
+          element={<FieldReportCreate />}
+        />
+
+        <Route
           path="/project/:projectId/lab-reports"
           element={<LabReports />}
+        />
+
+        <Route
+          path="/project/:projectId/lab-reports/create"
+          element={<CylinderBreakReport />}
+        />
+
+        <Route
+          path="/lab-reports/:reportId/edit"
+          element={<CylinderBreakReport />}
+        />
+
+        <Route
+          path="/project/:projectId/inspections"
+          element={<InspectionWorkflows />}
+        />
+
+        <Route
+          path="/project/:projectId/inspections/create"
+          element={<InspectionWorkflows />}
         />
 
         <Route
