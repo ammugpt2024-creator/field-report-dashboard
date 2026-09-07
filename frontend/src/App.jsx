@@ -48,6 +48,7 @@ import DailyLogReview from "./pages/DailyLogReview";
 import PlatformAdminDashboard from "./pages/PlatformAdminDashboard";
 import CompanyDetail from "./pages/CompanyDetail";
 import CompanyAdminDashboard from "./pages/CompanyAdminDashboard";
+import RolesPermissions from "./pages/RolesPermissions";
 import AcceptInvite from "./pages/AcceptInvite";
 import ResetPassword from "./pages/ResetPassword";
 
@@ -344,6 +345,11 @@ function App() {
         <Route
           path="/company-admin"
           element={<RequireCompanyAdmin><CompanyAdminDashboard /></RequireCompanyAdmin>}
+        />
+
+        <Route
+          path="/roles"
+          element={<RequireCompanyAdmin><RolesPermissions /></RequireCompanyAdmin>}
         />
 
         <Route
