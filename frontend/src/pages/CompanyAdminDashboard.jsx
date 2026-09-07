@@ -74,15 +74,17 @@ const MODULES = [
   { key: "field_test_reports", label: "Field Test Reports", icon: FileText },
   { key: "lab_reports", label: "Lab Reports", icon: FileText }
 ];
-// Procore-style permission levels per tool.
+// Levels are named for what they let someone do. "Admin" was misleading here:
+// it grants approval rights over other people's records, not administrative
+// rights over the company. Kept in step with pages/RolesPermissions.jsx.
 const MODULE_LEVELS = [
-  { value: "none", label: "None" },
-  { value: "view", label: "Read Only" },
-  { value: "create_edit", label: "Standard" },
-  { value: "manage", label: "Admin" }
+  { value: "none", label: "No Access" },
+  { value: "view", label: "View Only" },
+  { value: "create_edit", label: "Create & Edit" },
+  { value: "manage", label: "Approve & Manage" }
 ];
 // Legacy "approve" still ranks below manage for enforcement, and displays as Admin.
-const LEVEL_LABELS = { none: "None", view: "Read Only", create_edit: "Standard", approve: "Admin", manage: "Admin" };
+const LEVEL_LABELS = { none: "No Access", view: "View Only", create_edit: "Create & Edit", approve: "Approve & Manage", manage: "Approve & Manage" };
 const moduleLevelLabel = (v) => LEVEL_LABELS[v] || "None";
 const LEVEL_ORDER = ["none", "view", "create_edit", "approve", "manage"];
 // A member only truly counts as active once they've claimed their invite (have a

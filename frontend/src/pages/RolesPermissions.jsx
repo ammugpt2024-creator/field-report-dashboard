@@ -15,13 +15,16 @@ const TOOLS = [
   { key: "lab_reports", label: "Lab Reports", blurb: "Laboratory results and verification" }
 ];
 
-// Procore-style ladder. "approve" is a legacy value that still ranks below
-// manage for enforcement; it is shown and saved as Admin.
+// Levels are named for what they let someone do, not for a rank. "Admin" in
+// particular was misleading: it grants approval rights over other people's
+// records, not administrative rights over the company. "approve" is a legacy
+// value that still ranks below manage for enforcement; it is shown and saved
+// as the top level.
 const LEVELS = [
-  { value: "none", label: "None", hint: "No access — the tool is hidden" },
-  { value: "view", label: "Read Only", hint: "Can open and read records" },
-  { value: "create_edit", label: "Standard", hint: "Can create, edit, and submit their own records" },
-  { value: "manage", label: "Admin", hint: "Full control — see all, approve or return, manage" }
+  { value: "none", label: "No Access", hint: "The tool is hidden for this role" },
+  { value: "view", label: "View Only", hint: "Can open and read records, but not change them" },
+  { value: "create_edit", label: "Create & Edit", hint: "Can create, edit, and submit their own records" },
+  { value: "manage", label: "Approve & Manage", hint: "Can see everyone's records, approve or return them, and manage the tool" }
 ];
 
 const normalize = (v) => (v === "approve" ? "manage" : v || "none");
