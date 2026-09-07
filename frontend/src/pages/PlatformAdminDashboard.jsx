@@ -285,11 +285,16 @@ export default function PlatformAdminDashboard() {
       window.alert("This company is active. Suspend or cancel it first, then delete.");
       return;
     }
+    // Stored names can carry stray leading/trailing whitespace, invisible in
+    // the table, which made the typed name never match and blocked deletion
+    // with no way for the admin to see why. Compare on the trimmed value.
+    const expectedName = String(company.company_name || "").trim();
     const typed = window.prompt(
-      `PERMANENTLY delete ${company.company_name}?\n\nFull clean sweep: every project, daily log, field test report, timesheet, uploaded file, and user account belonging to this company will be destroyed. This cannot be undone.\n\nType the company name to confirm:`
+      `PERMANENTLY delete ${expectedName}?\n\nFull clean sweep: every project, daily log, field test report, timesheet, uploaded file, and user account belonging to this company will be destroyed. This cannot be undone.\n\nType the company name to confirm:`
     );
-    if (typed !== company.company_name) {
-      if (typed !== null) window.alert("Name did not match — nothing was deleted.");
+    if (typed === null) return;
+    if (typed.trim() !== expectedName) {
+      window.alert("Name did not match — nothing was deleted.");
       return;
     }
     try {

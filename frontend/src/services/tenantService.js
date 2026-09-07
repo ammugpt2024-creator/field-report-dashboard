@@ -47,15 +47,20 @@ export async function createCompany({
   brandColor = '#1d4ed8',
   status = 'trial'
 }) {
+  // Trim before persisting: invisible whitespace in company_name made the
+  // delete confirmation unsatisfiable, and whitespace in the contact email
+  // stops claim_company_invite() from ever matching the invited address.
+  const cleanName = String(companyName || '').trim();
+  const cleanEmail = String(primaryContactEmail || '').trim().toLowerCase();
   const { data: company, error } = await supabase
     .from('companies')
     .insert({
-      company_name: companyName,
-      legal_name: legalName || companyName,
-      primary_contact_name: primaryContactName || '',
-      primary_contact_email: primaryContactEmail || '',
-      phone: phone || '',
-      address: address || '',
+      company_name: cleanName,
+      legal_name: String(legalName || '').trim() || cleanName,
+      primary_contact_name: String(primaryContactName || '').trim(),
+      primary_contact_email: cleanEmail,
+      phone: String(phone || '').trim(),
+      address: String(address || '').trim(),
       brand_color: brandColor,
       status
     })
@@ -70,16 +75,16 @@ export async function createCompany({
   if (settingsRes.error) console.warn('Company settings could not be created.', settingsRes.error.message);
   if (subscriptionRes.error) console.warn('Subscription could not be created.', subscriptionRes.error.message);
 
-  if (primaryContactEmail) {
+  if (cleanEmail) {
     const { error: inviteError } = await supabase.from('company_users').insert({
       company_id: company.id,
-      invited_email: primaryContactEmail,
-      full_name: primaryContactName || '',
+      invited_email: cleanEmail,
+      full_name: String(primaryContactName || '').trim(),
       role: 'company_admin',
       status: 'invited'
     });
     if (inviteError) console.warn('Company admin invite could not be recorded.', inviteError.message);
-    sendInviteEmail(company.id, primaryContactEmail, primaryContactName);
+    sendInviteEmail(company.id, cleanEmail, String(primaryContactName || '').trim());
   }
 
   logAuditEvent({
@@ -394,9 +399,11 @@ export async function setMemberRole(member, nextRole) {
 }
 
 export async function inviteMember(companyId, { email, fullName, role }) {
+  // Same reason as createCompany: a stray space here breaks invite claiming.
+  const cleanEmail = String(email || '').trim().toLowerCase();
   const { data, error } = await supabase
     .from('company_users')
-    .insert({ company_id: companyId, invited_email: email, full_name: fullName || '', role, status: 'invited' })
+    .insert({ company_id: companyId, invited_email: cleanEmail, full_name: String(fullName || '').trim(), role, status: 'invited' })
     .select()
     .single();
   if (error) throw error;
@@ -407,7 +414,7 @@ export async function inviteMember(companyId, { email, fullName, role }) {
     entityId: data.id,
     newValue: { email, role }
   });
-  const delivery = await sendInviteEmail(companyId, email, fullName);
+  const delivery = await sendInviteEmail(companyId, cleanEmail, String(fullName || '').trim());
   return { ...data, emailSent: delivery.ok, emailError: delivery.error, existing: delivery.existing };
 }
 
