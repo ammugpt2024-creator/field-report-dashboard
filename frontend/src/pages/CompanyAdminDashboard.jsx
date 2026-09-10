@@ -953,6 +953,11 @@ export default function CompanyAdminDashboard() {
                         <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400" />
                         {roles.find((r) => r.id === invite.roleId)?.description || ROLE_CATALOG[roles.find((r) => r.id === invite.roleId)?.base_role]?.blurb}
                       </p>
+                      {roles.find((r) => r.id === invite.roleId) && (
+                        <p className="mt-1.5 rounded-lg bg-slate-50 px-2.5 py-1.5 text-xs font-semibold text-slate-600">
+                          {summarizePerms(roles.find((r) => r.id === invite.roleId).permissions)}
+                        </p>
+                      )}
                     </div>
 
                     <div className="flex items-start gap-2 rounded-xl bg-slate-50 p-3 text-xs font-medium text-slate-500">
@@ -1405,6 +1410,7 @@ function ManageProjectModal({ project, company, roster, roles, assignments, onCl
 function ManageMemberModal({ member, company, projects, roles, assignments, onClose, onChanged, onRemoved }) {
   const [name, setName] = useState(member.full_name || "");
   const [roleId, setRoleId] = useState(member.role_id || "");
+  const selectedRole = roles.find((r) => r.id === roleId) || null;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [addProjectId, setAddProjectId] = useState("");
@@ -1469,6 +1475,12 @@ function ManageMemberModal({ member, company, projects, roles, assignments, onCl
               </select></label>
           </div>
           <p className="mt-1.5 text-xs font-medium text-slate-400">Their job across the company (decides which app they sign in to). Per-project module access is set separately below.</p>
+          {/* Without this, a role is just a name — nobody can tell what picking it grants. */}
+          {selectedRole && (
+            <p className="mt-1.5 rounded-lg bg-slate-50 px-2.5 py-1.5 text-xs font-semibold text-slate-600">
+              {summarizePerms(selectedRole.permissions)}
+            </p>
+          )}
           <div className="mt-2 flex flex-wrap gap-2">
             <button type="button" onClick={saveDetails} disabled={busy} className="inline-flex min-h-9 items-center rounded-lg bg-blue-700 px-3 text-xs font-bold text-white hover:bg-blue-800 disabled:opacity-60">Save details</button>
             <SmallButton onClick={toggleStatus} disabled={busy} className={member.status === "disabled" ? "" : "border-amber-200 text-amber-700 hover:bg-amber-50"}>
