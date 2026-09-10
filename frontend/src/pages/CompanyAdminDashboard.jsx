@@ -1451,7 +1451,27 @@ function ManageMemberModal({ member, company, projects, roles, assignments, onCl
   }
 
   async function saveDetails() {
-    await run(() => updateMemberDetails(member, { full_name: name, roleId: roleId || undefined }));
+    const changingRole = roleId && roleId !== member.role_id;
+    const nextRole = roles.find((r) => r.id === roleId);
+    // Existing assignments keep the permissions they were given, which after a
+    // role change can leave someone holding rights their new role would never
+    // grant. Offer to bring them into line rather than doing it silently -- a
+    // per-project override is sometimes deliberate.
+    const resync = changingRole && nextRole && assignments.length > 0 && window.confirm(
+      `${member.full_name || member.invited_email} has ${assignments.length} project ` +
+      `${assignments.length === 1 ? "assignment" : "assignments"} using the permissions of their old role.` +
+      `\n\nUpdate ${assignments.length === 1 ? "it" : "them"} to match "${nextRole.name}"?` +
+      `\n\nChoose Cancel to save the role and leave project permissions untouched.`
+    );
+    await run(async () => {
+      await updateMemberDetails(member, { full_name: name, roleId: roleId || undefined });
+      if (resync) {
+        const perms = fullPerms(nextRole.permissions);
+        for (const a of assignments) {
+          await updateAssignmentPermissions(company.id, a.id, perms);
+        }
+      }
+    });
   }
   async function toggleStatus() {
     await run(() => setMemberStatus(member, member.status === "disabled" ? "active" : "disabled"));
