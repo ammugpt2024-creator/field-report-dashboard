@@ -3996,34 +3996,19 @@ export default function FieldEngineerWorkspace({
     String(profile?.role || "").toLowerCase().includes("office")
   );
 
+  // Show the logs that exist and nothing more. This used to save a blank
+  // starter draft whenever the list was empty, which put an entry in "Action
+  // required" that the technician never wrote. Creating a log is an explicit
+  // act -- "Start today's Daily Log" -- and opening the editor with none saved
+  // still scaffolds an unsaved one further down.
   useEffect(() => {
     const logs = getDailyLogs();
-    if (logs.length) {
-      setDailyLogs(logs);
-      if (activeDailyLogId) {
-        const matchedLog = logs.find((log) => log.id === activeDailyLogId);
-        if (matchedLog) setActiveLog(matchedLog);
-      }
-      return;
+    setDailyLogs(logs);
+    if (activeDailyLogId) {
+      const matchedLog = logs.find((log) => log.id === activeDailyLogId);
+      if (matchedLog) setActiveLog(matchedLog);
     }
-    // Only mint a starter draft for someone who could actually have written
-    // one. Doing it unconditionally gave every technician a phantom entry in
-    // "Action required" the first time they opened the app -- including people
-    // with no daily-log access and no project to attach a log to.
-    if (!canCreateDailyLog || !defaultProjectId) {
-      setDailyLogs([]);
-      return;
-    }
-    const starter = saveDailyLog(createDailyLog({
-      projectLabel,
-      defaultProjectId,
-      technicianName: profile?.full_name || "Field Technician",
-      companyId: profile?.company_id || profile?.organization_id || null,
-      companyName,
-      userId: userId || profile?.id || null
-    }));
-    setDailyLogs([starter]);
-  }, [activeDailyLogId, canCreateDailyLog, companyName, defaultProjectId, profile?.company_id, profile?.full_name, profile?.id, profile?.organization_id, projectLabel, userId]);
+  }, [activeDailyLogId]);
 
   useEffect(() => {
     const cards = getTimeCards();
