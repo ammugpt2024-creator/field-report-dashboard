@@ -110,6 +110,15 @@ function defaultPermsForRole(companyRole) {
   return fullPerms(map[companyRole] || {});
 }
 
+// What a new project assignment starts from: the permissions on the person's
+// own company role, which an admin can edit on the Roles screen. The map above
+// is only the fallback for legacy rows that predate role_id — reading it
+// directly would ignore any change made to the role itself.
+function permsForMember(member, roles) {
+  const role = (roles || []).find((r) => r.id === member?.role_id);
+  return role ? fullPerms(role.permissions) : defaultPermsForRole(member?.role);
+}
+
 // A permissions object covering every module (missing modules default to none).
 // Legacy "approve" is normalized to "manage" (Admin) for the 4-level UI.
 function fullPerms(partial = {}) {
@@ -1366,7 +1375,7 @@ function ManageProjectModal({ project, company, roster, roles, assignments, onCl
                   const uid = e.target.value;
                   setAddUserId(uid);
                   setAddTemplateId("");
-                  setAddPerms(uid ? defaultPermsForRole(roster.find((m) => m.user_id === uid)?.role) : fullPerms());
+                  setAddPerms(uid ? permsForMember(roster.find((m) => m.user_id === uid), roles) : fullPerms());
                 }}
                 className="mt-1 min-h-10 w-full rounded-lg border border-slate-300 bg-white px-2 text-sm font-semibold"
               >
@@ -1428,7 +1437,7 @@ function ManageMemberModal({ member, company, projects, roles, assignments, onCl
   const [error, setError] = useState("");
   const [addProjectId, setAddProjectId] = useState("");
   const [addTemplateId, setAddTemplateId] = useState("");
-  const [addPerms, setAddPerms] = useState(() => defaultPermsForRole(member.role));
+  const [addPerms, setAddPerms] = useState(() => permsForMember(member, roles));
   const [editingId, setEditingId] = useState("");
 
   const assignedProjectIds = new Set(assignments.map((a) => a.project_id));
@@ -1456,7 +1465,7 @@ function ManageMemberModal({ member, company, projects, roles, assignments, onCl
   async function addAssignment() {
     if (!addProjectId) { setError("Select a project first, then click Add."); return; }
     await run(() => assignUserToProject(company.id, Number(addProjectId), member.user_id, deriveAssignmentRole(roles.find((r) => r.id === roleId)?.base_role || member.role), headlineAccessLevel(addPerms), addPerms));
-    setAddProjectId(""); setAddTemplateId(""); setAddPerms(defaultPermsForRole(member.role));
+    setAddProjectId(""); setAddTemplateId(""); setAddPerms(permsForMember(member, roles));
   }
 
   return (
