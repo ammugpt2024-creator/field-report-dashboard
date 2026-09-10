@@ -485,6 +485,7 @@ export default function CompanyAdminDashboard() {
 
   async function submitProject(event) {
     event.preventDefault();
+    setError("");
     // Pull the team selections out of the form state — they live on separate
     // tables (projects.project_manager_* + project_assignments), not on projects' columns.
     const { _pmUserId, _pmAccess, _dpmUserId, _dpmAccess, _technicianIds, _technicianAccess, ...projectFields } = newProject;
@@ -1052,7 +1053,7 @@ export default function CompanyAdminDashboard() {
           <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/60 sm:items-center sm:p-4">
             <form onSubmit={submitProject} className="w-full max-w-lg rounded-t-3xl bg-white p-4 shadow-2xl sm:rounded-3xl sm:p-6">
               <div className="flex items-center justify-between"><h3 className="text-lg font-bold">Add Project</h3>
-                <button type="button" onClick={() => setNewProject(null)} className="rounded-full border border-slate-200 p-2"><X className="h-4 w-4" /></button></div>
+                <button type="button" onClick={() => { setError(""); setNewProject(null); }} className="rounded-full border border-slate-200 p-2"><X className="h-4 w-4" /></button></div>
               <div className="mt-3 space-y-3">
                 {[["project_name", "Project Name *"], ["project_number", "Project Number *"], ["client_name", "Client *"], ["project_location", "Location"]].map(([key, label]) => (
                   <label key={key} className="block"><span className="text-xs font-bold uppercase text-slate-500">{label}</span>
@@ -1118,8 +1119,11 @@ export default function CompanyAdminDashboard() {
                   {!assignableMembers.length && <p className="mt-2 text-xs font-medium text-amber-600">Team members appear here once they've accepted their invite and signed in.</p>}
                 </div>
               </div>
+              {error && (
+                <p className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">{error}</p>
+              )}
               <div className="mt-4 grid grid-cols-2 gap-2">
-                <button type="button" onClick={() => setNewProject(null)} className="min-h-11 rounded-xl border border-slate-300 text-sm font-bold text-slate-700">Cancel</button>
+                <button type="button" onClick={() => { setError(""); setNewProject(null); }} className="min-h-11 rounded-xl border border-slate-300 text-sm font-bold text-slate-700">Cancel</button>
                 <button type="submit" className="min-h-11 rounded-xl bg-blue-700 text-sm font-bold text-white">Add Project</button>
               </div>
             </form>
