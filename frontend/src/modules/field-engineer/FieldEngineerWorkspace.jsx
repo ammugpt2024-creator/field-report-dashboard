@@ -4006,6 +4006,14 @@ export default function FieldEngineerWorkspace({
       }
       return;
     }
+    // Only mint a starter draft for someone who could actually have written
+    // one. Doing it unconditionally gave every technician a phantom entry in
+    // "Action required" the first time they opened the app -- including people
+    // with no daily-log access and no project to attach a log to.
+    if (!canCreateDailyLog || !defaultProjectId) {
+      setDailyLogs([]);
+      return;
+    }
     const starter = saveDailyLog(createDailyLog({
       projectLabel,
       defaultProjectId,
@@ -4015,7 +4023,7 @@ export default function FieldEngineerWorkspace({
       userId: userId || profile?.id || null
     }));
     setDailyLogs([starter]);
-  }, [activeDailyLogId, companyName, defaultProjectId, profile?.company_id, profile?.full_name, profile?.id, profile?.organization_id, projectLabel, userId]);
+  }, [activeDailyLogId, canCreateDailyLog, companyName, defaultProjectId, profile?.company_id, profile?.full_name, profile?.id, profile?.organization_id, projectLabel, userId]);
 
   useEffect(() => {
     const cards = getTimeCards();
