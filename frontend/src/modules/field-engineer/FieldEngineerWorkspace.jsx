@@ -4059,13 +4059,30 @@ export default function FieldEngineerWorkspace({
   useEffect(() => {
     // Same pattern for daily logs: restore logs submitted from another device
     // and merge approve/return decisions made on the manager's machine.
+    let cancelled = false;
     async function syncDailyLogsFromDatabase() {
       const changed = await syncDailyLogsFromSupabase({ userId: userId || profile?.id });
-      if (changed) setDailyLogs(getDailyLogs());
+      if (!cancelled && changed) setDailyLogs(getDailyLogs());
     }
     syncDailyLogsFromDatabase();
+
+    // A manager approves or returns a log while this workspace is already
+    // open. Syncing only on mount left the technician looking at their stale
+    // local copy -- a returned log stayed under Submitted and the Returned tab
+    // sat empty -- until a full page reload. Re-sync when they move between
+    // views and when the tab regains focus.
+    function resync() {
+      if (document.visibilityState === "visible") syncDailyLogsFromDatabase();
+    }
+    window.addEventListener("focus", resync);
+    document.addEventListener("visibilitychange", resync);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", resync);
+      document.removeEventListener("visibilitychange", resync);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [currentView]);
 
   useEffect(() => {
     if (currentView !== "create-daily-log" && currentView !== "daily-logs") return;
