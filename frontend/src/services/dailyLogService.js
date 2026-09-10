@@ -980,10 +980,19 @@ export async function updateDailyLogReviewInSupabase(log) {
   const numericId = log.supabaseDailyLogId || log.supabase_daily_log_id;
   let query = supabase.from("daily_logs").update(patch);
   query = numericId ? query.eq("id", numericId) : query.eq("client_log_id", String(log.id));
-  const { error } = await query;
+  // .select() so we can tell a blocked write from a successful one: Postgres
+  // does not error when RLS filters an UPDATE, it just matches no rows, and
+  // PostgREST reports that as success. A decision that silently changed
+  // nothing looked saved on screen while the log stayed submitted for
+  // everyone else.
+  const { data, error } = await query.select("id");
   if (error) {
     console.error("Daily log review update failed", error);
     throw new Error("The review decision could not be saved to the server. Please try again.");
+  }
+  if (!Array.isArray(data) || data.length === 0) {
+    console.error("Daily log review update matched no rows", { numericId, clientLogId: log.id });
+    throw new Error("You do not have permission to record a decision on this daily log, so nothing was saved. Ask an administrator to check your access.");
   }
 }
 
