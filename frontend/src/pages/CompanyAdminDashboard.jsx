@@ -25,6 +25,7 @@ import {
   createRole,
   updateRole,
   deleteRole,
+  countRoleHolders,
   updateCompanyProfile,
   updateCompanyRow,
   listSupportRequests,
@@ -404,7 +405,19 @@ export default function CompanyAdminDashboard() {
   }
 
   async function removeRoleFn(role) {
-    if (!window.confirm(`Delete the "${role.name}" role template?`)) return;
+    // Same rules as the Roles & Permissions screen: an admin may delete any
+    // role, but not the last one that can make somebody an admin.
+    const base = role.base_role || "viewer";
+    if (base === "company_admin" &&
+        roles.filter((r) => (r.base_role || "viewer") === "company_admin").length <= 1) {
+      window.alert("This is the only Company Admin role. Create another one first, or nobody could be made an admin.");
+      return;
+    }
+    const holders = await countRoleHolders(role.id);
+    const heldBy = holders
+      ? `\n\n${holders} ${holders === 1 ? "person holds" : "people hold"} this role and will need another one.`
+      : "";
+    if (!window.confirm(`Delete the "${role.name}" role?${heldBy}`)) return;
     try { await deleteRole(company.id, role.id); await refresh(); }
     catch (err) { window.alert(err.message); }
   }

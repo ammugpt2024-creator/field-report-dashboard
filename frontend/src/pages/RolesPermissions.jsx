@@ -3,7 +3,7 @@ import {
   ShieldCheck, Plus, Trash2, Copy, Save, Loader2, AlertCircle, Check, X, Search
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
-import { listRoles, createRole, updateRole, deleteRole } from "../services/tenantService";
+import { listRoles, createRole, updateRole, deleteRole, countRoleHolders } from "../services/tenantService";
 
 // The tools a role can grant access to. Deliberately the same four keys the rest
 // of the app enforces (utils/moduleAccess.MODULE_KEYS) — listing anything else
@@ -190,9 +190,24 @@ function RolesPermissions() {
   }
 
   async function remove() {
-    if (!draft.id || draft.is_system) return;
+    if (!draft.id) return;
+    const base = draft.base_role || DEFAULT_BASE;
+    // Deleting the last company_admin role would leave no way to appoint
+    // another admin from the employee picker, so this one is refused.
+    const lastAdminRole = base === "company_admin" &&
+      roles.filter((r) => (r.base_role || DEFAULT_BASE) === "company_admin").length <= 1;
+    if (lastAdminRole) {
+      setError("This is the only Company Admin role. Create another one first, or nobody could be made an admin.");
+      return;
+    }
+    setBusy(true); setError(""); setNotice("");
+    const holders = await countRoleHolders(draft.id);
+    setBusy(false);
+    const heldBy = holders
+      ? `\n\n${holders} ${holders === 1 ? "person holds" : "people hold"} this role. They keep the access they have now, but will show as "${baseLabel(base)}" until you give them another role.`
+      : "";
     if (!window.confirm(
-      `Delete the role "${draft.name}"?\n\nPeople already assigned to projects keep the access they were given — this only removes the template.`
+      `Delete the role "${draft.name}"?${heldBy}\n\nPeople already assigned to projects keep the access they were given — this only removes the role.`
     )) return;
     setBusy(true); setError(""); setNotice("");
     try {
@@ -427,7 +442,7 @@ function RolesPermissions() {
                       <Copy className="h-4 w-4" /> Duplicate
                     </button>
                   )}
-                  {!isNew && !draft.is_system && (
+                  {!isNew && (
                     <button
                       type="button" onClick={remove} disabled={busy}
                       className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-rose-200 px-4 text-sm font-bold text-rose-700 hover:bg-rose-50 disabled:opacity-50"

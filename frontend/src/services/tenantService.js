@@ -608,6 +608,17 @@ export async function updateRole(companyId, roleId, { name, description, permiss
   logAuditEvent({ companyId, action: 'role_updated', entityType: 'role', entityId: roleId, newValue: { name, permissions, base_role: baseRole } });
 }
 
+// How many people currently hold this role. Deleting is still allowed — the
+// admin just gets to see who it lands on first.
+export async function countRoleHolders(roleId) {
+  const { count, error } = await supabase
+    .from('company_users')
+    .select('id', { count: 'exact', head: true })
+    .eq('role_id', roleId);
+  if (error) { console.warn('Role holders could not be counted.', error.message); return null; }
+  return count || 0;
+}
+
 export async function deleteRole(companyId, roleId) {
   const { error } = await supabase.from('roles').delete().eq('id', roleId);
   if (error) throw error;
