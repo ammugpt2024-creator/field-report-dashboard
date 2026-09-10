@@ -382,10 +382,13 @@ export async function updateCompanyProfile(companyId, patch, previous = {}) {
   });
 }
 
-export async function setMemberRole(member, nextRole) {
+// Takes a company-defined role id. `role` is deliberately not sent: a database
+// trigger sets it from the role's base_role, so the column RLS reads can never
+// drift from the role actually assigned.
+export async function setMemberRole(member, nextRoleId) {
   const { error } = await supabase
     .from('company_users')
-    .update({ role: nextRole, updated_at: new Date().toISOString() })
+    .update({ role_id: nextRoleId, updated_at: new Date().toISOString() })
     .eq('id', member.id);
   if (error) throw error;
   logAuditEvent({
@@ -393,17 +396,18 @@ export async function setMemberRole(member, nextRole) {
     action: 'user_role_changed',
     entityType: 'company_user',
     entityId: member.id,
-    oldValue: { role: member.role },
-    newValue: { role: nextRole }
+    oldValue: { role_id: member.role_id, role: member.role },
+    newValue: { role_id: nextRoleId }
   });
 }
 
-export async function inviteMember(companyId, { email, fullName, role }) {
+export async function inviteMember(companyId, { email, fullName, roleId }) {
   // Same reason as createCompany: a stray space here breaks invite claiming.
   const cleanEmail = String(email || '').trim().toLowerCase();
+  // `role` is set by the trigger from the role's base_role — see setMemberRole.
   const { data, error } = await supabase
     .from('company_users')
-    .insert({ company_id: companyId, invited_email: cleanEmail, full_name: String(fullName || '').trim(), role, status: 'invited' })
+    .insert({ company_id: companyId, invited_email: cleanEmail, full_name: String(fullName || '').trim(), role_id: roleId, status: 'invited' })
     .select()
     .single();
   if (error) throw error;
@@ -412,7 +416,7 @@ export async function inviteMember(companyId, { email, fullName, role }) {
     action: 'user_invited',
     entityType: 'company_user',
     entityId: data.id,
-    newValue: { email, role }
+    newValue: { email, role_id: roleId }
   });
   const delivery = await sendInviteEmail(companyId, cleanEmail, String(fullName || '').trim());
   return { ...data, emailSent: delivery.ok, emailError: delivery.error, existing: delivery.existing };
@@ -450,19 +454,20 @@ export async function setMemberStatus(member, nextStatus) {
 }
 
 // Edit an employee's basic details (name + role) in one call.
-export async function updateMemberDetails(member, { full_name, role }) {
-  const { error } = await supabase
-    .from('company_users')
-    .update({ full_name, role, updated_at: new Date().toISOString() })
-    .eq('id', member.id);
+// role_id names the company-defined role; the trigger derives `role` from its
+// base_role, so this never writes the security-facing column directly.
+export async function updateMemberDetails(member, { full_name, roleId }) {
+  const patch = { full_name, updated_at: new Date().toISOString() };
+  if (roleId) patch.role_id = roleId;
+  const { error } = await supabase.from('company_users').update(patch).eq('id', member.id);
   if (error) throw error;
   logAuditEvent({
     companyId: member.company_id,
     action: 'user_updated',
     entityType: 'company_user',
     entityId: member.id,
-    oldValue: { full_name: member.full_name, role: member.role },
-    newValue: { full_name, role }
+    oldValue: { full_name: member.full_name, role_id: member.role_id, role: member.role },
+    newValue: { full_name, role_id: roleId }
   });
 }
 
@@ -571,28 +576,36 @@ export async function updateAssignmentReviewer(companyId, assignmentId, reviewer
   logAuditEvent({ companyId, action: 'project_assignment_updated', entityType: 'project_assignment', entityId: assignmentId, newValue: { reviewerUserId } });
 }
 
-// ── Role templates (company-level reusable permission presets) ───────────────
+// ── Company-defined roles (name + base type + module permissions) ────────────
+// base_role is the built-in a role behaves like. Companies own the name and
+// the permissions; RLS and sign-in routing read company_users.role, which the
+// database keeps equal to the chosen role's base_role.
 export async function listRoles() {
   const { data, error } = await supabase.from('roles').select('*').order('name');
   if (error) { console.warn('Roles could not be loaded.', error.message); return []; }
   return data || [];
 }
 
-export async function createRole(companyId, { name, description, permissions }) {
+export async function createRole(companyId, { name, description, permissions, baseRole }) {
   const { data, error } = await supabase
-    .from('roles').insert({ name, description: description || '', permissions: permissions || {} })
+    .from('roles').insert({
+      name,
+      description: description || '',
+      permissions: permissions || {},
+      base_role: baseRole || 'viewer'
+    })
     .select().single();
   if (error) throw error;
-  logAuditEvent({ companyId, action: 'role_created', entityType: 'role', entityId: data.id, newValue: { name, permissions } });
+  logAuditEvent({ companyId, action: 'role_created', entityType: 'role', entityId: data.id, newValue: { name, permissions, base_role: baseRole } });
   return data;
 }
 
-export async function updateRole(companyId, roleId, { name, description, permissions }) {
-  const { error } = await supabase
-    .from('roles').update({ name, description: description || '', permissions: permissions || {} })
-    .eq('id', roleId);
+export async function updateRole(companyId, roleId, { name, description, permissions, baseRole }) {
+  const patch = { name, description: description || '', permissions: permissions || {} };
+  if (baseRole) patch.base_role = baseRole;
+  const { error } = await supabase.from('roles').update(patch).eq('id', roleId);
   if (error) throw error;
-  logAuditEvent({ companyId, action: 'role_updated', entityType: 'role', entityId: roleId, newValue: { name, permissions } });
+  logAuditEvent({ companyId, action: 'role_updated', entityType: 'role', entityId: roleId, newValue: { name, permissions, base_role: baseRole } });
 }
 
 export async function deleteRole(companyId, roleId) {

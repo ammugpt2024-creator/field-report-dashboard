@@ -41,10 +41,6 @@ import {
 import { companyStoragePath, preloadCompanyBranding } from "../services/brandingService";
 import KeyValueList from "../components/mobile/KeyValueList";
 
-const COMPANY_ROLES = [
-  "company_admin", "project_manager", "deputy_project_manager",
-  "technician", "inspector", "lab_technician", "viewer"
-];
 // Friendly labels + one-line "what they can do" copy for the invite flow, so the
 // admin picks a role by meaning instead of a raw enum value.
 const ROLE_CATALOG = {
@@ -389,7 +385,7 @@ export default function CompanyAdminDashboard() {
 
   function openInvite() {
     setInviteUi({ busy: false, error: "", sentEmail: "" });
-    setInvite({ email: "", fullName: "", role: "technician" });
+    setInvite({ email: "", fullName: "", roleId: roles[0]?.id || "" });
   }
 
   function openRoleEditor(role) {
@@ -635,7 +631,7 @@ export default function CompanyAdminDashboard() {
                       <RowStatus status={displayStatus(member)} />
                     </div>
                     <p className="truncate text-xs font-medium text-slate-400">
-                      {roleLabel(member.role)} · {member.invited_email}
+                      {roles.find((r) => r.id === member.role_id)?.name || roleLabel(member.role)} · {member.invited_email}
                       {member.user_id ? ` · ${assignments.filter((a) => a.user_id === member.user_id).length} project(s)` : ""}
                     </p>
                   </div>
@@ -950,12 +946,12 @@ export default function CompanyAdminDashboard() {
                       </div></label>
 
                     <div className="block"><span className="text-xs font-bold uppercase tracking-wide text-slate-500">Role</span>
-                      <select value={invite.role} onChange={(event) => setInvite({ ...invite, role: event.target.value })} className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 px-3 text-sm font-semibold outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100">
-                        {COMPANY_ROLES.map((r) => <option key={r} value={r}>{roleLabel(r)}</option>)}
+                      <select value={invite.roleId} onChange={(event) => setInvite({ ...invite, roleId: event.target.value })} className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 px-3 text-sm font-semibold outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100">
+                        {roles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
                       </select>
                       <p className="mt-1.5 flex items-start gap-1.5 text-xs font-medium text-slate-500">
                         <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400" />
-                        {ROLE_CATALOG[invite.role]?.blurb}
+                        {roles.find((r) => r.id === invite.roleId)?.description || ROLE_CATALOG[roles.find((r) => r.id === invite.roleId)?.base_role]?.blurb}
                       </p>
                     </div>
 
@@ -1408,7 +1404,7 @@ function ManageProjectModal({ project, company, roster, roles, assignments, onCl
 // company, and manage which projects they're on (with per-project access).
 function ManageMemberModal({ member, company, projects, roles, assignments, onClose, onChanged, onRemoved }) {
   const [name, setName] = useState(member.full_name || "");
-  const [role, setRole] = useState(member.role);
+  const [roleId, setRoleId] = useState(member.role_id || "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [addProjectId, setAddProjectId] = useState("");
@@ -1427,7 +1423,7 @@ function ManageMemberModal({ member, company, projects, roles, assignments, onCl
   }
 
   async function saveDetails() {
-    await run(() => updateMemberDetails(member, { full_name: name, role }));
+    await run(() => updateMemberDetails(member, { full_name: name, roleId: roleId || undefined }));
   }
   async function toggleStatus() {
     await run(() => setMemberStatus(member, member.status === "disabled" ? "active" : "disabled"));
@@ -1440,7 +1436,7 @@ function ManageMemberModal({ member, company, projects, roles, assignments, onCl
   }
   async function addAssignment() {
     if (!addProjectId) { setError("Select a project first, then click Add."); return; }
-    await run(() => assignUserToProject(company.id, Number(addProjectId), member.user_id, deriveAssignmentRole(role), headlineAccessLevel(addPerms), addPerms));
+    await run(() => assignUserToProject(company.id, Number(addProjectId), member.user_id, deriveAssignmentRole(roles.find((r) => r.id === roleId)?.base_role || member.role), headlineAccessLevel(addPerms), addPerms));
     setAddProjectId(""); setAddTemplateId(""); setAddPerms(defaultPermsForRole(member.role));
   }
 
@@ -1467,8 +1463,9 @@ function ManageMemberModal({ member, company, projects, roles, assignments, onCl
             <label className="block"><span className="text-xs font-semibold text-slate-600">Full name</span>
               <input value={name} onChange={(e) => setName(e.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 px-3 text-sm font-semibold outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" /></label>
             <label className="block"><span className="text-xs font-semibold text-slate-600">Company role</span>
-              <select value={role} onChange={(e) => setRole(e.target.value)} className="mt-1 min-h-11 rounded-xl border border-slate-300 bg-white px-2 text-sm font-semibold">
-                {COMPANY_ROLES.map((r) => <option key={r} value={r}>{roleLabel(r)}</option>)}
+              <select value={roleId} onChange={(e) => setRoleId(e.target.value)} className="mt-1 min-h-11 rounded-xl border border-slate-300 bg-white px-2 text-sm font-semibold">
+                {!member.role_id && <option value="">{roleLabel(member.role)}</option>}
+                {roles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
               </select></label>
           </div>
           <p className="mt-1.5 text-xs font-medium text-slate-400">Their job across the company (decides which app they sign in to). Per-project module access is set separately below.</p>

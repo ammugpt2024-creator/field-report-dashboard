@@ -27,11 +27,27 @@ const LEVELS = [
   { value: "manage", label: "Approve & Manage", hint: "Can see everyone's records, approve or return them, and manage the tool" }
 ];
 
+// Which built-in a role behaves like. The name and tool permissions above are
+// the company's to choose; this is what the database, RLS, and sign-in routing
+// actually read, so it decides which app the person lands in and whether
+// company-wide policies treat them as an admin.
+const BASE_ROLES = [
+  { value: "company_admin", label: "Company Admin", hint: "Full control of the company, its people, and billing" },
+  { value: "project_manager", label: "Project Manager", hint: "Runs projects and approves work" },
+  { value: "deputy_project_manager", label: "Deputy Project Manager", hint: "Supports project managers on assigned projects" },
+  { value: "technician", label: "Field Technician", hint: "Works in the field app" },
+  { value: "inspector", label: "Inspector", hint: "Inspects sites and documents conditions" },
+  { value: "lab_technician", label: "Lab Technician", hint: "Works in the lab app" },
+  { value: "viewer", label: "Viewer", hint: "Read-only" }
+];
+const DEFAULT_BASE = "viewer";
+const baseLabel = (v) => BASE_ROLES.find((b) => b.value === v)?.label || v;
+
 const normalize = (v) => (v === "approve" ? "manage" : v || "none");
 const levelLabel = (v) => LEVELS.find((l) => l.value === normalize(v))?.label || "None";
 const fullPerms = (partial = {}) =>
   TOOLS.reduce((acc, t) => ({ ...acc, [t.key]: normalize(partial[t.key]) }), {});
-const emptyDraft = () => ({ id: null, name: "", description: "", permissions: fullPerms(), is_system: false });
+const emptyDraft = () => ({ id: null, name: "", description: "", permissions: fullPerms(), is_system: false, base_role: DEFAULT_BASE });
 const samePerms = (a, b) => TOOLS.every((t) => normalize(a?.[t.key]) === normalize(b?.[t.key]));
 
 function summarize(perms = {}) {
@@ -68,7 +84,7 @@ function RolesPermissions() {
     const keep = rows.find((r) => r.id === keepId) || rows[0] || null;
     if (keep) {
       setSelectedId(keep.id);
-      setDraft({ ...keep, permissions: fullPerms(keep.permissions) });
+      setDraft({ ...keep, permissions: fullPerms(keep.permissions), base_role: keep.base_role || DEFAULT_BASE });
     } else {
       setSelectedId(null);
       setDraft(emptyDraft());
@@ -97,6 +113,7 @@ function RolesPermissions() {
     : Boolean(selected) && (
       draft.name !== selected.name ||
       (draft.description || "") !== (selected.description || "") ||
+      (draft.base_role || DEFAULT_BASE) !== (selected.base_role || DEFAULT_BASE) ||
       !samePerms(draft.permissions, selected.permissions)
     );
 
@@ -111,7 +128,7 @@ function RolesPermissions() {
     if (dirty && !window.confirm("Discard unsaved changes to this role?")) return;
     setError(""); setNotice("");
     setSelectedId(role.id);
-    setDraft({ ...role, permissions: fullPerms(role.permissions) });
+    setDraft({ ...role, permissions: fullPerms(role.permissions), base_role: role.base_role || DEFAULT_BASE });
   }
 
   function startNew() {
@@ -129,7 +146,8 @@ function RolesPermissions() {
       name: `${draft.name} (copy)`,
       description: draft.description,
       permissions: fullPerms(draft.permissions),
-      is_system: false
+      is_system: false,
+      base_role: draft.base_role || DEFAULT_BASE
     });
   }
 
@@ -149,7 +167,12 @@ function RolesPermissions() {
     }
     setBusy(true); setError(""); setNotice("");
     try {
-      const payload = { name, description: draft.description || "", permissions: fullPerms(draft.permissions) };
+      const payload = {
+        name,
+        description: draft.description || "",
+        permissions: fullPerms(draft.permissions),
+        baseRole: draft.base_role || DEFAULT_BASE
+      };
       if (draft.id) {
         await updateRole(companyId, draft.id, payload);
         await refresh(draft.id);
@@ -252,7 +275,7 @@ function RolesPermissions() {
                           <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-500">Default</span>
                         )}
                       </div>
-                      <p className="mt-0.5 truncate text-xs font-medium text-slate-500">{summarize(role.permissions)}</p>
+                      <p className="mt-0.5 truncate text-xs font-medium text-slate-500">{baseLabel(role.base_role || DEFAULT_BASE)} · {summarize(role.permissions)}</p>
                     </button>
                   );
                 })}
@@ -291,6 +314,26 @@ function RolesPermissions() {
                     className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 px-3 text-sm font-semibold outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-50"
                   />
                 </div>
+              </div>
+
+              <div className="mt-4">
+                <label htmlFor="role-base" className="text-xs font-bold uppercase tracking-wide text-slate-500">Behaves like</label>
+                <select
+                  id="role-base" value={draft.base_role || DEFAULT_BASE} disabled={!canManage || busy}
+                  onChange={(e) => setDraft((d) => ({ ...d, base_role: e.target.value }))}
+                  className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 px-3 text-sm font-semibold outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-50 sm:max-w-sm"
+                >
+                  {BASE_ROLES.map((b) => <option key={b.value} value={b.value}>{b.label}</option>)}
+                </select>
+                <p className="mt-1.5 text-xs font-medium text-slate-500">
+                  {BASE_ROLES.find((b) => b.value === (draft.base_role || DEFAULT_BASE))?.hint}
+                  {" — this decides which app people with this role sign in to."}
+                </p>
+                {(draft.base_role || DEFAULT_BASE) === "company_admin" && (
+                  <p className="mt-1.5 rounded-lg bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">
+                    Anyone with this role gets full control of the company, including people and billing.
+                  </p>
+                )}
               </div>
 
               <div className="mt-6 flex flex-wrap items-center justify-between gap-2">
