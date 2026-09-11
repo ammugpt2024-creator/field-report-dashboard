@@ -1267,6 +1267,32 @@ export default function DailyLogEditor({ log, projectOptions = [], onChange, onS
         </div>
       </div>
 
+      {/* A returned log is opened here to be corrected, so the reviewer's
+          comments have to be on this screen. They were only rendered on the
+          read-only summary view, leaving the technician with the "Returned
+          Corrections" badge and no word on what to change. */}
+      {log.status === DAILY_LOG_STATUS.RETURNED && (
+        <section className="mt-2 rounded-3xl border border-amber-300 bg-amber-50 p-4 shadow-sm sm:p-5">
+          <p className="text-xs font-bold uppercase tracking-[0.18em] text-amber-700">Corrections requested</p>
+          <h2 className="mt-1 text-base font-bold text-amber-950">Your reviewer returned this log</h2>
+          {Array.isArray(log.managerComments) && log.managerComments.length > 0 ? (
+            <div className="mt-3 space-y-2">
+              {log.managerComments.map((comment, index) => (
+                <div key={comment.id || index} className="rounded-2xl border border-amber-200 bg-white p-3">
+                  <p className="whitespace-pre-wrap text-sm font-semibold text-slate-900">{comment.comment}</p>
+                  <p className="mt-1 text-xs font-semibold text-slate-500">
+                    {comment.author || "Reviewer"}
+                    {comment.createdAt ? ` · ${new Date(comment.createdAt).toLocaleString()}` : ""}
+                  </p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-2 text-sm font-semibold text-amber-900">No comment was left with this return. Check with your reviewer before resubmitting.</p>
+          )}
+        </section>
+      )}
+
       <section className="mt-2 overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
         <div className="p-4 sm:p-5">
           <div className="mb-3 flex items-center justify-between gap-3">
