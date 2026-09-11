@@ -991,6 +991,11 @@ export default function DailyLogEditor({ log, projectOptions = [], onChange, onS
       try {
         const submitted = submitDailyLog({
           ...logToSubmit,
+          // The database assigns the report number on submission; the PDF
+          // generated next is built from this copy, so it must carry it.
+          ...(persistedSubmission.dfr_number
+            ? { logNumber: persistedSubmission.dfr_number, dfrNumber: persistedSubmission.dfr_number }
+            : {}),
           supabaseDailyLogId: persistedSubmission.id,
           supabase_daily_log_id: persistedSubmission.id
         });

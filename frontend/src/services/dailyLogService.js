@@ -269,22 +269,11 @@ export function filterDailyLogsForAccess(logs, access = {}) {
   });
 }
 
-function getProjectInitials(projectName) {
-  return (projectName || "")
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((word) => word[0].toUpperCase())
-    .join("")
-    .slice(0, 6);
-}
-
-function getNextDfrNumber(projectId, projectName) {
-  const counterKey = `dfrCounter:${projectId}`;
-  let counter = parseInt(window.localStorage.getItem(counterKey) || "0", 10);
-  counter += 1;
-  window.localStorage.setItem(counterKey, String(counter));
-  const initials = getProjectInitials(projectName);
-  return `${initials}DFR${counter}`;
+// The calendar date where the technician is. toISOString() is UTC, so after
+// 8 PM Eastern it returned tomorrow and a new log defaulted to the wrong day.
+function localDateString(date = new Date()) {
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
 export function createDailyLog({
@@ -296,11 +285,13 @@ export function createDailyLog({
   userId = null
 } = {}) {
   const today = new Date();
-  const dfrNumber = getNextDfrNumber(defaultProjectId, projectLabel);
+  // No report number yet. The database assigns one when the log is submitted
+  // (migration 049); the old per-browser counter let two devices issue the
+  // same number and restarted whenever browser storage was cleared.
   return {
     id: crypto.randomUUID(),
-    dfrNumber,
-    logNumber: dfrNumber,
+    dfrNumber: "",
+    logNumber: "",
     companyId,
     companyName,
     userId,
@@ -311,7 +302,7 @@ export function createDailyLog({
     projectNumber: String(defaultProjectId || "200100"),
     projectName: projectLabel,
     projectLocation: "Washington, DC",
-    date: today.toISOString().slice(0, 10),
+    date: localDateString(today),
     shift: "Day Shift",
     weather: "Auto-captured weather pending",
     temperature: "",
@@ -527,13 +518,13 @@ export async function submitDailyLogToSupabase(log, { signatureId, submittedAt, 
       .from("daily_logs")
       .update({ ...payload, updated_at: new Date().toISOString() })
       .eq("id", existing.id)
-      .select("id,status,submitted_at,submitted_by,signature_id,pdf_url,pdf_storage_path")
+      .select("*")
       .single());
   } else {
     ({ data, error } = await supabase
       .from("daily_logs")
       .insert(payload)
-      .select("id,status,submitted_at,submitted_by,signature_id,pdf_url,pdf_storage_path")
+      .select("*")
       .single());
   }
 
@@ -876,6 +867,7 @@ export async function syncDailyLogsFromSupabase({ userId } = {}) {
         changed = true;
         byClientId.set(clientId, {
           ...payload,
+          ...(row.dfr_number ? { logNumber: row.dfr_number, dfrNumber: row.dfr_number } : {}),
           id: clientId,
           status: rowStatus,
           supabaseDailyLogId: row.id,
@@ -899,6 +891,7 @@ export async function syncDailyLogsFromSupabase({ userId } = {}) {
         changed = true;
         byClientId.set(clientId, {
           ...local,
+          ...(row.dfr_number ? { logNumber: row.dfr_number, dfrNumber: row.dfr_number } : {}),
           status: rowStatus,
           approvedBy: payload.approvedBy || payload.approved_by || local.approvedBy || "",
           approved_by: payload.approved_by || payload.approvedBy || local.approved_by || "",
