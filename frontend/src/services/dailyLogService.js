@@ -996,10 +996,14 @@ export async function updateDailyLogReviewInSupabase(log) {
   }
 }
 
-export function approveDailyLog(log, reviewerName = "Manager", qcSignature = "") {
+// The build* helpers compute a review decision without persisting it. A
+// reviewer's screen must not change until the server has accepted the
+// decision: writing locally first made a blocked save look like it had worked,
+// and left a copy on the reviewer's device that contradicted the database.
+export function buildApprovedDailyLog(log, reviewerName = "Manager", qcSignature = "") {
   const approvedAt = new Date().toISOString();
   const signature = qcSignature || log.qcSignature || log.qc_signature || "";
-  return saveDailyLog({
+  return {
     ...log,
     status: DAILY_LOG_STATUS.APPROVED,
     approvedAt,
@@ -1009,24 +1013,31 @@ export function approveDailyLog(log, reviewerName = "Manager", qcSignature = "")
     qcSignature: signature,
     qc_signature: signature,
     syncStatus: "Synced"
-  });
+  };
 }
 
-export function requestDailyLogRevision(log, comment, reviewerName = "Manager") {
+export function buildDailyLogRevision(log, comment, reviewerName = "Manager") {
   const reviewComment = {
     id: crypto.randomUUID(),
     author: reviewerName,
     comment: comment || "Revision requested.",
     createdAt: new Date().toISOString()
   };
-
-  return saveDailyLog({
+  return {
     ...log,
     status: DAILY_LOG_STATUS.RETURNED,
     managerComments: [...(log.managerComments || []), reviewComment],
     returnedAt: new Date().toISOString(),
-    syncStatus: "Pending sync"
-  });
+    syncStatus: "Synced"
+  };
+}
+
+export function approveDailyLog(log, reviewerName = "Manager", qcSignature = "") {
+  return saveDailyLog(buildApprovedDailyLog(log, reviewerName, qcSignature));
+}
+
+export function requestDailyLogRevision(log, comment, reviewerName = "Manager") {
+  return saveDailyLog(buildDailyLogRevision(log, comment, reviewerName));
 }
 
 export function duplicateActivity(activity) {

@@ -5,11 +5,12 @@ import { useAuth } from "../context/AuthContext";
 import SignatureModal from "../components/SignatureModal";
 import DailyLogSummaryView from "../components/daily-log/DailyLogSummaryView";
 import {
-  approveDailyLog,
+  buildApprovedDailyLog,
+  buildDailyLogRevision,
   fetchDailyLogFromSupabase,
   formatLogStatus,
   getDailyLogById,
-  requestDailyLogRevision,
+  saveDailyLog,
   updateDailyLogPdfMetadataInSupabase,
   updateDailyLogReviewInSupabase
 } from "../services/dailyLogService";
@@ -41,9 +42,10 @@ export default function DailyLogReview() {
 
   useEffect(() => {
     let active = true;
-    // The reviewer's device usually has no local copy of the technician's
-    // log — load it from the database instead.
-    if (log) return undefined;
+    // Always load from the database, even when this device holds a local copy.
+    // The status that matters is the server's: a stale local copy used to win
+    // here, so a reviewer whose earlier decision never saved kept seeing it as
+    // made, with no way to act on the log again.
     fetchDailyLogFromSupabase(logId)
       .then((remoteLog) => {
         if (!active) return;
@@ -61,10 +63,13 @@ export default function DailyLogReview() {
   }, [logId]);
 
   async function persistDecision(nextLog) {
-    setLog(nextLog);
     setSavingDecision(true);
     try {
+      // Server first. Only once it has accepted the decision does this screen,
+      // or this device's cached copy, show it as made.
       await updateDailyLogReviewInSupabase(nextLog);
+      saveDailyLog(nextLog);
+      setLog(nextLog);
       logAuditEvent({
         action: "report_returned",
         entityType: "daily_report",
@@ -88,9 +93,10 @@ export default function DailyLogReview() {
     if (!log || savingDecision) return false;
     setSavingDecision(true);
     try {
-      const approved = approveDailyLog(log, reviewerName, signature);
-      setLog(approved);
+      const approved = buildApprovedDailyLog(log, reviewerName, signature);
       await updateDailyLogReviewInSupabase(approved);
+      saveDailyLog(approved);
+      setLog(approved);
       logAuditEvent({
         action: "report_approved",
         entityType: "daily_report",
@@ -151,7 +157,7 @@ export default function DailyLogReview() {
 
   function requestRevision() {
     if (!log || savingDecision) return;
-    persistDecision(requestDailyLogRevision(log, revisionComment, reviewerName));
+    persistDecision(buildDailyLogRevision(log, revisionComment, reviewerName));
     setRevisionComment("");
   }
 
