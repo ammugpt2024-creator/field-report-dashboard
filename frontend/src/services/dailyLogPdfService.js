@@ -20,7 +20,9 @@ const REPORT_FONT_FAMILY = "Inter";
 // Version 3: compaction reports list each material with its specs, and tie
 // every test result to its material.
 // Version 4: comments the reviewer left when approving are printed.
-export const DAILY_LOG_PDF_LAYOUT_VERSION = 4;
+// Version 5: an attached PDF that cannot be embedded gets a notice instead of
+// a blank page.
+export const DAILY_LOG_PDF_LAYOUT_VERSION = 5;
 let reportFontsRegistered = false;
 const PDF_COLORS = {
   navy: [16, 24, 40],
@@ -969,6 +971,26 @@ async function renderPdfAttachment(doc, attachment, y) {
     return y + 14;
   }
 
+  // Make sure the file will actually embed before giving it a page. One that
+  // pdf-lib cannot read used to leave a near-blank page reading only
+  // "Attached PDF: <name>" in the middle of the report.
+  let embeddable = false;
+  try {
+    const { PDFDocument } = await import("pdf-lib");
+    const probe = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
+    embeddable = probe.getPageCount() > 0;
+  } catch (error) {
+    console.warn(`[Daily Log PDF] Attached PDF cannot be embedded: ${fileName}`, error);
+  }
+  if (!embeddable) {
+    return renderReferenceTextBox(
+      doc,
+      "Attached PDF not embedded",
+      `${fileName} could not be embedded in this report. It remains attached to the daily log in QCore.`,
+      y
+    );
+  }
+
   // If ensurePage already moved us to the top of a fresh page, use that page
   // as the placeholder; otherwise add a new one.  This avoids a blank page
   // between the activity content and the attachment.
@@ -976,9 +998,11 @@ async function renderPdfAttachment(doc, attachment, y) {
     doc.addPage("letter", "portrait");
   }
   const placeholderPage = doc.internal.getNumberOfPages(); // 1-based
-  // Minimal fallback label visible only if the merge step fails
-  setReportFont(doc, "medium", 8.5, PDF_COLORS.slate);
-  doc.text(`Attached PDF: ${fileName}`, PAGE_MARGIN, PAGE_TOP_MARGIN);
+  // Replaced by the attachment's own pages when it merges. Only seen if the
+  // merge still fails, so it has to read as a deliberate notice, not a stray
+  // label on a blank page.
+  const noticeY = renderReferenceSectionBar(doc, `Attachment \u2014 ${fileName}`, PAGE_TOP_MARGIN, { afterGap: 10 });
+  renderReferenceTextBox(doc, "Attached PDF not embedded", `${fileName} could not be embedded in this report. It remains attached to the daily log in QCore.`, noticeY);
   _pdfMergeQueue.push({ pageNumber: placeholderPage, fileName, arrayBuffer });
 
   // Return y beyond the page height so the next ensurePage() opens a fresh page
@@ -1534,12 +1558,15 @@ async function renderReferenceAttachmentContent(doc, attachments, y, title) {
   const otherFiles = valid.filter((attachment) => !isRenderableImageAttachment(attachment) && !isPdfAttachment(attachment) && !isDocxAttachment(attachment));
 
   // Keep the section bar on the same page as its first content block: a lone
-  // photo frame (~280pt), a photo pair row (~240pt), an attached-PDF page
-  // (up to ~480pt), or a document card row.
+  // photo frame (~280pt), a photo pair row (~240pt), or a document card row.
+  // Attached PDFs are merged in as whole pages, so they can never share a page
+  // with the bar; reserving room for "an attached-PDF page" only pushed the bar
+  // onto a page of its own, followed by the attachment on the next. The bar now
+  // stays at the end of the activity with the attached files named under it.
   const firstBlockSpace = photos.length
     ? (photos.length === 1 ? 320 : 280)
     : pdfs.length
-      ? 500
+      ? 40 + pdfs.length * 14
       : 130;
   y = ensurePage(doc, y, firstBlockSpace);
   y = renderReferenceSectionBar(doc, title, y, { afterGap: 10, rightText: `${valid.length} item${valid.length === 1 ? "" : "s"}` });
@@ -1548,9 +1575,20 @@ async function renderReferenceAttachmentContent(doc, attachments, y, title) {
     y = await renderReferencePhotoGrid(doc, photos, y);
   }
 
+  if (pdfs.length) {
+    // Name what the following pages are before they start.
+    for (const attachment of pdfs) {
+      y = ensurePage(doc, y, 16);
+      setReportFont(doc, "regular", 9, PDF_COLORS.slate);
+      doc.text(`\u2022  ${getAttachmentFileName(attachment)}`, PAGE_MARGIN + 4, y + 9);
+      y += 14;
+    }
+    y += 4;
+  }
+
   for (const attachment of pdfs) {
-    // Keep the "Attached PDF" label with at least its first rendered page.
-    y = ensurePage(doc, y, 500);
+    // renderPdfAttachment starts its own page for a PDF that will embed, and
+    // writes a notice in place for one that will not.
     y = await renderPdfAttachment(doc, attachment, y);
   }
 
