@@ -17,7 +17,9 @@ const REPORT_FONT_FAMILY = "Inter";
 // stored PDF was drawn by an older layout are rebuilt the next time someone
 // with regenerate rights opens them (DailyLogSummaryView). Version 2: correct
 // log date, Comments section, named signatures at the end, no activity status.
-export const DAILY_LOG_PDF_LAYOUT_VERSION = 2;
+// Version 3: compaction reports list each material with its specs, and tie
+// every test result to its material.
+export const DAILY_LOG_PDF_LAYOUT_VERSION = 3;
 let reportFontsRegistered = false;
 const PDF_COLORS = {
   navy: [16, 24, 40],
@@ -1685,10 +1687,72 @@ async function renderReferenceAsphaltReportBlock(doc, report, reportIndex, y, ac
   return y + 6;
 }
 
+// A compaction report can test several materials, each judged against its own
+// specs. materialGroups holds those specs; the flat testRecords carry each
+// test's material and the values the app computed for it (moistureContent,
+// moistureRange, densityResult). The PDF used to print only the report-level
+// summary -- "Multiple", the names joined, and a required density that is blank
+// whenever there is more than one group -- so nothing tied a result to the
+// material it was judged against.
+function getCompactionMaterialGroups(report) {
+  const groups = Array.isArray(report.materialGroups) ? report.materialGroups.filter(Boolean) : [];
+  if (groups.length) return groups;
+  // Reports saved before material groups existed: one implicit group.
+  return [{
+    id: "",
+    materialType: report.materialType || report.material_type || "",
+    materialName: report.materialName || report.material_name || "",
+    maximumDryDensity: report.maximumDryDensity || report.maximum_dry_density || "",
+    percentOptimumMoisture: report.percentOptimumMoisture || report.percent_optimum_moisture || "",
+    correctedMaximumDryDensity: report.correctedMaximumDryDensity || report.corrected_maximum_dry_density || "",
+    correctedOptimumMoisture: report.correctedOptimumMoisture || report.corrected_optimum_moisture || "",
+    percentMinimumDensityRequired: report.percentMinimumDensityRequired || report.percent_minimum_density_required || ""
+  }];
+}
+
+function getCompactionRecords(report, groups) {
+  const flat = Array.isArray(report.testRecords) ? report.testRecords : [];
+  if (flat.length) return flat;
+  return groups.flatMap((group) => (group.testRecords || []).map((record) => ({
+    ...record,
+    materialGroupId: group.id,
+    materialType: group.materialType || group.material_type || "",
+    materialName: group.materialName || group.material_name || ""
+  })));
+}
+
+function compactionMaterialLabel(type, name) {
+  const materialType = String(type || "").trim();
+  const materialName = String(name || "").trim();
+  if (materialType && materialName) return `${materialType} \u00b7 ${materialName}`;
+  return materialType || materialName || "N/A";
+}
+
+function renderReferenceSubheading(doc, text, y) {
+  setReportFont(doc, "semibold", 8.5, PDF_COLORS.slate);
+  doc.text(String(text).toUpperCase(), PAGE_MARGIN, y + 8, { charSpace: 0.4 });
+  return y + 14;
+}
+
+const COMPACTION_RESULT_COLORS = { PASS: PDF_COLORS.green, FAIL: PDF_COLORS.red, RETEST: PDF_COLORS.amber };
+
 async function renderReferenceNuclearCompactionReportBlock(doc, report, reportIndex, y, activity, log) {
   const logDate = log.date || log.logDate || log.log_date || "";
   const calibrationDueDate = report.calibrationDueDate || report.calibration_due_date || "";
   const isOutOfCalibration = Boolean(calibrationDueDate && logDate && calibrationDueDate < logDate);
+  const groups = getCompactionMaterialGroups(report);
+  const records = getCompactionRecords(report, groups);
+  const fontFamily = reportFontsRegistered ? REPORT_FONT_FAMILY : "helvetica";
+  const tableOptions = {
+    theme: "grid",
+    margin: { left: PAGE_MARGIN, right: PAGE_MARGIN, top: PAGE_TOP_MARGIN, bottom: PAGE_BOTTOM_MARGIN + 16 },
+    tableWidth: getContentWidth(doc),
+    showHead: "everyPage",
+    styles: { font: fontFamily, fontSize: 8, textColor: PDF_COLORS.navy, cellPadding: 5, valign: "middle" },
+    headStyles: { fillColor: PDF_COLORS.navy, textColor: PDF_COLORS.white, fontStyle: "bold", fontSize: 8 },
+    bodyStyles: { fillColor: PDF_COLORS.white },
+    alternateRowStyles: { fillColor: PDF_COLORS.soft }
+  };
 
   y = ensurePage(doc, y, 160);
   y = renderReferenceSectionBar(doc, `Nuclear Density Report ${reportIndex + 1}`, y, {
@@ -1696,16 +1760,15 @@ async function renderReferenceNuclearCompactionReportBlock(doc, report, reportIn
     rightText: formatStatus(report.status || "Draft")
   });
 
+  // Gauge details. Material specs moved to their own table below, one row per
+  // material, instead of a single summary card that could only say "Multiple".
   y = renderReferenceCardGrid(doc, [
     { label: "Serial Number", value: pdfValue(report.serialNumber || report.serial_number) },
     { label: "Gauge Model", value: pdfValue(report.gaugeModel || report.gauge_model) },
-    { label: "Calibration Due Date", value: isOutOfCalibration ? `${calibrationDueDate} ⚠ OUT OF CALIBRATION` : pdfValue(calibrationDueDate) },
+    { label: "Calibration Due Date", value: calibrationDueDate ? `${formatDateOnly(calibrationDueDate)}${isOutOfCalibration ? " \u26a0 OUT OF CALIBRATION" : ""}` : "N/A" },
     { label: "Gauge Standardized", value: pdfValue(report.standardizedGauge || report.standardized_gauge) },
     { label: "Standard Count Density", value: pdfValue(report.standardDensity || report.standard_density) },
-    { label: "Standard Count Moisture", value: pdfValue(report.standardMoisture || report.standard_moisture) },
-    { label: "Material Type", value: pdfValue(report.materialType || report.material_type) },
-    { label: "Material Name", value: pdfValue(report.materialName || report.material_name) },
-    { label: "Min. Density Required (%)", value: pdfValue(report.percentMinimumDensityRequired || report.percent_minimum_density_required) }
+    { label: "Standard Count Moisture", value: pdfValue(report.standardMoisture || report.standard_moisture) }
   ], y, { columns: 3, afterGap: isOutOfCalibration ? 6 : 10 });
 
   if (isOutOfCalibration) {
@@ -1713,33 +1776,58 @@ async function renderReferenceNuclearCompactionReportBlock(doc, report, reportIn
     doc.setFillColor(...[254, 226, 226]);
     doc.roundedRect(PAGE_MARGIN, y, getContentWidth(doc), 18, 3, 3, "F");
     setReportFont(doc, "bold", 8.5, [185, 28, 28]);
-    doc.text(`⚠ OUT OF CALIBRATION — Calibration expired before report date (${logDate}).`, PAGE_MARGIN + 6, y + 11);
+    doc.text(`\u26a0 OUT OF CALIBRATION \u2014 Calibration expired before report date (${formatDateOnly(logDate)}).`, PAGE_MARGIN + 6, y + 11);
     y += 24;
   }
 
-  const records = Array.isArray(report.testRecords) ? report.testRecords : [];
+  // Materials: the specs each result was judged against.
+  y = ensurePage(doc, y, 70);
+  y = renderReferenceSubheading(doc, groups.length > 1 ? `Materials (${groups.length})` : "Material", y);
+  autoTable(doc, {
+    ...tableOptions,
+    startY: y,
+    head: [["Material", "Corrected Max. Dry Density (pcf)", "Corrected Optimum Moisture (%)", "Moisture Range (%)", "Min. Density Required (%)"]],
+    body: groups.map((group) => {
+      // The app computes each group's moisture range onto its records; print
+      // that rather than re-deriving it, so the PDF cannot disagree with it.
+      const sample = records.find((record) => groups.length === 1 || record.materialGroupId === group.id) || {};
+      const range = sample.moistureRange || sample.moisture_range;
+      return [
+        compactionMaterialLabel(group.materialType || group.material_type, group.materialName || group.material_name),
+        pdfValue(group.correctedMaximumDryDensity || group.corrected_maximum_dry_density || group.maximumDryDensity || group.maximum_dry_density),
+        pdfValue(group.correctedOptimumMoisture || group.corrected_optimum_moisture || group.percentOptimumMoisture || group.percent_optimum_moisture),
+        range && range !== "-" ? range : "N/A",
+        pdfValue(group.percentMinimumDensityRequired || group.percent_minimum_density_required)
+      ];
+    })
+  });
+  y = doc.lastAutoTable.finalY + 12;
+
   if (records.length) {
     y = ensurePage(doc, y, 80);
-    const fontFamily = reportFontsRegistered ? REPORT_FONT_FAMILY : "helvetica";
+    y = renderReferenceSubheading(doc, "Test Results", y);
     autoTable(doc, {
+      ...tableOptions,
       startY: y,
-      head: [["Test #", "Location", "Wet Density", "Dry Density", "% Dry Density", "Result"]],
+      head: [["Test #", "Location", "Material", "Wet Density", "Dry Density", "Moisture (%)", "% Dry Density", "Result"]],
       body: records.map((r) => [
         pdfValue(r.testNo || r.test_no),
         pdfValue(r.location),
+        compactionMaterialLabel(r.materialType || r.material_type, r.materialName || r.material_name),
         pdfValue(r.wetDensity || r.wet_density),
         pdfValue(r.dryDensity || r.dry_density),
+        pdfValue(r.moistureContent || r.moisture_content),
         pdfValue(r.percentDryDensity || r.percent_dry_density),
         pdfValue(r.densityResult || r.density_result)
       ]),
-      theme: "grid",
-      margin: { left: PAGE_MARGIN, right: PAGE_MARGIN, top: PAGE_TOP_MARGIN, bottom: PAGE_BOTTOM_MARGIN + 16 },
-      tableWidth: getContentWidth(doc),
-      showHead: "everyPage",
-      styles: { font: fontFamily, fontSize: 8, textColor: PDF_COLORS.navy, cellPadding: 5, valign: "middle" },
-      headStyles: { fillColor: PDF_COLORS.navy, textColor: PDF_COLORS.white, fontStyle: "bold", fontSize: 8 },
-      bodyStyles: { fillColor: PDF_COLORS.white },
-      alternateRowStyles: { fillColor: PDF_COLORS.soft }
+      didParseCell: (data) => {
+        if (data.section !== "body" || data.column.index !== 7) return;
+        const color = COMPACTION_RESULT_COLORS[String(data.cell.raw || "").toUpperCase()];
+        if (color) {
+          data.cell.styles.textColor = color;
+          data.cell.styles.fontStyle = "bold";
+        }
+      }
     });
     y = doc.lastAutoTable.finalY + 10;
   } else {
