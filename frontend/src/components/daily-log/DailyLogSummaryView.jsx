@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Download, Edit, Eye, FileText, Image as ImageIcon, RotateCcw } from "lucide-react";
-import { DAILY_LOG_STATUS, formatLogStatus } from "../../services/dailyLogService";
+import { DAILY_LOG_STATUS, formatLogStatus, saveDailyLog, updateDailyLogPdfMetadataInSupabase } from "../../services/dailyLogService";
+import { DAILY_LOG_PDF_LAYOUT_VERSION, regenerateDailyLogPdf } from "../../services/dailyLogPdfService";
 import { supabase } from "../../services/supabase";
 import { formatDateTime } from "../../modules/field-engineer/fieldEngineerData";
 import { AttachmentRenderer, formatFileSize } from "./PhotosAttachmentsSection";
@@ -693,9 +694,11 @@ function ActivitySummaryCard({ activity, index, log }) {
   );
 }
 
-export default function DailyLogSummaryView({ log, onEdit, onViewPdf, onDownloadPdf, onRegeneratePdf }) {
+export default function DailyLogSummaryView({ log, onEdit, onViewPdf, onDownloadPdf, onRegeneratePdf, onPdfUpgraded }) {
   const [submittedAttachments, setSubmittedAttachments] = useState([]);
   const [isRegeneratingPdf, setIsRegeneratingPdf] = useState(false);
+  // Which log's automatic PDF upgrade has finished, successful or not.
+  const [pdfUpgradeSettledFor, setPdfUpgradeSettledFor] = useState(null);
   const activityIdsKey = (log.activities || []).map((activity) => normalizeId(activity?.id)).join("|");
   const hydratedLog = useMemo(() => ({
     ...log,
@@ -727,6 +730,54 @@ export default function DailyLogSummaryView({ log, onEdit, onViewPdf, onDownload
   const hasCachedPdf = Boolean(hydratedLog.pdfDataUrl || hydratedLog.pdf_data_url);
   const canUsePdf = canHavePdf && (pdfStatus === "generated" || hasCachedPdf);
   const canRegeneratePdf = canHavePdf && pdfStatus !== "pending" && Boolean(onRegeneratePdf);
+
+  // A stored PDF is a file drawn when the log was submitted or approved, so
+  // every log from before a layout fix kept showing the old layout -- wrong
+  // date included -- until someone clicked Regenerate. Rebuild it once, quietly,
+  // for anyone allowed to regenerate. Viewers without that right keep the
+  // stored copy.
+  const storedLayoutVersion = Number(hydratedLog.pdfLayoutVersion || hydratedLog.pdf_layout_version || 1);
+  const pdfNeedsUpgrade = canUsePdf && pdfStatus === "generated" && Boolean(onRegeneratePdf)
+    && storedLayoutVersion < DAILY_LOG_PDF_LAYOUT_VERSION;
+  const isUpgradingPdf = pdfNeedsUpgrade && pdfUpgradeSettledFor !== log?.id;
+
+  useEffect(() => {
+    if (!isUpgradingPdf) return undefined;
+    let cancelled = false;
+    const original = log;
+    // A slow or failing upload can take well over 20s to give up, and the
+    // stored PDF is hidden while this runs. Stop waiting on screen after 20s;
+    // the rebuild still finishes, or restores the original, in the background.
+    const stopWaiting = window.setTimeout(() => {
+      if (!cancelled) setPdfUpgradeSettledFor(original?.id);
+    }, 20000);
+    (async () => {
+      try {
+        const upgraded = await regenerateDailyLogPdf(original);
+        if ((upgraded?.pdfGenerationStatus || upgraded?.pdf_generation_status) === "generated") {
+          await updateDailyLogPdfMetadataInSupabase(original, upgraded).catch((error) => {
+            console.warn("Upgraded PDF saved, but its details could not be recorded on the log", error);
+          });
+          if (!cancelled) onPdfUpgraded?.(upgraded);
+        } else {
+          // regenerate marks a failure on the log. For a click that is right;
+          // for a background upgrade it would hide a stored PDF that works.
+          saveDailyLog(original);
+        }
+      } catch (error) {
+        console.warn("Automatic PDF upgrade failed; keeping the stored copy", error);
+        saveDailyLog(original);
+      } finally {
+        window.clearTimeout(stopWaiting);
+        if (!cancelled) setPdfUpgradeSettledFor(original?.id);
+      }
+    })();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(stopWaiting);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- run once per log
+  }, [log?.id, isUpgradingPdf]);
 
   async function handleRegeneratePdf() {
     if (!onRegeneratePdf || isRegeneratingPdf) return;
@@ -760,7 +811,12 @@ export default function DailyLogSummaryView({ log, onEdit, onViewPdf, onDownload
                 Required Corrections
               </span>
             )}
-            {canUsePdf && (
+            {canUsePdf && isUpgradingPdf && (
+              <span className="inline-flex min-h-11 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-600">
+                <RotateCcw className="h-4 w-4 animate-spin" /> Updating PDF to the latest format…
+              </span>
+            )}
+            {canUsePdf && !isUpgradingPdf && (
               <div className="flex w-full gap-2 sm:w-auto">
                 <button type="button" onClick={onViewPdf} className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-800 sm:flex-none">
                   <Eye className="h-4 w-4" /> View PDF
@@ -772,7 +828,7 @@ export default function DailyLogSummaryView({ log, onEdit, onViewPdf, onDownload
                 </button>
               </div>
             )}
-            {canRegeneratePdf && (
+            {canRegeneratePdf && !isUpgradingPdf && (
               <button
                 type="button"
                 onClick={handleRegeneratePdf}

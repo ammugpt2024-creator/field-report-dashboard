@@ -4912,6 +4912,7 @@ export default function FieldEngineerWorkspace({
               onViewPdf={() => viewLogPdf(selectedDailyLog)}
               onDownloadPdf={() => downloadLogPdf(selectedDailyLog)}
               onRegeneratePdf={regenerateLogPdf}
+              onPdfUpgraded={refreshLogs}
             />
           ) : (
             <DailyLogEditor

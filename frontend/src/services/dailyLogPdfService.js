@@ -12,6 +12,12 @@ import { getCompanyBranding } from "./brandingService";
 // fall back to the historic defaults inside brandingService.
 const COMPANY_LOGO_URL = { get current() { return getCompanyBranding().logoUrl; } };
 const REPORT_FONT_FAMILY = "Inter";
+
+// Bump whenever the daily log PDF's layout or content changes. Logs whose
+// stored PDF was drawn by an older layout are rebuilt the next time someone
+// with regenerate rights opens them (DailyLogSummaryView). Version 2: correct
+// log date, Comments section, named signatures at the end, no activity status.
+export const DAILY_LOG_PDF_LAYOUT_VERSION = 2;
 let reportFontsRegistered = false;
 const PDF_COLORS = {
   navy: [16, 24, 40],
@@ -2409,7 +2415,8 @@ export async function regenerateDailyLogPdf(log) {
           pdf_generation_failure_reason: "",
           pdfGenerationError: "",
           pdfStorageMode: "browser-cache",
-          pdf_storage_mode: "browser-cache"
+          pdf_storage_mode: "browser-cache",
+          pdfLayoutVersion: DAILY_LOG_PDF_LAYOUT_VERSION
         });
       }
       throw storageError;
@@ -2428,7 +2435,8 @@ export async function regenerateDailyLogPdf(log) {
       pdf_generation_failure_reason: "",
       pdfGenerationError: "",
       pdfStorageMode: "supabase",
-      pdf_storage_mode: "supabase"
+      pdf_storage_mode: "supabase",
+      pdfLayoutVersion: DAILY_LOG_PDF_LAYOUT_VERSION
     });
   } catch (error) {
     console.error("Daily Log PDF generation failed", error);

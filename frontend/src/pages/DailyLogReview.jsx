@@ -212,6 +212,7 @@ export default function DailyLogReview() {
           log={log}
           onViewPdf={() => openDailyLogPdf(log).catch((error) => window.alert(error.message || "Unable to open the PDF right now."))}
           onDownloadPdf={() => openDailyLogPdf(log, { download: true }).catch((error) => window.alert(error.message || "Unable to download the PDF right now."))}
+          onPdfUpgraded={setLog}
           onRegeneratePdf={async (logToRegenerate) => {
             const withPdf = await regenerateDailyLogPdf(logToRegenerate);
             setLog(withPdf);
