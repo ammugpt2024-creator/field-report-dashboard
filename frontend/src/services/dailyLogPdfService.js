@@ -2203,11 +2203,13 @@ async function renderReferenceActivityDetails(doc, log, y) {
       rightText: `${reports.length} report${reports.length === 1 ? "" : "s"} • ${photoCount} photo${photoCount === 1 ? "" : "s"} • ${fileCount} file${fileCount === 1 ? "" : "s"}`
     });
 
+    // No Status card: every activity is created "in_progress" and nothing in
+    // the editor ever changes it, so it read "In Progress" on every activity
+    // of every report, approved ones included. It was a default, not a fact.
     y = renderReferenceCardGrid(doc, [
       { label: "Location", value: activity.location || "N/A" },
-      { label: "Status", value: formatStatus(activity.status || "In Progress") },
       { label: "Type", value: getActivityType(activity) }
-    ], y, { columns: 3, afterGap: 8 });
+    ], y, { columns: 2, afterGap: 8 });
 
     y = renderReferenceTextBox(doc, "Work Performed", sentenceCase(activity.description || "No description recorded."), y);
 
