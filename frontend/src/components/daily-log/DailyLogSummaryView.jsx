@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Download, Edit, Eye, FileText, Image as ImageIcon, RotateCcw } from "lucide-react";
-import { DAILY_LOG_STATUS, formatLogStatus, saveDailyLog, updateDailyLogPdfMetadataInSupabase } from "../../services/dailyLogService";
+import { DAILY_LOG_STATUS, REVIEW_COMMENT_KIND, formatLogStatus, reviewCommentKind, saveDailyLog, updateDailyLogPdfMetadataInSupabase } from "../../services/dailyLogService";
 import { DAILY_LOG_PDF_LAYOUT_VERSION, regenerateDailyLogPdf } from "../../services/dailyLogPdfService";
 import { supabase } from "../../services/supabase";
 import { formatDateTime } from "../../modules/field-engineer/fieldEngineerData";
@@ -911,15 +911,28 @@ export default function DailyLogSummaryView({ log, onEdit, onViewPdf, onDownload
         <p className="mt-4 whitespace-pre-wrap rounded-2xl bg-slate-50 p-4 text-sm font-semibold leading-6 text-slate-700">
           {log.notes || "No comments entered."}
         </p>
-        {isReturned && log.managerComments?.length > 0 && (
-          <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-4">
-            <p className="text-sm font-bold text-amber-950">Manager Comments</p>
+        {/* Every reviewer comment, labelled with the decision it came with.
+            This used to render only while a log was returned, so a comment
+            left on approval was never seen by anyone. */}
+        {Array.isArray(log.managerComments) && log.managerComments.length > 0 && (
+          <div className={`mt-4 rounded-2xl border p-4 ${isReturned ? "border-amber-200 bg-amber-50" : "border-slate-200 bg-slate-50"}`}>
+            <p className={`text-sm font-bold ${isReturned ? "text-amber-950" : "text-slate-900"}`}>Reviewer Comments</p>
             <div className="mt-3 space-y-2">
-              {log.managerComments.map((comment) => (
-                <p key={comment.id} className="rounded-xl bg-white/70 p-3 text-sm font-semibold text-amber-950">
-                  {comment.comment}
-                </p>
-              ))}
+              {log.managerComments.map((comment, index) => {
+                const approval = reviewCommentKind(comment) === REVIEW_COMMENT_KIND.APPROVAL;
+                return (
+                  <div key={comment.id || index} className="rounded-xl border border-white bg-white/80 p-3">
+                    <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide ${approval ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-800"}`}>
+                      {approval ? "Approved" : "Returned for correction"}
+                    </span>
+                    <p className="mt-2 whitespace-pre-wrap text-sm font-semibold text-slate-900">{comment.comment}</p>
+                    <p className="mt-1 text-xs font-semibold text-slate-500">
+                      {comment.author || "Reviewer"}
+                      {comment.createdAt ? ` \u00b7 ${new Date(comment.createdAt).toLocaleString()}` : ""}
+                    </p>
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}

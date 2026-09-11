@@ -15,6 +15,8 @@ import { supabase } from "../../services/supabase";
 import {
   createActivity,
   DAILY_LOG_STATUS,
+  REVIEW_COMMENT_KIND,
+  reviewCommentKind,
   getDailyLogById,
   persistDailyLogAttachmentRecord,
   saveDailyLog,
@@ -1280,9 +1282,9 @@ export default function DailyLogEditor({ log, projectOptions = [], onChange, onS
         <section className="mt-2 rounded-3xl border border-amber-300 bg-amber-50 p-4 shadow-sm sm:p-5">
           <p className="text-xs font-bold uppercase tracking-[0.18em] text-amber-700">Corrections requested</p>
           <h2 className="mt-1 text-base font-bold text-amber-950">Your reviewer returned this log</h2>
-          {Array.isArray(log.managerComments) && log.managerComments.length > 0 ? (
+          {Array.isArray(log.managerComments) && log.managerComments.some((comment) => reviewCommentKind(comment) === REVIEW_COMMENT_KIND.REVISION) ? (
             <div className="mt-3 space-y-2">
-              {log.managerComments.map((comment, index) => (
+              {log.managerComments.filter((comment) => reviewCommentKind(comment) === REVIEW_COMMENT_KIND.REVISION).map((comment, index) => (
                 <div key={comment.id || index} className="rounded-2xl border border-amber-200 bg-white p-3">
                   <p className="whitespace-pre-wrap text-sm font-semibold text-slate-900">{comment.comment}</p>
                   <p className="mt-1 text-xs font-semibold text-slate-500">

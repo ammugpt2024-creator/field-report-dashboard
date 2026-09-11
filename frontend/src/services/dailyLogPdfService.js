@@ -19,7 +19,8 @@ const REPORT_FONT_FAMILY = "Inter";
 // log date, Comments section, named signatures at the end, no activity status.
 // Version 3: compaction reports list each material with its specs, and tie
 // every test result to its material.
-export const DAILY_LOG_PDF_LAYOUT_VERSION = 3;
+// Version 4: comments the reviewer left when approving are printed.
+export const DAILY_LOG_PDF_LAYOUT_VERSION = 4;
 let reportFontsRegistered = false;
 const PDF_COLORS = {
   navy: [16, 24, 40],
@@ -2352,6 +2353,22 @@ function renderReferenceComments(doc, log, y) {
   return renderReferenceTextBox(doc, "Issues, delays, and site notes", notes || "No comments recorded.", y);
 }
 
+// Notes the reviewer wrote while approving, printed with the report they
+// approved. Comments from returns are left out: they were requests the
+// technician has since addressed, and the review history stays in the app.
+function renderReferenceReviewerComments(doc, log, y) {
+  const notes = (Array.isArray(log.managerComments) ? log.managerComments : [])
+    .filter((comment) => comment?.kind === "approval" && String(comment.comment || "").trim());
+  if (!notes.length) return y;
+  y = ensurePage(doc, y + 6, 80);
+  y = renderReferenceSectionBar(doc, "Reviewer Comments", y, { afterGap: 10 });
+  for (const note of notes) {
+    const byline = [note.author, note.createdAt ? formatDateOnly(note.createdAt) : ""].filter(Boolean).join(" \u00b7 ");
+    y = renderReferenceTextBox(doc, byline ? `Approval note \u2014 ${byline}` : "Approval note", String(note.comment).trim(), y);
+  }
+  return y;
+}
+
 // Each signature carries who signed and when. The old block showed two
 // unnamed signature images and a lone "Date Approved", so the page never said
 // who the reviewer was or when the technician submitted.
@@ -2419,6 +2436,7 @@ export async function generateDailyLogPdfBlob(log) {
   ], y, { columns: 2, cardHeight: 38, minSpace: 128 });
   y = await renderReferenceActivityDetails(doc, log, y);
   y = renderReferenceComments(doc, log, y);
+  y = renderReferenceReviewerComments(doc, log, y);
   // Signatures last: they attest the work recorded above them.
   await renderReferenceSignatures(doc, log, y);
   PdfFooter(doc, log);

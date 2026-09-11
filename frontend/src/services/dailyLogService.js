@@ -993,11 +993,30 @@ export async function updateDailyLogReviewInSupabase(log) {
 // reviewer's screen must not change until the server has accepted the
 // decision: writing locally first made a blocked save look like it had worked,
 // and left a copy on the reviewer's device that contradicted the database.
-export function buildApprovedDailyLog(log, reviewerName = "Manager", qcSignature = "") {
+// Review comments carry the decision they were made with. Comments written
+// before this existed have no kind; they came from returns.
+export const REVIEW_COMMENT_KIND = { APPROVAL: "approval", REVISION: "revision" };
+export const reviewCommentKind = (comment) =>
+  comment?.kind === REVIEW_COMMENT_KIND.APPROVAL ? REVIEW_COMMENT_KIND.APPROVAL : REVIEW_COMMENT_KIND.REVISION;
+
+// comment: optional note the reviewer wrote while approving. It used to be
+// dropped -- the review screen's comment box only fed Request Revision.
+export function buildApprovedDailyLog(log, reviewerName = "Manager", qcSignature = "", comment = "") {
   const approvedAt = new Date().toISOString();
   const signature = qcSignature || log.qcSignature || log.qc_signature || "";
+  const note = String(comment || "").trim();
+  const managerComments = note
+    ? [...(log.managerComments || []), {
+        id: crypto.randomUUID(),
+        author: reviewerName,
+        comment: note,
+        createdAt: approvedAt,
+        kind: REVIEW_COMMENT_KIND.APPROVAL
+      }]
+    : (log.managerComments || []);
   return {
     ...log,
+    managerComments,
     status: DAILY_LOG_STATUS.APPROVED,
     approvedAt,
     approved_at: approvedAt,
@@ -1014,7 +1033,8 @@ export function buildDailyLogRevision(log, comment, reviewerName = "Manager") {
     id: crypto.randomUUID(),
     author: reviewerName,
     comment: comment || "Revision requested.",
-    createdAt: new Date().toISOString()
+    createdAt: new Date().toISOString(),
+    kind: REVIEW_COMMENT_KIND.REVISION
   };
   return {
     ...log,

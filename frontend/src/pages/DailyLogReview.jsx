@@ -93,7 +93,7 @@ export default function DailyLogReview() {
     if (!log || savingDecision) return false;
     setSavingDecision(true);
     try {
-      const approved = buildApprovedDailyLog(log, reviewerName, signature);
+      const approved = buildApprovedDailyLog(log, reviewerName, signature, revisionComment);
       await updateDailyLogReviewInSupabase(approved);
       saveDailyLog(approved);
       setLog(approved);
@@ -231,11 +231,11 @@ export default function DailyLogReview() {
               value={revisionComment}
               onChange={(event) => setRevisionComment(event.target.value)}
               rows={4}
-              placeholder="What does the technician need to correct?"
+              placeholder="Comments for the technician"
               className="min-h-28 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-900 outline-none focus:border-blue-700 focus:ring-4 focus:ring-blue-100"
             />
             <p className="mt-2 text-xs font-semibold text-slate-500">
-              Required to request a revision. The technician sees this at the top of the log when they open it.
+              Required to request a revision, optional when approving. Approval comments are shown to the technician and printed on the approved report.
             </p>
             <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
               <button
