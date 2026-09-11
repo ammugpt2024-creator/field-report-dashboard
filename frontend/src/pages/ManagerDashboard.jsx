@@ -1170,12 +1170,15 @@ function ManagerDashboard() {
                               >
                                 <Eye className="h-3.5 w-3.5" /> View PDF
                               </button>
+                              {/* A decided log is locked: this page shows it read-only,
+                                  so the button must not promise editing. Same labels
+                                  as the mobile cards above. */}
                               <button
                                 type="button"
                                 onClick={() => navigate(`/manager/daily-log-review/${log.clientLogId || log.rowId}`)}
                                 className="inline-flex min-h-9 items-center gap-1.5 rounded-xl border border-blue-200 bg-blue-50 px-3 text-xs font-bold text-blue-700 hover:bg-blue-100"
                               >
-                                <Edit2 className="h-3.5 w-3.5" /> {log.bucket === "pending" ? "Review & Edit" : "Edit"}
+                                <ClipboardCheck className="h-3.5 w-3.5" /> {log.bucket === "pending" ? "Review" : "Open"}
                               </button>
                             </div>
                           </td>
