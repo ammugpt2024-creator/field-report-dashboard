@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Download, Edit, Eye, FileText, Image as ImageIcon, RotateCcw } from "lucide-react";
-import { DAILY_LOG_STATUS, REVIEW_COMMENT_KIND, formatLogStatus, reviewCommentKind, saveDailyLog, updateDailyLogPdfMetadataInSupabase } from "../../services/dailyLogService";
+import { DAILY_LOG_STATUS, REVIEW_COMMENT_KIND, formatLogStatus, getDailyLogById, pickDailyLogPdfFields, reviewCommentKind, saveDailyLog, updateDailyLogPdfMetadataInSupabase } from "../../services/dailyLogService";
 import { DAILY_LOG_PDF_LAYOUT_VERSION, regenerateDailyLogPdf } from "../../services/dailyLogPdfService";
 import { supabase } from "../../services/supabase";
 import { formatDateTime } from "../../modules/field-engineer/fieldEngineerData";
@@ -745,6 +745,13 @@ export default function DailyLogSummaryView({ log, onEdit, onViewPdf, onDownload
     if (!isUpgradingPdf) return undefined;
     let cancelled = false;
     const original = log;
+    // Put back only the stored PDF's details. The log itself may have moved on
+    // while this ran -- approved, say -- and restoring the whole copy taken at
+    // the start would undo that on this device.
+    const restoreStoredPdf = () => {
+      const current = getDailyLogById(original.id) || original;
+      saveDailyLog({ ...current, ...pickDailyLogPdfFields(original) });
+    };
     // A slow or failing upload can take well over 20s to give up, and the
     // stored PDF is hidden while this runs. Stop waiting on screen after 20s;
     // the rebuild still finishes, or restores the original, in the background.
@@ -762,11 +769,11 @@ export default function DailyLogSummaryView({ log, onEdit, onViewPdf, onDownload
         } else {
           // regenerate marks a failure on the log. For a click that is right;
           // for a background upgrade it would hide a stored PDF that works.
-          saveDailyLog(original);
+          restoreStoredPdf();
         }
       } catch (error) {
         console.warn("Automatic PDF upgrade failed; keeping the stored copy", error);
-        saveDailyLog(original);
+        restoreStoredPdf();
       } finally {
         window.clearTimeout(stopWaiting);
         if (!cancelled) setPdfUpgradeSettledFor(original?.id);

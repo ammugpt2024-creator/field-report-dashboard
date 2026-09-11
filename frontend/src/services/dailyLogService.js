@@ -547,7 +547,45 @@ export async function submitDailyLogToSupabase(log, { signatureId, submittedAt, 
   return data;
 }
 
+// The fields a PDF rebuild changes on a log. Nothing else of the log is the
+// rebuild's to write.
+const DAILY_LOG_PDF_FIELDS = [
+  "pdfStoragePath", "pdf_storage_path",
+  "pdfUrl", "pdf_url",
+  "finalPdfUrl", "final_pdf_url",
+  "pdfGeneratedAt", "pdf_generated_at",
+  "pdfGenerationStatus", "pdf_generation_status",
+  "pdfGenerationFailureReason", "pdf_generation_failure_reason",
+  "pdfGenerationError",
+  "pdfStorageMode", "pdf_storage_mode",
+  "pdfLayoutVersion", "pdf_layout_version"
+];
+
+export function pickDailyLogPdfFields(log = {}) {
+  return Object.fromEntries(DAILY_LOG_PDF_FIELDS.filter((key) => key in log).map((key) => [key, log[key]]));
+}
+
 export async function updateDailyLogPdfMetadataInSupabase(log, pdfPatch = {}) {
+  // Merge the PDF fields into the stored log rather than replacing it with the
+  // caller's copy. That copy can be older than the server's: a rebuild started
+  // before the reviewer approved finished after, and wrote the log back as it
+  // was before the approval -- reviewer comments and signature gone.
+  const { data: current, error: readError } = await supabase
+    .from("daily_logs")
+    .select("payload")
+    .eq("client_log_id", String(log.id))
+    .maybeSingle();
+  if (readError) throw readError;
+
+  let storedPayload = current?.payload;
+  if (typeof storedPayload === "string") {
+    try {
+      storedPayload = JSON.parse(storedPayload);
+    } catch {
+      storedPayload = null;
+    }
+  }
+
   const payload = {
     pdf_url: pdfPatch.pdfUrl || pdfPatch.pdf_url || pdfPatch.finalPdfUrl || pdfPatch.final_pdf_url || "",
     pdf_storage_path: pdfPatch.pdfStoragePath || pdfPatch.pdf_storage_path || "",
@@ -555,7 +593,9 @@ export async function updateDailyLogPdfMetadataInSupabase(log, pdfPatch = {}) {
     pdf_generated: true,
     pdf_generation_status: pdfPatch.pdfGenerationStatus || pdfPatch.pdf_generation_status || "generated",
     pdf_generation_failure_reason: pdfPatch.pdfGenerationFailureReason || pdfPatch.pdf_generation_failure_reason || "",
-    payload: sanitizeDailyLogForSupabasePayload({ ...log, ...pdfPatch }),
+    payload: storedPayload && typeof storedPayload === "object"
+      ? { ...storedPayload, ...pickDailyLogPdfFields(pdfPatch) }
+      : sanitizeDailyLogForSupabasePayload({ ...log, ...pdfPatch }),
     updated_at: new Date().toISOString()
   };
 
@@ -910,6 +950,27 @@ export async function syncDailyLogsFromSupabase({ userId } = {}) {
           supabase_daily_log_id: row.id,
           syncStatus: "Synced"
         });
+        continue;
+      }
+
+      // An approved log's review record is the server's. A copy already marked
+      // approved on this device was never refreshed, so it could stay without
+      // the comments the reviewer saved with the approval.
+      if (rowStatus === DAILY_LOG_STATUS.APPROVED && localStatus === DAILY_LOG_STATUS.APPROVED) {
+        const serverComments = Array.isArray(payload.managerComments) ? payload.managerComments : [];
+        if (serverComments.length && JSON.stringify(serverComments) !== JSON.stringify(local.managerComments || [])) {
+          changed = true;
+          byClientId.set(clientId, {
+            ...local,
+            managerComments: serverComments,
+            approvedBy: payload.approvedBy || payload.approved_by || local.approvedBy || "",
+            approved_by: payload.approved_by || payload.approvedBy || local.approved_by || "",
+            approvedAt: payload.approvedAt || row.approved_at || local.approvedAt || "",
+            approved_at: payload.approved_at || row.approved_at || local.approved_at || "",
+            qcSignature: payload.qcSignature || payload.qc_signature || local.qcSignature || "",
+            qc_signature: payload.qc_signature || payload.qcSignature || local.qc_signature || ""
+          });
+        }
       }
     }
 

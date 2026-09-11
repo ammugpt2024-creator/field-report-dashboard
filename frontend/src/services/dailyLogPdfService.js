@@ -3,7 +3,7 @@ import autoTable from "jspdf-autotable";
 import interRegularUrl from "../assets/fonts/Inter-Regular.ttf?url";
 import interSemiBoldUrl from "../assets/fonts/Inter-SemiBold.ttf?url";
 import { supabase } from "./supabase.js";
-import { saveDailyLog } from "./dailyLogService.js";
+import { fetchDailyLogFromSupabase, saveDailyLog } from "./dailyLogService.js";
 import { getStorageConfigError, logStorageStep } from "./storageDiagnosticsService.js";
 
 import { getCompanyBranding } from "./brandingService";
@@ -2524,19 +2524,56 @@ export async function createDailyLogPdfSignedUrl(storagePath) {
   return data.signedUrl;
 }
 
+const LOCKED_DAILY_LOG_STATUSES = ["submitted", "pending_manager_review", "approved"];
+
+// A submitted or approved log can no longer be edited by its technician, and
+// the server holds the reviewer's decision on it -- status, comments,
+// signature, approval date. A device's saved copy can lag behind: the
+// technician's is refreshed only by the background sync, and the reviewer's
+// was captured when the review page opened. Draw locked logs from the server's
+// copy. Returned logs and drafts stay with the device, which may hold edits
+// not yet submitted.
+async function withServerReviewState(log) {
+  if (!LOCKED_DAILY_LOG_STATUSES.includes(String(log?.status || "").toLowerCase())) return log;
+  try {
+    const serverLog = await fetchDailyLogFromSupabase(log.supabaseDailyLogId || log.supabase_daily_log_id || log.id);
+    return serverLog ? { ...log, ...serverLog } : log;
+  } catch (error) {
+    console.warn("[Daily Log PDF] Could not load the server copy; drawing from this device's copy", error);
+    return log;
+  }
+}
+
+function reviewStateKey(log = {}) {
+  return [
+    String(log.status || "").toLowerCase(),
+    log.approvedAt || log.approved_at || "",
+    log.returnedAt || log.returned_at || "",
+    (Array.isArray(log.managerComments) ? log.managerComments : []).length
+  ].join("|");
+}
+
+const pendingPdfState = {
+  pdfGenerationStatus: "pending",
+  pdf_generation_status: "pending",
+  pdfGenerationFailureReason: "",
+  pdf_generation_failure_reason: "",
+  pdfGenerationError: ""
+};
+
 export async function regenerateDailyLogPdf(log) {
-  const pendingLog = saveDailyLog({
-    ...log,
-    pdfGenerationStatus: "pending",
-    pdf_generation_status: "pending",
-    pdfGenerationFailureReason: "",
-    pdf_generation_failure_reason: "",
-    pdfGenerationError: ""
-  });
+  let pendingLog = saveDailyLog({ ...(await withServerReviewState(log)), ...pendingPdfState });
 
   try {
-    const hydratedLog = await hydrateDailyLogForPdf(pendingLog);
-    const pdfBlob = await generateDailyLogPdfBlob(hydratedLog);
+    let pdfBlob = await generateDailyLogPdfBlob(await hydrateDailyLogForPdf(pendingLog));
+    // A reviewer can approve or return the log while this runs. The PDF is
+    // stored at one path for everyone, so a copy drawn before the decision
+    // would replace the decided report. Draw it again from the decision.
+    const latest = await withServerReviewState(pendingLog);
+    if (reviewStateKey(latest) !== reviewStateKey(pendingLog)) {
+      pendingLog = saveDailyLog({ ...latest, ...pendingPdfState });
+      pdfBlob = await generateDailyLogPdfBlob(await hydrateDailyLogForPdf(pendingLog));
+    }
     console.info("[Daily Log PDF] PDF generated", { dailyLogId: pendingLog.id, size: pdfBlob.size });
     const pdfDataUrl = pdfBlob.size <= LOCAL_PDF_CACHE_LIMIT_BYTES ? await blobToDataUrl(pdfBlob) : "";
     let storagePath = "";

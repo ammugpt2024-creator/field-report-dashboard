@@ -441,9 +441,23 @@ export async function sendDailyLogReviewEmail(log, { pdfBlob = null, pdfUrl = ''
   });
 }
 
+function escapeEmailText(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/\n/g, '<br/>');
+}
+
 export function buildDailyLogApprovalEmail({ log, reviewerName, viewUrl, pdfUrl }) {
   const logNumber = getDailyLogNumber(log);
   const projectName = log.projectName || log.project_name || 'Project';
+  // What the reviewer wrote while approving, so it reaches the technician
+  // without them having to open the log.
+  const approvalNotes = (Array.isArray(log.managerComments) ? log.managerComments : [])
+    .filter((comment) => comment?.kind === 'approval' && String(comment.comment || '').trim())
+    .map((comment) => escapeEmailText(String(comment.comment).trim()));
   return {
     subject: `[APPROVED] Daily Field Log ${logNumber} — ${projectName}`,
     html: baseEmailShell({
@@ -456,6 +470,7 @@ export function buildDailyLogApprovalEmail({ log, reviewerName, viewUrl, pdfUrl 
         ['Approved By', reviewerName],
         ['Approved On', formatDateTime(log.approvedAt || log.approved_at || new Date())],
         ['Status', 'Approved'],
+        ...(approvalNotes.length ? [['Reviewer Comments', approvalNotes.join('<br/><br/>')]] : []),
         ['Countersigned PDF', 'Attached to this email'],
         ['Secure Link', secureLinkValue(pdfUrl)]
       ],
