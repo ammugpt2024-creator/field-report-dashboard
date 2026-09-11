@@ -37,8 +37,15 @@ function pdfValue(value) {
   return value == null || value === "" ? "N/A" : String(value);
 }
 
+// "2026-09-10" is a calendar date, not an instant. new Date() reads it as
+// midnight UTC, which in every US timezone is the previous evening, so each
+// daily log printed the day before it happened. Format those from their parts.
+const DATE_ONLY_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
+
 function formatDateOnly(value) {
   if (!value) return "N/A";
+  const dateOnly = DATE_ONLY_PATTERN.exec(String(value).trim());
+  if (dateOnly) return `${dateOnly[2]}/${dateOnly[3]}/${dateOnly[1]}`;
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return pdfValue(value);
   return date.toLocaleDateString("en-US", {
@@ -1049,6 +1056,7 @@ function PdfFooter(doc, log) {
   const pageCount = doc.getNumberOfPages();
   const reportNumber = getDailyReportNumber(log);
   const projectName = doc.splitTextToSize(getProjectName(log), 230)[0];
+  const generatedAt = formatDateTime(log.pdfGeneratedAt || log.pdf_generated_at || new Date().toISOString());
 
   for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
     doc.setPage(pageNumber);
@@ -1058,7 +1066,7 @@ function PdfFooter(doc, log) {
     doc.line(PAGE_MARGIN, pageHeight - 24, pageWidth - PAGE_MARGIN, pageHeight - 24);
     setReportFont(doc, "regular", 8, PDF_COLORS.muted);
     doc.text(projectName, PAGE_MARGIN, pageHeight - 12);
-    doc.text(reportNumber, pageWidth / 2, pageHeight - 12, { align: "center" });
+    doc.text(`${reportNumber}  •  Generated ${generatedAt}`, pageWidth / 2, pageHeight - 12, { align: "center" });
     doc.text(`Page ${pageNumber} of ${pageCount}`, pageWidth - PAGE_MARGIN, pageHeight - 12, { align: "right" });
   }
 }
@@ -1207,9 +1215,9 @@ async function renderReferenceDailyLogHeader(doc, log, y) {
   doc.setFillColor(...PDF_COLORS.navy);
   doc.roundedRect(headerX, y, headerWidth, headerHeight, 12, 12, "F");
 
-  const logoX = headerX + 14;
-  const logoY = y + 14;
   const logoBoxSize = 58;
+  const logoX = headerX + 16;
+  const logoY = y + (headerHeight - logoBoxSize) / 2;
   doc.setFillColor(...PDF_COLORS.white);
   doc.roundedRect(logoX, logoY, logoBoxSize, logoBoxSize, 9, 9, "F");
   const logoRendered = logoSource?.startsWith("data:image/")
@@ -1220,25 +1228,23 @@ async function renderReferenceDailyLogHeader(doc, log, y) {
     doc.text("DE", logoX + logoBoxSize / 2, logoY + 36, { align: "center" });
   }
 
-  setHeaderFont(PDF_COLORS.white, 8.5, "bold");
-  doc.text(`Technician: ${getTechnicianName(log)}`, logoX, y + 79);
-  setHeaderFont(headerSoft, 8, "bold");
-  doc.text(`Generated: ${formatDateTime(log.pdfGeneratedAt || log.pdf_generated_at || new Date().toISOString())}`, logoX, y + 91);
-
+  // Title block, centred. The technician is already in Project Information
+  // and the generated time is in the footer, so neither is squeezed in here.
   setHeaderFont(PDF_COLORS.white, 20, "bold");
-  doc.text("Daily Log", pageWidth / 2, y + 31, { align: "center" });
-  setHeaderFont(headerMuted, 10, "bold");
-  doc.text(getProjectName(log), pageWidth / 2, y + 48, { align: "center" });
-  setHeaderFont(headerSoft, 8, "normal");
-  doc.text(`DFR: ${getDailyReportNumber(log)}`, pageWidth / 2, y + 68, { align: "center" });
-  doc.text(`Date: ${formatDateOnly(getLogDate(log))}`, pageWidth / 2, y + 81, { align: "center" });
+  doc.text("Daily Field Report", pageWidth / 2, y + 36, { align: "center" });
+  setHeaderFont(headerMuted, 10.5, "bold");
+  doc.text(getProjectName(log), pageWidth / 2, y + 54, { align: "center" });
+  setHeaderFont(headerSoft, 8.5, "normal");
+  const shift = log.shift || log.shift_name;
+  const metaLine = [`DFR ${getDailyReportNumber(log)}`, formatDateOnly(getLogDate(log)), shift].filter(Boolean).join("   •   ");
+  doc.text(metaLine, pageWidth / 2, y + 72, { align: "center" });
 
   setHeaderFont(PDF_COLORS.navy, 7.4, "bold");
   const badgeText = statusText.toUpperCase();
   const pillWidth = Math.max(78, doc.getTextWidth(badgeText) + 14);
   const pillHeight = 18;
   const pillX = headerX + headerWidth - pillWidth - 14;
-  const pillY = y + 66;
+  const pillY = y + (headerHeight - pillHeight) / 2;
   doc.setFillColor(...PDF_COLORS.soft);
   doc.roundedRect(pillX, pillY, pillWidth, pillHeight, 7, 7, "F");
   setHeaderFont(PDF_COLORS.navy, 7.4, "bold");
@@ -2171,10 +2177,15 @@ async function renderReferenceActivityDetails(doc, log, y) {
   if (!activities.length) return y;
 
   for (const [index, activity] of activities.entries()) {
-    // Each activity starts on a fresh page so its reports and attachments stay together
-    // and the next activity never interleaves with the previous one's content.
-    doc.addPage("letter", "portrait");
-    y = PAGE_TOP_MARGIN;
+    // Later activities start on a fresh page so each one's reports and
+    // attachments stay together. The first follows Project Information
+    // directly: breaking before it left most of page one blank.
+    if (index > 0) {
+      doc.addPage("letter", "portrait");
+      y = PAGE_TOP_MARGIN;
+    } else {
+      y = ensurePage(doc, y + 6, 160);
+    }
 
     const reports = getScopedActivityReports(activity, log);
     const attachments = getActivityAttachments(activity, log);
@@ -2233,24 +2244,55 @@ async function renderReferenceActivityDetails(doc, log, y) {
   return y;
 }
 
+// The technician's notes for the day -- delays, safety observations, site
+// conditions. They are entered in the editor's Comments box but were never
+// printed, so the PDF of record dropped them.
+function renderReferenceComments(doc, log, y) {
+  const notes = String(log.notes || "").trim();
+  y = ensurePage(doc, y + 6, 80);
+  y = renderReferenceSectionBar(doc, "Comments", y, { afterGap: 10 });
+  return renderReferenceTextBox(doc, "Issues, delays, and site notes", notes || "No comments recorded.", y);
+}
+
+// Each signature carries who signed and when. The old block showed two
+// unnamed signature images and a lone "Date Approved", so the page never said
+// who the reviewer was or when the technician submitted.
 async function renderReferenceSignatures(doc, log, y) {
-  y = ensurePage(doc, y, 130);
+  y = ensurePage(doc, y, 150);
   y += 6;
   y = renderReferenceSectionBar(doc, "Signatures", y, { afterGap: 16 });
   const width = getContentWidth(doc);
-  const columns = [PAGE_MARGIN, PAGE_MARGIN + width * 0.34, PAGE_MARGIN + width * 0.68];
-  const labels = ["Technician Signature", "QA Reviewer Signature", "Date Approved"];
-  labels.forEach((label, index) => {
+  const blockWidth = width * 0.44;
+  const columns = [PAGE_MARGIN, PAGE_MARGIN + width * 0.56];
+  const submittedAt = log.submittedAt || log.submitted_at;
+  const approvedAt = log.approvedAt || log.approved_at;
+  const blocks = [
+    {
+      label: "Technician Signature",
+      image: log.technicianSignature || log.technician_signature || log.technicianSignatureUrl || log.technician_signature_url,
+      name: getTechnicianName(log),
+      detail: submittedAt ? `Submitted ${formatDateOnly(submittedAt)}` : "Not yet submitted"
+    },
+    {
+      label: "QA Reviewer Signature",
+      image: log.qcSignature || log.qc_signature || log.qcSignatureUrl || log.qc_signature_url,
+      name: log.approvedBy || log.approved_by || "",
+      detail: approvedAt ? `Approved ${formatDateOnly(approvedAt)}` : "Pending review"
+    }
+  ];
+  for (const [index, block] of blocks.entries()) {
+    const x = columns[index];
     setReportFont(doc, "medium", 8, PDF_COLORS.muted);
-    doc.text(label.toUpperCase(), columns[index], y, { charSpace: 0.4 });
+    doc.text(block.label.toUpperCase(), x, y, { charSpace: 0.4 });
+    await renderSignatureImage(doc, block.image, x, y + 8, blockWidth, 30);
     doc.setDrawColor(...PDF_COLORS.line);
-    doc.line(columns[index], y + 40, columns[index] + width * 0.28, y + 40);
-  });
-  await renderSignatureImage(doc, log.technicianSignature || log.technician_signature || log.technicianSignatureUrl || log.technician_signature_url, columns[0], y + 8, width * 0.28, 28);
-  await renderSignatureImage(doc, log.qcSignature || log.qc_signature || log.qcSignatureUrl || log.qc_signature_url, columns[1], y + 8, width * 0.28, 28);
-  setReportFont(doc, "regular", 10, PDF_COLORS.navy);
-  doc.text(log.approvedAt || log.approved_at ? formatDateOnly(log.approvedAt || log.approved_at) : "", columns[2], y + 32);
-  return y + 56;
+    doc.line(x, y + 44, x + blockWidth, y + 44);
+    setReportFont(doc, "semibold", 9.5, PDF_COLORS.navy);
+    doc.text(block.name || "—", x, y + 57);
+    setReportFont(doc, "regular", 8, PDF_COLORS.muted);
+    doc.text(block.detail, x, y + 69);
+  }
+  return y + 80;
 }
 // Fully hydrated generation (project info, DB attachment rows, concrete report
 // records) — guarantees the blob matches what regenerateDailyLogPdf produces.
@@ -2277,8 +2319,10 @@ export async function generateDailyLogPdfBlob(log) {
     { label: "Weather", value: getWeatherText(log) },
     { label: "Shift", value: log.shift || log.shift_name || "Not recorded" }
   ], y, { columns: 2, cardHeight: 38, minSpace: 128 });
-  y = await renderReferenceSignatures(doc, log, y);
-  await renderReferenceActivityDetails(doc, log, y);
+  y = await renderReferenceActivityDetails(doc, log, y);
+  y = renderReferenceComments(doc, log, y);
+  // Signatures last: they attest the work recorded above them.
+  await renderReferenceSignatures(doc, log, y);
   PdfFooter(doc, log);
 
   const mainBlob = doc.output("blob");
