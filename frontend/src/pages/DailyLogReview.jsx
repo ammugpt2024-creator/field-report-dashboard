@@ -155,10 +155,16 @@ export default function DailyLogReview() {
     }
   }
 
+  // A return has to say what to fix. Without this the technician opened the
+  // log to a "Returned Corrections" badge and the placeholder "Revision
+  // requested." -- nothing to act on.
+  const hasRevisionComment = revisionComment.trim().length > 0;
+
   function requestRevision() {
-    if (!log || savingDecision) return;
-    persistDecision(buildDailyLogRevision(log, revisionComment, reviewerName));
-    setRevisionComment("");
+    if (!log || savingDecision || !hasRevisionComment) return;
+    // The comment is not cleared here: a successful save navigates away, and a
+    // failed one should leave the reviewer's text in place to retry.
+    persistDecision(buildDailyLogRevision(log, revisionComment.trim(), reviewerName));
   }
 
   if (loadingLog) {
@@ -224,9 +230,12 @@ export default function DailyLogReview() {
               value={revisionComment}
               onChange={(event) => setRevisionComment(event.target.value)}
               rows={4}
-              placeholder="Add manager comments or revision instructions."
+              placeholder="What does the technician need to correct?"
               className="min-h-28 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-900 outline-none focus:border-blue-700 focus:ring-4 focus:ring-blue-100"
             />
+            <p className="mt-2 text-xs font-semibold text-slate-500">
+              Required to request a revision. The technician sees this at the top of the log when they open it.
+            </p>
             <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
               <button
                 type="button"
@@ -240,7 +249,8 @@ export default function DailyLogReview() {
               <button
                 type="button"
                 onClick={requestRevision}
-                disabled={savingDecision}
+                disabled={savingDecision || !hasRevisionComment}
+                title={hasRevisionComment ? undefined : "Add a comment explaining what to fix"}
                 className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-4 text-sm font-bold text-amber-900 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <MessageSquareWarning className="h-4 w-4" />
