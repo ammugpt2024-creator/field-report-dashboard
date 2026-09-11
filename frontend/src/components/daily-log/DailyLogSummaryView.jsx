@@ -792,7 +792,9 @@ export default function DailyLogSummaryView({ log, onEdit, onViewPdf, onDownload
         )}
         {canHavePdf && pdfStatus === "failed" && (
           <p className="mt-4 rounded-2xl border border-rose-200 bg-rose-50 p-3 text-sm font-bold text-rose-800">
-            PDF storage configuration issue. Please contact administrator.
+            {/* Shown for every generation failure, not only storage ones, so it
+                must not name a cause -- the Reason line below carries that. */}
+            The PDF could not be generated. Use Regenerate PDF to try again.
             {(hydratedLog.pdfGenerationFailureReason || hydratedLog.pdf_generation_failure_reason || hydratedLog.pdfGenerationError) && (
               <span className="mt-1 block text-xs font-semibold">
                 Reason: {hydratedLog.pdfGenerationFailureReason || hydratedLog.pdf_generation_failure_reason || hydratedLog.pdfGenerationError}

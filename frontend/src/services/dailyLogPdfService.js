@@ -836,20 +836,40 @@ function arrayBufferToBase64(buffer) {
   return btoa(binary);
 }
 
+// Font bytes are fetched once per page load; registration happens on every
+// document. Fonts belong to a jsPDF instance, not to the module: the old
+// early-return on a module-wide flag registered Inter on the first PDF only,
+// while every later PDF still asked for Inter because the flag said it was
+// there. jsPDF then had no metrics for it and failed measuring text with
+// "Cannot read properties of undefined (reading 'widths')".
+let reportFontData = null;
+
+async function loadReportFontData() {
+  if (reportFontData) return reportFontData;
+  const [regularResponse, boldResponse] = await Promise.all([
+    fetch(interRegularUrl),
+    fetch(interSemiBoldUrl)
+  ]);
+  if (!regularResponse.ok || !boldResponse.ok) throw new Error("Unable to load report font assets.");
+  reportFontData = {
+    regular: arrayBufferToBase64(await regularResponse.arrayBuffer()),
+    bold: arrayBufferToBase64(await boldResponse.arrayBuffer())
+  };
+  return reportFontData;
+}
+
 async function registerReportFonts(doc) {
-  if (reportFontsRegistered) return;
   try {
-    const [regularResponse, boldResponse] = await Promise.all([
-      fetch(interRegularUrl),
-      fetch(interSemiBoldUrl)
-    ]);
-    if (!regularResponse.ok || !boldResponse.ok) throw new Error("Unable to load report font assets.");
-    doc.addFileToVFS("Inter-Regular.ttf", arrayBufferToBase64(await regularResponse.arrayBuffer()));
+    const { regular, bold } = await loadReportFontData();
+    doc.addFileToVFS("Inter-Regular.ttf", regular);
     doc.addFont("Inter-Regular.ttf", REPORT_FONT_FAMILY, "normal");
-    doc.addFileToVFS("Inter-SemiBold.ttf", arrayBufferToBase64(await boldResponse.arrayBuffer()));
+    doc.addFileToVFS("Inter-SemiBold.ttf", bold);
     doc.addFont("Inter-SemiBold.ttf", REPORT_FONT_FAMILY, "bold");
     reportFontsRegistered = true;
   } catch (error) {
+    // Describe THIS document: if embedding failed, it must draw in Helvetica
+    // even when an earlier document managed to embed Inter.
+    reportFontsRegistered = false;
     console.warn("[Daily Log PDF] Unable to embed report font; falling back to built-in sans font.", error);
   }
 }
