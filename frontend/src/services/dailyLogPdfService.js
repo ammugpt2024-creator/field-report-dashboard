@@ -1236,7 +1236,9 @@ async function renderReferenceDailyLogHeader(doc, log, y) {
   doc.text(getProjectName(log), pageWidth / 2, y + 54, { align: "center" });
   setHeaderFont(headerSoft, 8.5, "normal");
   const shift = log.shift || log.shift_name;
-  const metaLine = [`DFR ${getDailyReportNumber(log)}`, formatDateOnly(getLogDate(log)), shift].filter(Boolean).join("   •   ");
+  // The number already reads "<initials>DFR<n>" (PRDFR4), so a "DFR" prefix
+  // printed it twice. Label it as what it is.
+  const metaLine = [`Report No. ${getDailyReportNumber(log)}`, formatDateOnly(getLogDate(log)), shift].filter(Boolean).join("   •   ");
   doc.text(metaLine, pageWidth / 2, y + 72, { align: "center" });
 
   setHeaderFont(PDF_COLORS.navy, 7.4, "bold");
