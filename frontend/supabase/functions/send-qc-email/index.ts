@@ -100,6 +100,11 @@ Deno.serve(async (req) => {
     const fromEmail = settings.get("email_from_address") ||
       Deno.env.get("RESEND_FROM_EMAIL") ||
       "QCore <notifications@qcoreapp.com>";
+    // The app falls back to the platform's own mailbox when no person is
+    // resolved, so that address stays allowed for everyone.
+    const fromMailbox = normalizeEmail(String(fromEmail).match(/<([^>]+)>/)?.[1] || fromEmail);
+    if (fromMailbox) companyEmails.add(fromMailbox);
+    companyEmails.add("notifications@qcoreapp.com");
 
     const resendApiKey = Deno.env.get("RESEND_API_KEY");
     if (!resendApiKey) {

@@ -46,6 +46,7 @@ import {
 import ActionButton from '../components/ActionButton';
 import { BRAND, MODULE_NAMES, WORKFLOW_LABELS } from '../config/branding';
 import { localDateString } from "../utils/dates";
+import pdfWorkerUrl from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
 
 const ATTACHMENT_BUCKET = 'concrete-test-attachments';
 const PDF_BUCKET = 'report-pdfs';
@@ -1359,8 +1360,11 @@ async function renderPdfAttachmentPages(doc, attachment, accessUrl, cursor, marg
   const arrayBuffer = await getAttachmentArrayBuffer(attachment, accessUrl);
   if (!arrayBuffer) return cursor;
 
-  const pdfjs = await import('pdfjs-dist');
-  pdfjs.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.mjs`;
+  // The worker ships with the app. It used to be fetched from a public CDN,
+  // which the site's content policy blocks, tied report rendering to a third
+  // party, and broke wherever the site is reachable but the CDN is not.
+  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
   const pdfDocument = await pdfjs.getDocument({ data: arrayBuffer }).promise;
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
