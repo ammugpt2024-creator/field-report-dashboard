@@ -5,6 +5,7 @@ import {
   PTO_TYPES, ptoTypeLabel, PTO_STATUS_TONES,
   listPtoPolicies, listMyPtoRequests, createPtoRequest, cancelPtoRequest, computeBalances
 } from "../services/ptoService";
+import { localDateString } from "../utils/dates";
 
 // Count business days (Mon–Fri) inclusive between two ISO dates.
 function businessDays(start, end) {
@@ -44,7 +45,7 @@ export default function TimeOff() {
   const balances = useMemo(() => computeBalances(policies, requests), [policies, requests]);
 
   function openForm() {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = localDateString();
     setForm({ pto_type: "vacation", start_date: today, end_date: today, hours: 8, reason: "", busy: false, err: "" });
   }
 

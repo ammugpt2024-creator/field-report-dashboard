@@ -267,8 +267,8 @@ export default function ConcreteTestLogDetails() {
       .from('signatures')
       .createSignedUrl(path, 60 * 60 * 24 * 30);
     if (!signedError && signedData?.signedUrl) return signedData.signedUrl;
-
-    return supabase.storage.from('signatures').getPublicUrl(path).data?.publicUrl || '';
+    // signatures is a private bucket; a public URL never opens.
+    return '';
   }
 
   async function getStoredTechnicianSignatureUrl() {
@@ -278,7 +278,7 @@ export default function ConcreteTestLogDetails() {
         .from('signatures')
         .createSignedUrl(report.technician_signature_storage_path, 60 * 60 * 24 * 30);
       if (!signedError && signedData?.signedUrl) return signedData.signedUrl;
-      return supabase.storage.from('signatures').getPublicUrl(report.technician_signature_storage_path).data?.publicUrl || '';
+      return '';
     }
     return '';
   }
@@ -289,7 +289,7 @@ export default function ConcreteTestLogDetails() {
         .from('report-pdfs')
         .createSignedUrl(report.pdf_storage_path, 60 * 60 * 24 * 30);
       if (!signedError && signedData?.signedUrl) return signedData.signedUrl;
-      return supabase.storage.from('report-pdfs').getPublicUrl(report.pdf_storage_path).data?.publicUrl || '';
+      return report?.pdf_url || report?.final_pdf_url || '';
     }
 
     return report?.pdf_url || report?.final_pdf_url || '';

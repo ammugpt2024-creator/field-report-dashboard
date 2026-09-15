@@ -1,4 +1,5 @@
 import { supabase } from "./supabase";
+import { localDateString } from "../utils/dates";
 
 const STORAGE_KEY = "qcore:lab-cylinder-breaks";
 
@@ -53,7 +54,7 @@ function addDaysIso(dateStr, days) {
   const d = new Date(`${dateStr}T00:00:00`);
   if (Number.isNaN(d.getTime())) return "";
   d.setDate(d.getDate() + Number(days || 0));
-  return d.toISOString().slice(0, 10);
+  return localDateString(d);
 }
 
 function readAll() {

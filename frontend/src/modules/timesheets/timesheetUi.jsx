@@ -37,6 +37,7 @@ import {
 } from "../../services/timeCardService";
 import { resolveFallbackManager, resolveManagerForProject, sendTimesheetApprovalEmail } from "../../services/notificationService";
 import { formatDateTime } from "../field-engineer/fieldEngineerData";
+import { localDateString } from "../../utils/dates";
 
 function formatShortDate(value) {
   if (!value) return "-";
@@ -195,7 +196,7 @@ function WeekNavigator({ weekStartDate, weekEndDate, onNavigate, onJumpToDate, v
   currentMonday.setDate(currentMonday.getDate() + (currentMonday.getDay() === 0 ? -6 : 1 - currentMonday.getDay()));
   // Timesheets cannot be logged ahead of time, so navigation stops at the current week.
   const nextDisabled = !weekStart || Number.isNaN(weekStart.getTime()) || weekStart >= currentMonday;
-  const todayValue = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  const todayValue = localDateString();
   function openWeekPicker() {
     const input = weekPickerRef.current;
     if (!input) return;

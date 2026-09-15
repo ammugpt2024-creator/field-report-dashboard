@@ -45,6 +45,7 @@ import {
 } from '../workflow/workflowEngine';
 import ActionButton from '../components/ActionButton';
 import { BRAND, MODULE_NAMES, WORKFLOW_LABELS } from '../config/branding';
+import { localDateString } from "../utils/dates";
 
 const ATTACHMENT_BUCKET = 'concrete-test-attachments';
 const PDF_BUCKET = 'report-pdfs';
@@ -316,8 +317,10 @@ async function getStorageAccessUrl(bucket, path) {
 
   if (!signedError && signedData?.signedUrl) return signedData.signedUrl;
 
-  const { data } = supabase.storage.from(bucket).getPublicUrl(path);
-  return data?.publicUrl || '';
+  // Every bucket is private, so a "public URL" is a link that always fails.
+  // Returning nothing lets the caller show that the file is unavailable.
+  console.warn(`[Storage] No signed URL for ${bucket}/${path}`, signedError);
+  return '';
 }
 
 function omitPayloadColumn(payload, columnName) {
@@ -2252,7 +2255,7 @@ function ConcreteTestLog() {
     try {
       const weatherSummary = await getDailyWeatherSummary({
         projectLocation: projectInfo.project_location,
-        date: new Date().toISOString().slice(0, 10),
+        date: localDateString(),
         preferGps: true
       });
       setProjectInfo((previous) => ({ ...previous, weather: weatherSummary }));

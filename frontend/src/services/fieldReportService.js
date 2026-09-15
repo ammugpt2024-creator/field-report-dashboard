@@ -1,3 +1,4 @@
+import { localDateString } from "../utils/dates";
 const STORAGE_KEY = "qcore:field-reports";
 
 export const FIELD_REPORT_STATUS = {
@@ -42,7 +43,7 @@ export function createFieldReport(seed = {}) {
     reportNumber: `FR-${year}-${String(Date.now()).slice(-4)}`,
     status: FIELD_REPORT_STATUS.DRAFT,
     projectId: seed.projectId || "",
-    date: new Date().toISOString().slice(0, 10),
+    date: localDateString(),
     shift: "day",
     inspectorName: seed.inspectorName || "",
     weatherCondition: "",

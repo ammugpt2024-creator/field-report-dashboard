@@ -1,4 +1,5 @@
 import { syncTimesheet } from "./timesheetSyncService";
+import { localDateString } from "../utils/dates";
 
 const STORAGE_KEY = "imqcore:technician-time-cards";
 
@@ -43,7 +44,7 @@ function getYearFromDate(value) {
 }
 
 function toDateInputValue(date) {
-  return date.toISOString().slice(0, 10);
+  return localDateString(date);
 }
 
 function parseLocalDate(value) {

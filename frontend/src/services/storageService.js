@@ -34,8 +34,8 @@ export async function uploadReportPdf(projectId, reportId, pdfBlob) {
     .createSignedUrl(path, 60 * 60 * 24 * 30);
   if (!signedError && signedData?.signedUrl) return signedData.signedUrl;
 
-  const { data } = supabase.storage.from(PDF_BUCKET).getPublicUrl(path);
-  return data.publicUrl;
+  // report-pdfs is a private bucket: a public URL would never open.
+  throw signedError || new Error('The report PDF was stored but no link could be created.');
 }
 
 export async function uploadRowAttachments(projectId, reportId, rowId, files) {
@@ -74,6 +74,6 @@ export async function uploadSignature(projectId, reportId, signatureDataUrl, typ
     .createSignedUrl(path, 60 * 60 * 24 * 30);
   if (!signedError && signedData?.signedUrl) return signedData.signedUrl;
 
-  const { data } = supabase.storage.from(SIGNATURE_BUCKET).getPublicUrl(path);
-  return data.publicUrl;
+  // signatures is a private bucket: a public URL would never open.
+  throw signedError || new Error('The signature was stored but no link could be created.');
 }

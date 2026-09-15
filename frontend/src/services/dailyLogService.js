@@ -410,7 +410,7 @@ async function getCurrentSupabaseUser() {
 }
 
 function getDailyLogDate(log = {}) {
-  return log.date || log.log_date || log.reportDate || log.report_date || new Date().toISOString().slice(0, 10);
+  return log.date || log.log_date || log.reportDate || log.report_date || localDateString();
 }
 
 function getWeatherSummary(log = {}) {
@@ -566,6 +566,22 @@ export function pickDailyLogPdfFields(log = {}) {
 }
 
 export async function updateDailyLogPdfMetadataInSupabase(log, pdfPatch = {}) {
+  // Storing a rebuilt PDF is the only write a technician makes to a log that
+  // has already been submitted, so the database keeps submitted and approved
+  // logs read-only for them and accepts the PDF details through this function
+  // instead. It writes the PDF columns and nothing else.
+  const { error: rpcError } = await supabase.rpc("set_daily_log_pdf_metadata", {
+    p_client_log_id: String(log.id),
+    p_patch: pickDailyLogPdfFields(pdfPatch)
+  });
+  if (!rpcError) return;
+  // PGRST202 = the function is not in this database yet (migration 050 not
+  // applied). Fall back to the direct write, which older policies still allow.
+  if (rpcError.code !== "PGRST202") {
+    console.error("Daily log PDF details could not be saved", rpcError);
+    throw rpcError;
+  }
+
   // Merge the PDF fields into the stored log rather than replacing it with the
   // caller's copy. That copy can be older than the server's: a rebuild started
   // before the reviewer approved finished after, and wrote the log back as it

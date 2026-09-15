@@ -26,6 +26,15 @@ function Login() {
   });
   const [loginError, setLoginError] = useState("");
   const [signingIn, setSigningIn] = useState(false);
+  // The address the visitor arrived on, captured before this screen rewrites
+  // it. Only in-app paths are kept, so a crafted link cannot bounce someone to
+  // another site after they sign in.
+  const [requestedPath] = useState(() => {
+    const { pathname, search } = window.location;
+    const isAppPath = pathname.startsWith("/") && !pathname.startsWith("//") && !pathname.includes("\\");
+    const skip = ["/", "/welcome", "/reset-password"].includes(pathname);
+    return isAppPath && !skip ? `${pathname}${search || ""}` : "";
+  });
   const navigate = useNavigate();
 
   // Drop the marker once it has been read so a refresh doesn't repeat it.
@@ -77,7 +86,10 @@ function Login() {
         .eq("id", data?.user?.id)
         .maybeSingle();
 
-      navigate(getRoleHomeRoute(profile?.role), { replace: true });
+      // Land on the page they actually asked for. Every emailed link (View
+      // Submitted Log, approval notices) went through this screen and then
+      // dropped the reader on their dashboard instead.
+      navigate(requestedPath || getRoleHomeRoute(profile?.role), { replace: true });
     } catch (error) {
       setLoginError(error?.message || "Unable to sign in right now. Please try again.");
     } finally {

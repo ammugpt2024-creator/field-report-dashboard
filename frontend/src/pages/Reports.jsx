@@ -71,10 +71,10 @@ async function findStoredReportPdf(report, projectId) {
     if (!pdfFile) continue;
 
     const path = `${folder}/${pdfFile.name}`;
+    // report-pdfs is private, so only the signed link can be opened.
     const { data: signedData } = await supabase.storage.from('report-pdfs').createSignedUrl(path, 60 * 60 * 24);
-    const publicData = supabase.storage.from('report-pdfs').getPublicUrl(path).data;
     return {
-      url: signedData?.signedUrl || publicData?.publicUrl || '',
+      url: signedData?.signedUrl || '',
       path,
       updatedAt: pdfFile.updated_at || pdfFile.created_at || report.created_at
     };

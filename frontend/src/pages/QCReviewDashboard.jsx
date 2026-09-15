@@ -22,6 +22,7 @@ import {
   normalizeReportStatus
 } from '../workflow/workflowEngine';
 import { MODULE_NAMES } from '../config/branding';
+import { toLocalDateString } from "../utils/dates";
 
 const QUEUE_STATUSES = [
   REPORT_STATUS.SUBMITTED_FOR_QC,
@@ -69,7 +70,9 @@ function agingTone(hours) {
 }
 
 function normalizeDate(value) {
-  return value ? new Date(value).toISOString().slice(0, 10) : '';
+  // Local calendar date: a UTC conversion moved evening reports to the next
+  // day, so the date filter missed them.
+  return toLocalDateString(value);
 }
 
 function getPriority(report, agingHours) {

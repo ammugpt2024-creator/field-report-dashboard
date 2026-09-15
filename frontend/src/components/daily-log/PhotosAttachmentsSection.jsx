@@ -222,7 +222,11 @@ export function AttachmentRenderer({ attachment }) {
           const arrayBuffer = await response.arrayBuffer();
           const mammoth = await import("mammoth/mammoth.browser");
           const result = await mammoth.convertToHtml({ arrayBuffer });
-          if (active) setDocxHtml(result.value || "");
+          // The preview inserts this as real HTML, and the file came from
+          // whoever uploaded it, so strip anything that could run.
+          const DOMPurify = (await import("dompurify")).default;
+          const safeHtml = DOMPurify.sanitize(result.value || "", { USE_PROFILES: { html: true } });
+          if (active) setDocxHtml(safeHtml);
         }
       } catch (error) {
         console.error("Unable to render attachment", error);

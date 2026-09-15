@@ -59,6 +59,7 @@ import {
   TimeCardReadOnlyView,
   TimeCardsPage
 } from "../timesheets/timesheetUi";
+import { localDateString } from "../../utils/dates";
 
 function cardClass(extra = "") {
   return `rounded-2xl border border-slate-200 bg-white p-3 shadow-sm sm:p-4 ${extra}`;
@@ -4501,7 +4502,7 @@ export default function FieldEngineerWorkspace({
       projectNumber: log.projectNumber || log.project_number || String(defaultProjectId || ""),
       project_number: log.projectNumber || log.project_number || String(defaultProjectId || ""),
       section: activity.location || "",
-      date: log.date || new Date().toISOString().slice(0, 10),
+      date: log.date || localDateString(),
       client: log.client || log.clientName || companyName || "",
       testFor: "",
       test_for: "",
@@ -4616,7 +4617,7 @@ export default function FieldEngineerWorkspace({
       project_name: log.projectName || projectLabel,
       projectNumber: log.projectNumber || log.project_number || String(defaultProjectId || ""),
       project_number: log.projectNumber || log.project_number || String(defaultProjectId || ""),
-      date: log.date || new Date().toISOString().slice(0, 10),
+      date: log.date || localDateString(),
       client: log.client || log.clientName || companyName || "",
       serialNumber: "",
       gaugeModel: "",
@@ -4680,7 +4681,7 @@ export default function FieldEngineerWorkspace({
       project_name: log.projectName || projectLabel,
       projectNumber: log.projectNumber || log.project_number || String(defaultProjectId || ""),
       project_number: log.projectNumber || log.project_number || String(defaultProjectId || ""),
-      date: log.date || new Date().toISOString().slice(0, 10),
+      date: log.date || localDateString(),
       testRecords: [],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
@@ -4737,7 +4738,7 @@ export default function FieldEngineerWorkspace({
       project_name: log.projectName || projectLabel,
       projectNumber: log.projectNumber || log.project_number || String(defaultProjectId || ""),
       project_number: log.projectNumber || log.project_number || String(defaultProjectId || ""),
-      date: log.date || new Date().toISOString().slice(0, 10),
+      date: log.date || localDateString(),
       client: log.client || "",
       testRecords: [],
       createdAt: new Date().toISOString(),
@@ -4795,7 +4796,7 @@ export default function FieldEngineerWorkspace({
       project_name: log.projectName || projectLabel,
       projectNumber: log.projectNumber || log.project_number || String(defaultProjectId || ""),
       project_number: log.projectNumber || log.project_number || String(defaultProjectId || ""),
-      date: log.date || new Date().toISOString().slice(0, 10),
+      date: log.date || localDateString(),
       client: log.client || "",
       sampleType: "",
       castDate: "",
