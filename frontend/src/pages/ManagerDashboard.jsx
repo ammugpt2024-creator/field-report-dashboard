@@ -899,6 +899,10 @@ function ManagerDashboard() {
     setDailyLogs((current) => current.map((row) => (row.id === log.rowId ? { ...row, status: DAILY_LOG_STATUS.SUBMITTED } : row)));
   }
 
+  function openDailyLogDetails(log) {
+    navigate(`/manager/daily-log-review/${log.clientLogId || log.rowId}`);
+  }
+
   async function openDailyLogPdf(log) {
     try {
       if (log.pdfStoragePath) {
@@ -1058,7 +1062,11 @@ function ManagerDashboard() {
                   {pagedLogs.map((log) => (
                     <MobileRecordCard
                       key={log.rowId}
-                      title={log.number}
+                      title={(
+                        <button type="button" onClick={() => openDailyLogDetails(log)} title="Open the full daily log" className="font-bold text-slate-950 underline-offset-2 hover:text-blue-700 hover:underline">
+                          {log.number}
+                        </button>
+                      )}
                       status={(
                         <span className={`inline-flex shrink-0 items-center whitespace-nowrap rounded-full border px-2 py-0.5 text-[11px] font-bold ${logStatusPill(log.bucket).className}`}>
                           {logStatusPill(log.bucket).label}
@@ -1086,9 +1094,11 @@ function ManagerDashboard() {
                           <button type="button" onClick={() => openDailyLogPdf(log)} className="inline-flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-800">
                             <Eye className="h-3.5 w-3.5" /> View PDF
                           </button>
-                          <button type="button" onClick={() => navigate(`/manager/daily-log-review/${log.clientLogId || log.rowId}`)} className="inline-flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-xl bg-blue-700 px-3 text-xs font-bold text-white">
-                            <ClipboardCheck className="h-3.5 w-3.5" /> {log.bucket === "pending" ? "Review" : "Open"}
-                          </button>
+                          {log.bucket === "pending" && (
+                            <button type="button" onClick={() => openDailyLogDetails(log)} className="inline-flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-xl bg-blue-700 px-3 text-xs font-bold text-white">
+                              <ClipboardCheck className="h-3.5 w-3.5" /> Review
+                            </button>
+                          )}
                         </>
                       )}
                     />
@@ -1108,7 +1118,11 @@ function ManagerDashboard() {
                     <tbody>
                       {pagedLogs.map((log) => (
                         <tr key={log.rowId} className={`border-t border-slate-200 ${flagged.has(String(log.rowId)) ? "bg-amber-50" : ""}`}>
-                          <td className="px-3 py-3 font-bold text-slate-950">{log.number}</td>
+                          <td className="px-3 py-3 font-bold text-slate-950">
+                            <button type="button" onClick={() => openDailyLogDetails(log)} title="Open the full daily log" className="font-bold underline-offset-2 hover:text-blue-700 hover:underline">
+                              {log.number}
+                            </button>
+                          </td>
                           <td className="px-3 py-3 font-semibold">{log.projectName}</td>
                           <td className="px-3 py-3 font-semibold">
                             <span className="inline-flex items-center gap-1.5">
@@ -1170,16 +1184,18 @@ function ManagerDashboard() {
                               >
                                 <Eye className="h-3.5 w-3.5" /> View PDF
                               </button>
-                              {/* A decided log is locked: this page shows it read-only,
-                                  so the button must not promise editing. Same labels
-                                  as the mobile cards above. */}
-                              <button
-                                type="button"
-                                onClick={() => navigate(`/manager/daily-log-review/${log.clientLogId || log.rowId}`)}
-                                className="inline-flex min-h-9 items-center gap-1.5 rounded-xl border border-blue-200 bg-blue-50 px-3 text-xs font-bold text-blue-700 hover:bg-blue-100"
-                              >
-                                <ClipboardCheck className="h-3.5 w-3.5" /> {log.bucket === "pending" ? "Review" : "Open"}
-                              </button>
+                              {/* Only a pending log has something to act on. A decided
+                                  one is locked, and View PDF already shows it; its full
+                                  record opens from the log number. */}
+                              {log.bucket === "pending" && (
+                                <button
+                                  type="button"
+                                  onClick={() => openDailyLogDetails(log)}
+                                  className="inline-flex min-h-9 items-center gap-1.5 rounded-xl bg-blue-700 px-3 text-xs font-bold text-white hover:bg-blue-800"
+                                >
+                                  <ClipboardCheck className="h-3.5 w-3.5" /> Review
+                                </button>
+                              )}
                             </div>
                           </td>
                         </tr>
