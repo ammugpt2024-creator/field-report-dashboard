@@ -1,7 +1,9 @@
 
 [functions.send-qc-email]
 enabled = true
-verify_jwt = false
+# The function itself also requires a token that resolves to a real user: the
+# anon key is a valid JWT and ships in the app bundle, so it is not identity.
+verify_jwt = true
 import_map = "./functions/send-qc-email/deno.json"
 # Uncomment to specify a custom file path to the entrypoint.
 # Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
