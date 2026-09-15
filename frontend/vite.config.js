@@ -28,6 +28,25 @@ const target = branch === 'main' || branch === 'master' ? DB.prod : DB.dev
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  build: {
+    rollupOptions: {
+      output: {
+        // The login screen used to pull a 2.1 MB bundle because the PDF,
+        // document and canvas libraries rode along with it. Split out, they
+        // load when a report is actually opened.
+        // This build's bundler takes manualChunks only as a function.
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return undefined
+          if (/[\\/]node_modules[\\/](react|react-dom|react-router|react-router-dom|scheduler)[\\/]/.test(id)) return 'vendor-react'
+          if (/[\\/]node_modules[\\/](jspdf|jspdf-autotable|pdf-lib|canvg)[\\/]/.test(id)) return 'vendor-pdf'
+          if (/[\\/]node_modules[\\/]@supabase[\\/]/.test(id)) return 'vendor-supabase'
+          if (/[\\/]node_modules[\\/](lucide-react|react-icons)[\\/]/.test(id)) return 'vendor-icons'
+          if (/[\\/]node_modules[\\/]recharts[\\/]/.test(id)) return 'vendor-charts'
+          return undefined
+        }
+      }
+    }
+  },
   define: {
     __DB_URL__: JSON.stringify(target.url),
     __DB_ANON_KEY__: JSON.stringify(target.anonKey),

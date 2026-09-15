@@ -16,8 +16,9 @@ const supabaseKey = __DB_TARGET__ === 'production'
   : __DB_ANON_KEY__
 
 // Log the ACTUAL project this build talks to (ref + branch), so a misconfig is
-// obvious in the console.
-if (typeof console !== 'undefined') {
+// obvious in the console. Only outside production: on the live site it told
+// every visitor which database backs it.
+if (typeof console !== 'undefined' && __DB_TARGET__ !== 'production') {
   const ref = String(supabaseUrl).replace('https://', '').split('.')[0]
   console.info(`[QCore] Database: ${__DB_TARGET__} → ${ref} (branch: ${__DB_BRANCH__})`)
 }

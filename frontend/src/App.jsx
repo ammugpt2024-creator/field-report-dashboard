@@ -52,15 +52,73 @@ import RolesPermissions from "./pages/RolesPermissions";
 import AcceptInvite from "./pages/AcceptInvite";
 import ResetPassword from "./pages/ResetPassword";
 
+const MANAGER_ROLES = ["project_manager", "deputy_project_manager", "manager", "qc_manager", "admin", "company_admin"];
+const QC_ROLES = ["qc", "qc_approver", "qc_manager", "project_manager", "manager", "admin"];
+
+// These guards are declared here, not inside App. Defined inside, each render
+// of App created new component types, so React threw the routed page away and
+// mounted a fresh one -- losing whatever the user had typed -- every time the
+// auth session refreshed.
+function RoleHome() {
+  const { role, isPlatformAdmin, companyRole } = useAuth();
+  // Platform ownership and company-admin membership outrank the legacy
+  // profile role when deciding the landing page.
+  if (isPlatformAdmin) {
+    return <Navigate to="/platform-admin" replace />;
+  }
+  const normalized = String(role || "").toLowerCase();
+  if (companyRole === "company_admin" && ["viewer", "client", "company_admin"].includes(normalized)) {
+    return <Navigate to="/company-admin" replace />;
+  }
+  return <Navigate to={getRoleHomeRoute(role)} replace />;
+}
+
+// Role-gate a route: users outside the allowed roles are sent to their own home.
+function RequireRole({ roles, children }) {
+  const { role } = useAuth();
+  const normalizedRole = String(role || "").toLowerCase();
+  if (!roles.includes(normalizedRole)) {
+    return <Navigate to={getRoleHomeRoute(role)} replace />;
+  }
+  return children;
+}
+
+// Platform admin area: platform_admins membership (or the role) only.
+function RequirePlatformAdmin({ children }) {
+  const { role, isPlatformAdmin } = useAuth();
+  if (!isPlatformAdmin && String(role).toLowerCase() !== "platform_admin") {
+    return <Navigate to={getRoleHomeRoute(role)} replace />;
+  }
+  return children;
+}
+
+// Company admin area: the company_users role, the profile role, or legacy
+// admin-equivalents (qc_manager/admin run today's single company).
+function RequireCompanyAdmin({ children }) {
+  const { role, companyRole } = useAuth();
+  const normalized = String(role || "").toLowerCase();
+  const allowed = companyRole === "company_admin" ||
+    ["company_admin", "admin", "qc_manager"].includes(normalized);
+  if (!allowed) {
+    return <Navigate to={getRoleHomeRoute(role)} replace />;
+  }
+  return children;
+}
+
+function ProfileRoute() {
+  const { role } = useAuth();
+  if (String(role || "").toLowerCase() === "technician") {
+    return <Navigate to="/technician/dashboard?view=profile" replace />;
+  }
+  return <RoleHome />;
+}
+
 function App() {
 
   const {
     session,
-    role,
     loading,
-    profileReady,
-    isPlatformAdmin,
-    companyRole
+    profileReady
   } = useAuth();
 
   // profileReady guards the fresh-login race: the session exists before the
@@ -106,58 +164,6 @@ function App() {
       window.history.replaceState(null, "", "/welcome");
     }
     return <AcceptInvite flow={authFlow || ""} />;
-  }
-
-  function RoleHome() {
-    // Platform ownership and company-admin membership outrank the legacy
-    // profile role when deciding the landing page.
-    if (isPlatformAdmin) {
-      return <Navigate to="/platform-admin" replace />;
-    }
-    const normalized = String(role || "").toLowerCase();
-    if (companyRole === "company_admin" && ["viewer", "client", "company_admin"].includes(normalized)) {
-      return <Navigate to="/company-admin" replace />;
-    }
-    return <Navigate to={getRoleHomeRoute(role)} replace />;
-  }
-
-  // Role-gate a route: users outside the allowed roles are sent to their own home.
-  function RequireRole({ roles, children }) {
-    const normalizedRole = String(role || "").toLowerCase();
-    if (!roles.includes(normalizedRole)) {
-      return <Navigate to={getRoleHomeRoute(role)} replace />;
-    }
-    return children;
-  }
-
-  const MANAGER_ROLES = ["project_manager", "deputy_project_manager", "manager", "qc_manager", "admin", "company_admin"];
-
-  // Platform admin area: platform_admins membership (or the role) only.
-  function RequirePlatformAdmin({ children }) {
-    if (!isPlatformAdmin && String(role).toLowerCase() !== "platform_admin") {
-      return <Navigate to={getRoleHomeRoute(role)} replace />;
-    }
-    return children;
-  }
-
-  // Company admin area: the company_users role, the profile role, or legacy
-  // admin-equivalents (qc_manager/admin run today's single company).
-  function RequireCompanyAdmin({ children }) {
-    const normalized = String(role || "").toLowerCase();
-    const allowed = companyRole === "company_admin" ||
-      ["company_admin", "admin", "qc_manager"].includes(normalized);
-    if (!allowed) {
-      return <Navigate to={getRoleHomeRoute(role)} replace />;
-    }
-    return children;
-  }
-  const QC_ROLES = ["qc", "qc_approver", "qc_manager", "project_manager", "manager", "admin"];
-
-  function ProfileRoute() {
-    if (String(role || "").toLowerCase() === "technician") {
-      return <Navigate to="/technician/dashboard?view=profile" replace />;
-    }
-    return <RoleHome />;
   }
 
   return (

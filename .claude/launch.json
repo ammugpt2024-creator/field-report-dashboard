@@ -18,6 +18,22 @@
       "autoPort": false
     },
     {
+      "name": "qcore-prod-build",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "preview",
+        "--prefix",
+        "frontend",
+        "--",
+        "--port",
+        "5200",
+        "--strictPort"
+      ],
+      "port": 5200,
+      "autoPort": false
+    },
+    {
       "name": "resume-preview",
       "runtimeExecutable": "node",
       "runtimeArgs": [
