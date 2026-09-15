@@ -24,6 +24,8 @@ function Login() {
     }
     return "";
   });
+  const [loginError, setLoginError] = useState("");
+  const [signingIn, setSigningIn] = useState(false);
   const navigate = useNavigate();
 
   // Drop the marker once it has been read so a refresh doesn't repeat it.
@@ -49,16 +51,26 @@ function Login() {
       : `If an account exists for ${email}, a reset link is on its way. Check your inbox, including spam.`);
   }
 
-  async function handleLogin() {
+  // A real form submit, so Enter in either field signs in -- the fields used to
+  // sit outside a form and only a click on Login worked.
+  async function handleLogin(event) {
+    event.preventDefault();
+    if (signingIn) return;
+    setLoginError("");
+    setSigningIn(true);
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password,
+      });
 
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+      if (error) {
+        setLoginError(/failed to fetch|network/i.test(error.message || "")
+          ? "Unable to reach QCore. Check your internet connection and try again."
+          : error.message);
+        return;
+      }
 
-    if (error) {
-      alert(error.message);
-    } else {
       const { data: profile } = await supabase
         .from("profiles")
         .select("role")
@@ -66,6 +78,10 @@ function Login() {
         .maybeSingle();
 
       navigate(getRoleHomeRoute(profile?.role), { replace: true });
+    } catch (error) {
+      setLoginError(error?.message || "Unable to sign in right now. Please try again.");
+    } finally {
+      setSigningIn(false);
     }
   }
 
@@ -88,32 +104,45 @@ function Login() {
 
         </div>
 
-        <input
-          type="email"
-          placeholder="Enter your email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          className="w-full border border-gray-300 p-3 rounded-lg mb-4"
-        />
+        <form onSubmit={handleLogin}>
+          <input
+            type="email"
+            name="email"
+            autoComplete="username"
+            placeholder="Enter your email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            required
+            className="w-full border border-gray-300 p-3 rounded-lg mb-4"
+          />
 
-        <input
-          type="password"
-          placeholder="Enter your password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          className="w-full border border-gray-300 p-3 rounded-lg mb-6"
-        />
+          <input
+            type="password"
+            name="password"
+            autoComplete="current-password"
+            placeholder="Enter your password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+            className="w-full border border-gray-300 p-3 rounded-lg mb-6"
+          />
 
-        {notice && (
-          <p className="mb-4 rounded-lg bg-blue-50 px-3 py-2 text-sm font-semibold text-blue-800">{notice}</p>
-        )}
+          {loginError && (
+            <p role="alert" className="mb-4 rounded-lg bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-800">{loginError}</p>
+          )}
 
-        <button
-          onClick={handleLogin}
-          className="min-h-11 w-full rounded-lg bg-gradient-to-r from-accent-500 to-accent-600 p-3 font-semibold text-white shadow-sm shadow-accent-600/20 transition hover:from-accent-600 hover:to-accent-700"
-        >
-          Login
-        </button>
+          {notice && (
+            <p className="mb-4 rounded-lg bg-blue-50 px-3 py-2 text-sm font-semibold text-blue-800">{notice}</p>
+          )}
+
+          <button
+            type="submit"
+            disabled={signingIn}
+            className="min-h-11 w-full rounded-lg bg-gradient-to-r from-accent-500 to-accent-600 p-3 font-semibold text-white shadow-sm shadow-accent-600/20 transition hover:from-accent-600 hover:to-accent-700 disabled:cursor-not-allowed disabled:opacity-70"
+          >
+            {signingIn ? "Signing in…" : "Login"}
+          </button>
+        </form>
 
         <button
           type="button"
