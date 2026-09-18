@@ -10,7 +10,7 @@ import { localDateString } from "../utils/dates";
 // Count business days (Mon–Fri) inclusive between two ISO dates.
 function businessDays(start, end) {
   if (!start || !end) return 0;
-  const a = new Date(start), b = new Date(end);
+  const a = parseLocalDate(start), b = parseLocalDate(end);
   if (Number.isNaN(a) || Number.isNaN(b) || b < a) return 0;
   let n = 0;
   for (let d = new Date(a); d <= b; d.setDate(d.getDate() + 1)) {
@@ -18,6 +18,20 @@ function businessDays(start, end) {
     if (day !== 0 && day !== 6) n += 1;
   }
   return n;
+}
+
+// Date inputs give YYYY-MM-DD. new Date("2026-09-18") is midnight UTC, which
+// in the US is the previous evening, so weekdays came out a day early. Read
+// them as local calendar days.
+function parseLocalDate(value) {
+  return value ? new Date(`${value}T00:00:00`) : new Date(NaN);
+}
+
+// Calendar days in the range, inclusive.
+function calendarDays(start, end) {
+  const a = parseLocalDate(start), b = parseLocalDate(end);
+  if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime()) || b < a) return 0;
+  return Math.round((b - a) / 86400000) + 1;
 }
 
 export default function TimeOff() {
@@ -60,10 +74,19 @@ export default function TimeOff() {
 
   async function submit(event) {
     event.preventDefault();
-    if (!form.start_date || !form.end_date || new Date(form.end_date) < new Date(form.start_date)) {
+    if (!form.start_date || !form.end_date || parseLocalDate(form.end_date) < parseLocalDate(form.start_date)) {
       setForm((f) => ({ ...f, err: "Choose a valid date range." })); return;
     }
     if (!(Number(form.hours) > 0)) { setForm((f) => ({ ...f, err: "Enter the number of hours." })); return; }
+    // A day holds at most 24 hours. The form used to accept any figure, so a
+    // one-day request went in as 48 h.
+    const maxHours = calendarDays(form.start_date, form.end_date) * 24;
+    if (Number(form.hours) > maxHours) {
+      setForm((f) => ({ ...f, err: `${form.hours} h is more than the selected dates cover (${maxHours} h at most).` })); return;
+    }
+    if (exceedsBalance) {
+      setForm((f) => ({ ...f, err: `This is more than your ${balances[form.pto_type]?.available || 0} h ${ptoTypeLabel(form.pto_type).toLowerCase()} balance. Shorten the request or choose Unpaid.` })); return;
+    }
     setForm((f) => ({ ...f, busy: true, err: "" }));
     try {
       await createPtoRequest({ pto_type: form.pto_type, start_date: form.start_date, end_date: form.end_date, hours: form.hours, reason: form.reason });
@@ -79,7 +102,11 @@ export default function TimeOff() {
     try { await cancelPtoRequest(req); await load(); } catch (err) { window.alert(err.message); }
   }
 
-  const exceedsBalance = form && form.pto_type !== "unpaid" && Number(form.hours) > (balances[form.pto_type]?.available || 0);
+  // A leave type the company has not given an allowance is not "0 hours": it
+  // has not been set up, and the manager decides the request.
+  const hasPolicy = (type) => policies.some((p) => p.pto_type === type);
+  const exceedsBalance = form && form.pto_type !== "unpaid" && hasPolicy(form.pto_type) &&
+    Number(form.hours) > (balances[form.pto_type]?.available || 0);
 
   return (
     <div className="mx-auto max-w-5xl space-y-6 px-4 py-6">
@@ -99,11 +126,18 @@ export default function TimeOff() {
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {PTO_TYPES.filter((t) => t.value !== "unpaid").map((t) => {
           const b = balances[t.value] || { allotment: 0, used: 0, pending: 0, available: 0 };
+          const configured = hasPolicy(t.value);
           return (
             <div key={t.value} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
               <p className="text-xs font-semibold text-slate-500">{t.label}</p>
-              <p className="text-2xl font-bold leading-tight text-slate-900">{b.available}<span className="text-sm font-medium text-slate-400"> / {b.allotment} h</span></p>
-              <p className="text-[11px] font-medium text-slate-400">{b.used} used{b.pending ? ` · ${b.pending} pending` : ""}</p>
+              {configured ? (
+                <p className="text-2xl font-bold leading-tight text-slate-900">{b.available}<span className="text-sm font-medium text-slate-400"> / {b.allotment} h</span></p>
+              ) : (
+                <p className="mt-1 text-sm font-bold leading-tight text-slate-500">Not set up</p>
+              )}
+              <p className="text-[11px] font-medium text-slate-400">
+                {configured ? `${b.used} used` : "No allowance set by your company"}{b.pending ? ` · ${b.pending} h pending` : ""}
+              </p>
             </div>
           );
         })}
@@ -156,8 +190,10 @@ export default function TimeOff() {
               <label className="block"><span className="text-xs font-semibold text-slate-600">Hours</span>
                 <input type="number" min="0" step="0.5" value={form.hours} onChange={(e) => setForm({ ...form, hours: e.target.value, _hoursTouched: true })} className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 px-3 text-sm font-semibold" /></label>
               {form.pto_type !== "unpaid" && (
-                <p className={`text-xs font-medium ${exceedsBalance ? "text-amber-600" : "text-slate-400"}`}>
-                  {balances[form.pto_type]?.available || 0} h available{exceedsBalance ? " — this request exceeds your balance." : "."}
+                <p className={`text-xs font-medium ${exceedsBalance ? "text-rose-600" : "text-slate-400"}`}>
+                  {hasPolicy(form.pto_type)
+                    ? `${balances[form.pto_type]?.available || 0} h available${exceedsBalance ? " — this request is more than your balance." : "."}`
+                    : `Your company has not set a ${ptoTypeLabel(form.pto_type).toLowerCase()} allowance yet. Your manager will review this request.`}
                 </p>
               )}
               <label className="block"><span className="text-xs font-semibold text-slate-600">Reason (optional)</span>
