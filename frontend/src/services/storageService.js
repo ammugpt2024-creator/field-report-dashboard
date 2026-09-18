@@ -24,6 +24,7 @@ export async function uploadReportPdf(projectId, reportId, pdfBlob) {
   const path = `project-${projectId}/report-${reportId}/final-report.pdf`;
   const { error } = await supabase.storage.from(PDF_BUCKET).upload(path, pdfBlob, {
     contentType: 'application/pdf',
+    cacheControl: '0',
     upsert: true
   });
   if (error) {
@@ -45,6 +46,7 @@ export async function uploadRowAttachments(projectId, reportId, rowId, files) {
     const path = `project-${projectId}/report-${reportId}/truck-${rowId}-${safeName}`;
     const { error } = await supabase.storage.from(ATTACHMENT_BUCKET).upload(path, file, {
       contentType: file.type,
+      cacheControl: '0',
       upsert: true
     });
     if (error) {
@@ -63,6 +65,7 @@ export async function uploadSignature(projectId, reportId, signatureDataUrl, typ
   const path = getSignatureStoragePath(projectId, reportId, type);
   const { error } = await supabase.storage.from(SIGNATURE_BUCKET).upload(path, blob, {
     contentType: blob.type,
+    cacheControl: '0',
     upsert: true
   });
   if (error) {

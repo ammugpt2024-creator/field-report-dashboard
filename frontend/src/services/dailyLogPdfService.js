@@ -2492,6 +2492,7 @@ export async function uploadDailyLogPdf(log, pdfBlob) {
   });
   const { error } = await supabase.storage.from(DAILY_LOG_PDF_BUCKET).upload(storagePath, pdfBlob, {
     contentType: "application/pdf",
+    cacheControl: "0",
     upsert: true
   });
   if (error) {

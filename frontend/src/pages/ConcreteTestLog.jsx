@@ -2582,6 +2582,7 @@ function ConcreteTestLog() {
 
       const { error } = await supabase.storage.from(ATTACHMENT_BUCKET).upload(path, attachment.file, {
         contentType: attachment.type,
+        cacheControl: '0',
         upsert: true
       });
       if (error) throw error;
@@ -3004,6 +3005,7 @@ function ConcreteTestLog() {
     const signaturePath = `${projectFolder}/concrete-test-logs/log_${logId}/signatures/${technicianName}_technician_digital_signature_${dfrNumber}.png`;
     const { error } = await supabase.storage.from(SIGNATURE_BUCKET).upload(signaturePath, signatureBlob, {
       contentType: signatureBlob.type,
+      cacheControl: '0',
       upsert: true
     });
     if (error) throw error;
@@ -3089,6 +3091,7 @@ function ConcreteTestLog() {
     const path = `${projectFolder}/concrete-test-logs/log_${logId}/pdf/${fileName}`;
     const { error } = await supabase.storage.from(PDF_BUCKET).upload(path, pdfBlob, {
       contentType: 'application/pdf',
+      cacheControl: '0',
       upsert: true
     });
     if (error) throw error;

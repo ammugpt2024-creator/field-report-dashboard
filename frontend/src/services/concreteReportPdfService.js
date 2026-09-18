@@ -258,6 +258,7 @@ export async function generateAndUploadConcreteReportPdf(log, activity, report) 
   console.info("[Concrete Report PDF] Storage upload started", { bucket: CONCRETE_REPORT_PDF_BUCKET, storagePath, size: pdfBlob.size });
   const { error } = await supabase.storage.from(CONCRETE_REPORT_PDF_BUCKET).upload(storagePath, pdfBlob, {
     contentType: "application/pdf",
+    cacheControl: "0",
     upsert: true
   });
   if (error) {

@@ -836,7 +836,20 @@ function ManagerDashboard() {
     // Regenerate the stored PDF so it carries the approval date and reviewer,
     // sync the storage path back, then notify the employee with the PDF attached.
     try {
-      const withPdf = await regenerateTimeCardPdf(approved);
+      // regenerateTimeCardPdf reports a failed upload in the card rather than
+      // throwing. Carrying on silently left the "Submitted" PDF in storage
+      // while the approval email went out as if all was well. Retry once, then
+      // say plainly what happened.
+      const pdfFailed = (c) => (c.pdfGenerationStatus || c.pdf_generation_status) === "failed";
+      let withPdf = await regenerateTimeCardPdf(approved);
+      if (pdfFailed(withPdf)) withPdf = await regenerateTimeCardPdf(approved);
+      if (pdfFailed(withPdf)) {
+        window.alert(
+          "The timesheet is approved and the approval is recorded, but the approved PDF could not be saved " +
+          `(${withPdf.pdfGenerationFailureReason || "storage error"}). The stored PDF still shows Submitted. ` +
+          "Please report this to your QCore administrator."
+        );
+      }
       await syncTimesheet(withPdf);
       let pdfBlob = null;
       try {

@@ -317,6 +317,7 @@ export async function regenerateTimeCardPdf(card) {
     });
     const { error } = await supabase.storage.from(TIME_CARD_PDF_BUCKET).upload(storagePath, pdfBlob, {
       contentType: "application/pdf",
+      cacheControl: "0",
       upsert: true
     });
     if (error) {
