@@ -291,6 +291,7 @@ export default function CompanyAdminDashboard() {
   const [ptoRequests, setPtoRequests] = useState([]);
   const [ptoPolicies, setPtoPolicies] = useState([]);
   const [policyDraft, setPolicyDraft] = useState({});
+  const [policySave, setPolicySave] = useState({ busy: false, message: "", error: "" });
 
   async function refresh() {
     try {
@@ -329,9 +330,34 @@ export default function CompanyAdminDashboard() {
     catch (err) { window.alert(err.message); }
   }
 
-  async function savePolicy(ptoType) {
-    try { await upsertPtoPolicy(company.id, ptoType, policyDraft[ptoType]); await refresh(); }
-    catch (err) { window.alert(err.message); }
+  // One save for every leave type. Each type used to carry its own small Save
+  // button with no confirmation, so an admin could type all three allowances,
+  // press one button (or none) and leave the rest unsaved without knowing.
+  const policyTypes = PTO_TYPES.filter((t) => t.value !== "unpaid");
+  const savedHours = (type) => String(ptoPolicies.find((p) => p.pto_type === type)?.annual_hours ?? 0);
+  const policyDirty = policyTypes.some((t) => String(policyDraft[t.value] ?? "") !== savedHours(t.value));
+
+  async function saveAllPolicies() {
+    const invalid = policyTypes.find((t) => {
+      const value = Number(policyDraft[t.value]);
+      return !Number.isInteger(value) || value < 0 || value > 8784;
+    });
+    if (invalid) {
+      setPolicySave({ busy: false, message: "", error: `${invalid.label}: enter whole hours between 0 and 8784.` });
+      return;
+    }
+    setPolicySave({ busy: true, message: "", error: "" });
+    try {
+      for (const t of policyTypes) {
+        if (String(policyDraft[t.value] ?? "") !== savedHours(t.value)) {
+          await upsertPtoPolicy(company.id, t.value, policyDraft[t.value]);
+        }
+      }
+      await refresh();
+      setPolicySave({ busy: false, message: "Allowances saved. Employees see the new balances when they next open Time Off.", error: "" });
+    } catch (err) {
+      setPolicySave({ busy: false, message: "", error: err.message || "The allowances could not be saved." });
+    }
   }
 
   async function denyRequest(session) {
@@ -799,16 +825,42 @@ export default function CompanyAdminDashboard() {
               {/* Allotment policies */}
               <p className="mt-6 text-xs font-bold uppercase tracking-wide text-slate-500">Annual allotment (hours)</p>
               <p className="text-[11px] font-medium text-slate-400">Company-wide hours per leave type. Applies to every employee.</p>
-              <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
-                {PTO_TYPES.filter((t) => t.value !== "unpaid").map((t) => (
-                  <div key={t.value} className="rounded-xl border border-slate-200 p-2.5">
-                    <p className="text-xs font-semibold text-slate-600">{t.label}</p>
-                    <div className="mt-1 flex items-center gap-1">
-                      <input type="number" min="0" value={policyDraft[t.value] ?? ""} onChange={(e) => setPolicyDraft({ ...policyDraft, [t.value]: e.target.value })} className="min-h-9 w-full rounded-lg border border-slate-300 px-2 text-sm font-semibold" />
-                      <SmallButton onClick={() => savePolicy(t.value)} className="border-blue-200 text-blue-700 hover:bg-blue-50">Save</SmallButton>
+              <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                {policyTypes.map((t) => (
+                  <label key={t.value} className="block rounded-xl border border-slate-200 p-2.5">
+                    <span className="text-xs font-semibold text-slate-600">{t.label}</span>
+                    <div className="mt-1 flex items-center gap-1.5">
+                      <input
+                        type="number"
+                        min="0"
+                        step="1"
+                        value={policyDraft[t.value] ?? ""}
+                        onChange={(e) => {
+                          setPolicyDraft({ ...policyDraft, [t.value]: e.target.value });
+                          setPolicySave({ busy: false, message: "", error: "" });
+                        }}
+                        className="min-h-9 w-full rounded-lg border border-slate-300 px-2 text-sm font-semibold"
+                      />
+                      <span className="text-xs font-semibold text-slate-400">h / yr</span>
                     </div>
-                  </div>
+                    <span className="mt-1 block text-[11px] font-medium text-slate-400">
+                      {Number(savedHours(t.value)) > 0 ? `Saved: ${savedHours(t.value)} h` : "Not set up"}
+                    </span>
+                  </label>
                 ))}
+              </div>
+              <div className="mt-3 flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  onClick={saveAllPolicies}
+                  disabled={!policyDirty || policySave.busy}
+                  className="inline-flex min-h-9 items-center rounded-lg bg-blue-700 px-4 text-sm font-bold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500"
+                >
+                  {policySave.busy ? "Saving…" : "Save allowances"}
+                </button>
+                {policyDirty && !policySave.busy && <span className="text-xs font-semibold text-amber-700">Unsaved changes</span>}
+                {policySave.message && <span className="text-xs font-semibold text-emerald-700">{policySave.message}</span>}
+                {policySave.error && <span className="text-xs font-semibold text-rose-700">{policySave.error}</span>}
               </div>
 
               {/* History */}

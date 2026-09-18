@@ -139,7 +139,7 @@ export default function TimeOff() {
                 <p className="mt-1 text-sm font-bold leading-tight text-slate-500">Not set up</p>
               )}
               <p className="text-[11px] font-medium text-slate-400">
-                {configured ? `${b.used} used` : "No allowance set by your company"}{b.pending ? ` · ${b.pending} h pending` : ""}
+                {configured ? `${b.used} h used` : `No allowance set${b.used ? ` · ${b.used} h used` : ""}`}{b.pending ? ` · ${b.pending} h pending` : ""}
               </p>
             </div>
           );
