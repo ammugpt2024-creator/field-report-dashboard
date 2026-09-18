@@ -103,8 +103,11 @@ export default function TimeOff() {
   }
 
   // A leave type the company has not given an allowance is not "0 hours": it
-  // has not been set up, and the manager decides the request.
-  const hasPolicy = (type) => policies.some((p) => p.pto_type === type);
+  // has not been set up, and the manager decides the request. A saved 0 counts
+  // as not set up too: the admin form starts every type at 0, so a zero row
+  // usually means "never configured", and treating it as a real allowance
+  // blocked every request of that type.
+  const hasPolicy = (type) => policies.some((p) => p.pto_type === type && Number(p.annual_hours) > 0);
   const exceedsBalance = form && form.pto_type !== "unpaid" && hasPolicy(form.pto_type) &&
     Number(form.hours) > (balances[form.pto_type]?.available || 0);
 
