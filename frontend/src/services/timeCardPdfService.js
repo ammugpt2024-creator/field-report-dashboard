@@ -104,14 +104,16 @@ function openDataUrl(dataUrl, { download, fileName }) {
     return dataUrl;
   }
 
-  const pdfWindow = window.open("", "_blank", "noopener,noreferrer");
-  if (pdfWindow) {
-    pdfWindow.document.write(`<iframe title="Timesheet PDF" src="${dataUrl}" style="border:0;height:100vh;width:100vw"></iframe>`);
-    pdfWindow.document.close();
-  } else {
-    window.open(dataUrl, "_blank", "noopener,noreferrer");
-  }
-  return dataUrl;
+  // Open a blob: URL. The old code wrote an iframe into window.open("", ...),
+  // but with noopener that call always returns null, so it fell through to
+  // opening the data: URL itself -- which Chrome blocks for top-level tabs.
+  const [header, base64 = ""] = String(dataUrl).split(",");
+  const mime = header.match(/^data:([^;]+)/)?.[1] || "application/pdf";
+  const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+  const blobUrl = URL.createObjectURL(new Blob([bytes], { type: mime }));
+  window.open(blobUrl, "_blank", "noopener,noreferrer");
+  window.setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+  return blobUrl;
 }
 
 const DAY_LABELS = { Monday: "Mon", Tuesday: "Tue", Wednesday: "Wed", Thursday: "Thu", Friday: "Fri", Saturday: "Sat", Sunday: "Sun" };
@@ -355,7 +357,10 @@ export async function regenerateTimeCardPdf(card) {
       pdfGenerationFailureReason: "",
       pdf_generation_failure_reason: "",
       pdfGenerationError: "",
-      pdfStorageMode: "supabase"
+      pdfStorageMode: "supabase",
+      // The status this document was drawn for, so a later decision can be
+      // recognised as newer than the stored PDF.
+      pdfGeneratedForStatus: String(pendingCard.status || "").toLowerCase()
     });
     logPdfStep("Database updated", { timesheetId: generatedCard.id, storagePath, status: "generated" });
     return generatedCard;
@@ -376,7 +381,38 @@ export async function regenerateTimeCardPdf(card) {
   }
 }
 
+const DECIDED_TIME_CARD_STATUSES = ["approved", "completed", "returned", "rejected"];
+
+// Whether the stored PDF predates the decision on this timesheet. Approval
+// re-uploads the PDF from the manager's screen, but approvals made before that
+// worked -- or whose upload failed -- left the "Submitted" copy in storage, and
+// the employee's screen opened it as-is, indefinitely.
+function storedPdfPredatesDecision(card) {
+  const status = String(card.status || "").toLowerCase();
+  if (!DECIDED_TIME_CARD_STATUSES.includes(status)) return false;
+  const stampedStatus = card.pdfGeneratedForStatus || card.pdf_generated_for_status;
+  if (stampedStatus) return stampedStatus !== status;
+  const generatedAt = Date.parse(card.pdfGeneratedAt || card.pdf_generated_at || "");
+  const decidedAt = Date.parse(card.approvedAt || card.approved_at || card.reviewedAt || card.reviewed_at || card.returnedAt || card.returned_at || "");
+  if (Number.isNaN(generatedAt)) return true;
+  return !Number.isNaN(decidedAt) && generatedAt < decidedAt;
+}
+
 export async function openTimeCardPdf(card, { download = false } = {}) {
+  if (storedPdfPredatesDecision(card)) {
+    // Draw it again from the record as it stands now, and try to store it so
+    // everyone else gets the same copy. If storing is refused, still show the
+    // correct document rather than the outdated file.
+    logPdfStep("Stored PDF predates the decision; regenerating", { timesheetId: card.id, status: card.status });
+    const refreshed = await regenerateTimeCardPdf(card);
+    const refreshedFailed = (refreshed.pdfGenerationStatus || refreshed.pdf_generation_status) !== "generated";
+    const freshDataUrl = pdfDataUrlCache.get(card.id);
+    if (refreshedFailed && freshDataUrl) {
+      return openDataUrl(freshDataUrl, { download, fileName: getFileName(refreshed) });
+    }
+    card = refreshed;
+  }
+
   const storagePath = card.pdfStoragePath || card.pdf_storage_path;
   const fileName = getFileName(card);
   const cachedDataUrl = card.pdfDataUrl || pdfDataUrlCache.get(card.id);
