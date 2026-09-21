@@ -27,7 +27,8 @@ import { supabase } from "../services/supabase";
 import { useAuth } from "../context/AuthContext";
 import { isUnscoped, meetsLevel } from "../utils/moduleAccess";
 import { MODULE_NAMES } from "../config/branding";
-import { sendTimesheetDecisionEmail } from "../services/notificationService";
+import { sendPayrollTimesheetEmail, sendTimesheetDecisionEmail } from "../services/notificationService";
+import { formatPayrollPeriod, payrollPeriodFor } from "../utils/payrollPeriod";
 import { logAuditEvent } from "../services/auditLogService";
 import { createDailyLog, DAILY_LOG_STATUS, saveDailyLog } from "../services/dailyLogService";
 import { createDailyLogPdfSignedUrl } from "../services/dailyLogPdfService";
@@ -858,6 +859,28 @@ function ManagerDashboard() {
         console.warn("Approved timesheet PDF could not be attached to the email:", err);
       }
       await sendTimesheetDecisionEmail(withPdf, { decision: "approved", reviewerName, pdfBlob });
+
+      // Payroll copy. The address and the pay-period cycle are company
+      // settings, so payroll receives each approved timesheet as it is signed
+      // off instead of collecting PDFs from the app.
+      const { data: settings } = await supabase
+        .from("company_settings")
+        .select("payroll_email, payroll_period_start_date, payroll_period_days")
+        .maybeSingle();
+      if (settings?.payroll_email) {
+        const period = payrollPeriodFor(
+          withPdf.weekEndDate || withPdf.week_end_date || withPdf.weekStartDate,
+          settings.payroll_period_start_date,
+          settings.payroll_period_days
+        );
+        await sendPayrollTimesheetEmail(withPdf, {
+          payrollEmail: settings.payroll_email,
+          reviewerName,
+          periodLabel: formatPayrollPeriod(period),
+          companyName: profile?.company_name || "",
+          pdfBlob
+        }).catch((err) => console.warn("Payroll copy could not be sent:", err));
+      }
     } catch (err) {
       console.warn("Approved timesheet PDF could not be regenerated:", err);
       sendTimesheetDecisionEmail(approved, { decision: "approved", reviewerName })

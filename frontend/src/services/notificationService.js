@@ -319,6 +319,51 @@ export function buildTimesheetDecisionEmail({ card, decision, reviewerName, comm
   };
 }
 
+export function buildPayrollTimesheetEmail({ card, reviewerName, periodLabel, companyName }) {
+  const timesheetNumber = card.timesheetNumber || card.timesheet_number || `TS-${String(card.id || '').slice(0, 8).toUpperCase()}`;
+  const employee = card.technicianName || card.technician_name || '-';
+  const weekPeriod = formatWeekRangeForEmail(card.weekStartDate || card.week_start_date, card.weekEndDate || card.week_end_date);
+  const rows = [
+    ['Employee', employee],
+    ['Timesheet', timesheetNumber],
+    ...(periodLabel ? [['Pay Period', periodLabel]] : []),
+    ['Week', weekPeriod],
+    ['Regular Hours', `${card.totalRegularHours || card.total_regular_hours || '0.00'} hrs`],
+    ['Overtime Hours', `${card.totalOvertimeHours || card.total_overtime_hours || '0.00'} hrs`],
+    ['Total Hours', `${card.totalHours || card.total_hours || '0.00'} hrs`],
+    ['Approved By', reviewerName],
+    ['Approved On', formatDateTime(card.approvedAt || card.approved_at || card.reviewedAt || card.reviewed_at || new Date())],
+    ['Approved PDF', 'Attached to this email']
+  ];
+  return {
+    subject: `[PAYROLL] ${employee} — ${weekPeriod}${periodLabel ? ` (pay period ${periodLabel})` : ''}`,
+    html: baseEmailShell({
+      title: 'Approved timesheet for payroll',
+      intro: `${employee} filed this weekly timesheet at ${companyName || BRAND.name} and ${reviewerName} approved it. The approved PDF is attached.`,
+      rows
+    })
+  };
+}
+
+// Sends an approved timesheet to the company's payroll address. That address
+// usually sits outside the company roster (an accountant, a payroll bureau),
+// so it is configured once by a company admin rather than typed per send.
+export async function sendPayrollTimesheetEmail(card, { payrollEmail, reviewerName = 'Manager', periodLabel = '', companyName = '', pdfBlob = null } = {}) {
+  const recipient = String(payrollEmail || '').trim();
+  if (!recipient) return null;
+  const { subject, html } = buildPayrollTimesheetEmail({ card, reviewerName, periodLabel, companyName });
+  const timesheetNumber = card.timesheetNumber || card.timesheet_number || card.id;
+  return queueAndSendNotification({
+    reportId: null,
+    recipientEmail: recipient,
+    subject,
+    html,
+    notificationType: 'timesheet_payroll',
+    pdfBlob,
+    pdfFileName: `${String(timesheetNumber).replace(/[^a-zA-Z0-9_.-]/g, '_')}-Approved.pdf`
+  });
+}
+
 // The employee who filed the timesheet. Cards created before user ids were
 // stamped fall back to a profile lookup by full name.
 async function resolveTimesheetOwner(card) {

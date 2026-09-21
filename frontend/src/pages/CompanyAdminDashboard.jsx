@@ -33,8 +33,10 @@ import {
   denySupportRequest,
   endSupportSession,
   listCompanyReports,
-  supportScopeLabel
+  supportScopeLabel,
+  updateCompanyPayrollSettings
 } from "../services/tenantService";
+import { formatPayrollPeriod, payrollPeriodFor } from "../utils/payrollPeriod";
 import {
   PTO_TYPES, ptoTypeLabel, PTO_STATUS_TONES,
   listPtoPolicies, upsertPtoPolicy, listCompanyPtoRequests, decidePtoRequest
@@ -292,6 +294,8 @@ export default function CompanyAdminDashboard() {
   const [ptoPolicies, setPtoPolicies] = useState([]);
   const [policyDraft, setPolicyDraft] = useState({});
   const [policySave, setPolicySave] = useState({ busy: false, message: "", error: "" });
+  const [payrollDraft, setPayrollDraft] = useState({ payroll_email: "", payroll_period_start_date: "", payroll_period_days: "14" });
+  const [payrollSave, setPayrollSave] = useState({ busy: false, message: "", error: "" });
 
   async function refresh() {
     try {
@@ -318,6 +322,11 @@ export default function CompanyAdminDashboard() {
       setPtoRequests(ptoReqRows);
       setPtoPolicies(ptoPolicyRows);
       setPolicyDraft(PTO_TYPES.reduce((acc, t) => ({ ...acc, [t.value]: String(ptoPolicyRows.find((p) => p.pto_type === t.value)?.annual_hours ?? 0) }), {}));
+      setPayrollDraft({
+        payroll_email: ctx.settings?.payroll_email || "",
+        payroll_period_start_date: ctx.settings?.payroll_period_start_date || "",
+        payroll_period_days: String(ctx.settings?.payroll_period_days || 14)
+      });
     } catch (err) {
       setError(err.message || "Company data could not be loaded.");
     }
@@ -328,6 +337,45 @@ export default function CompanyAdminDashboard() {
     if (decision === "denied") { comment = window.prompt("Reason for denial (optional):") || ""; }
     try { await decidePtoRequest(request, decision, comment); await refresh(); }
     catch (err) { window.alert(err.message); }
+  }
+
+  // ── Payroll delivery ──────────────────────────────────────────────────────
+  const payrollSaved = {
+    payroll_email: context.settings?.payroll_email || "",
+    payroll_period_start_date: context.settings?.payroll_period_start_date || "",
+    payroll_period_days: String(context.settings?.payroll_period_days || 14)
+  };
+  const payrollDirty = Object.keys(payrollSaved).some((key) => String(payrollDraft[key] ?? "") !== String(payrollSaved[key]));
+  const payrollPeriodPreview = formatPayrollPeriod(
+    payrollPeriodFor(new Date(), payrollDraft.payroll_period_start_date, payrollDraft.payroll_period_days)
+  );
+
+  async function savePayrollSettings() {
+    const email = String(payrollDraft.payroll_email || "").trim();
+    if (email && !/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(email)) {
+      setPayrollSave({ busy: false, message: "", error: "Enter a valid email address, or leave it empty." });
+      return;
+    }
+    if (email && !payrollDraft.payroll_period_start_date) {
+      setPayrollSave({ busy: false, message: "", error: "Set the date a pay period started so each timesheet can name its period." });
+      return;
+    }
+    setPayrollSave({ busy: true, message: "", error: "" });
+    try {
+      await updateCompanyPayrollSettings(company.id, {
+        payroll_email: email || null,
+        payroll_period_start_date: payrollDraft.payroll_period_start_date || null,
+        payroll_period_days: Number(payrollDraft.payroll_period_days) || 14
+      });
+      await refresh();
+      setPayrollSave({
+        busy: false,
+        error: "",
+        message: email ? `Approved timesheets will be emailed to ${email}.` : "Payroll emails are off."
+      });
+    } catch (err) {
+      setPayrollSave({ busy: false, message: "", error: err.message || "The payroll settings could not be saved." });
+    }
   }
 
   // One save for every leave type. Each type used to carry its own small Save
@@ -660,6 +708,67 @@ export default function CompanyAdminDashboard() {
               </label>
             </div>
             <p className="mt-2 text-xs font-semibold text-slate-400">Reports and PDFs use this logo and company name.</p>
+          </SectionCard>
+        )}
+
+        {(showAll || section === "settings") && (
+          <SectionCard icon={CalendarClock} title="Payroll delivery">
+            <p className="text-xs font-medium text-slate-500">
+              Every timesheet a manager approves is emailed to this address with its approved PDF attached. Leave it
+              empty to send nothing. The address may be outside your company, such as your accountant or payroll bureau.
+            </p>
+            <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
+              <label className="block sm:col-span-2">
+                <span className="text-xs font-semibold text-slate-600">Payroll email</span>
+                <input
+                  type="email"
+                  value={payrollDraft.payroll_email}
+                  onChange={(e) => { setPayrollDraft({ ...payrollDraft, payroll_email: e.target.value }); setPayrollSave({ busy: false, message: "", error: "" }); }}
+                  placeholder="payroll@example.com"
+                  className="mt-1 min-h-9 w-full rounded-lg border border-slate-300 px-2 text-sm font-semibold"
+                />
+              </label>
+              <label className="block">
+                <span className="text-xs font-semibold text-slate-600">A pay period started on</span>
+                <input
+                  type="date"
+                  value={payrollDraft.payroll_period_start_date}
+                  onChange={(e) => { setPayrollDraft({ ...payrollDraft, payroll_period_start_date: e.target.value }); setPayrollSave({ busy: false, message: "", error: "" }); }}
+                  className="mt-1 min-h-9 w-full rounded-lg border border-slate-300 px-2 text-sm font-semibold"
+                />
+              </label>
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-3">
+              <label className="text-xs font-semibold text-slate-600">
+                Pay cycle
+                <select
+                  value={payrollDraft.payroll_period_days}
+                  onChange={(e) => { setPayrollDraft({ ...payrollDraft, payroll_period_days: e.target.value }); setPayrollSave({ busy: false, message: "", error: "" }); }}
+                  className="ml-2 min-h-9 rounded-lg border border-slate-300 bg-white px-2 text-sm font-semibold"
+                >
+                  <option value="7">Weekly</option>
+                  <option value="14">Biweekly</option>
+                  <option value="15">Semi-monthly</option>
+                  <option value="30">Monthly</option>
+                </select>
+              </label>
+              {payrollPeriodPreview && (
+                <span className="text-xs font-medium text-slate-500">Current period: {payrollPeriodPreview}</span>
+              )}
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={savePayrollSettings}
+                disabled={!payrollDirty || payrollSave.busy}
+                className="inline-flex min-h-9 items-center rounded-lg bg-blue-700 px-4 text-sm font-bold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500"
+              >
+                {payrollSave.busy ? "Saving…" : "Save payroll settings"}
+              </button>
+              {payrollDirty && !payrollSave.busy && <span className="text-xs font-semibold text-amber-700">Unsaved changes</span>}
+              {payrollSave.message && <span className="text-xs font-semibold text-emerald-700">{payrollSave.message}</span>}
+              {payrollSave.error && <span className="text-xs font-semibold text-rose-700">{payrollSave.error}</span>}
+            </div>
           </SectionCard>
         )}
 

@@ -88,6 +88,19 @@ Deno.serve(async (req) => {
     const callerEmail = normalizeEmail(callerProfile?.email || caller.email);
     if (callerEmail) companyEmails.add(callerEmail);
 
+    // The payroll address a company admin configured. It is usually outside
+    // the roster (an accountant, a payroll bureau), and it is the one external
+    // recipient a manager's approval is allowed to reach.
+    if (companyId) {
+      const { data: companySettings } = await admin
+        .from("company_settings")
+        .select("payroll_email")
+        .eq("company_id", companyId)
+        .maybeSingle();
+      const payrollEmail = normalizeEmail(companySettings?.payroll_email);
+      if (payrollEmail) companyEmails.add(payrollEmail);
+    }
+
     // The company's own configured notification addresses stay allowed.
     const { data: settingsRows } = await admin
       .from("notification_settings")

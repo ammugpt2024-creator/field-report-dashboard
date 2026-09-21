@@ -366,6 +366,31 @@ export async function getMyCompanyContext() {
   };
 }
 
+// Where approved timesheets are emailed, and the pay-period cycle they are
+// labelled with. A company admin sets this once; managers never type it.
+export async function updateCompanyPayrollSettings(companyId, patch) {
+  const { data, error } = await supabase
+    .from('company_settings')
+    .update({ ...patch, updated_at: new Date().toISOString() })
+    .eq('company_id', companyId)
+    .select('company_id');
+  if (error) throw error;
+  if (!Array.isArray(data) || !data.length) {
+    // No settings row yet (companies created before settings existed).
+    const { error: insertError } = await supabase
+      .from('company_settings')
+      .insert({ company_id: companyId, ...patch });
+    if (insertError) throw insertError;
+  }
+  logAuditEvent({
+    companyId,
+    action: 'payroll_settings_updated',
+    entityType: 'company_settings',
+    entityId: companyId,
+    newValue: patch
+  });
+}
+
 export async function updateCompanyProfile(companyId, patch, previous = {}) {
   const { error } = await supabase
     .from('companies')
