@@ -130,6 +130,8 @@ function TechnicianDashboard() {
       ? "proctor-report"
     : location.pathname.includes("/samples-report/")
       ? "samples-report"
+    : location.pathname.includes("/vdot-checklist/")
+      ? "vdot-checklist"
     : location.pathname.includes("/concrete-report/")
       ? "concrete-report"
       : null;

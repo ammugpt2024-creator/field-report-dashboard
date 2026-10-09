@@ -7,6 +7,8 @@ import { formatDateTime } from "../../modules/field-engineer/fieldEngineerData";
 import { AttachmentRenderer, formatFileSize } from "./PhotosAttachmentsSection";
 import ConcreteReportInlineContent from "../reports/ConcreteReportInlineContent";
 import CompactionReportInlineContent from "../reports/CompactionReportInlineContent";
+import VdotChecklistInlineContent from "../reports/VdotChecklistInlineContent";
+import { getVdotChecklist, isVdotChecklistReport } from "../../configs/vdotChecklists";
 
 const DAILY_LOG_ATTACHMENT_BUCKET = "daily-log-attachments";
 
@@ -585,7 +587,8 @@ function ConcreteReportSummary({ report, reportIndex = 0, activity, log }) {
   const submittedLogStatuses = [DAILY_LOG_STATUS.SUBMITTED, DAILY_LOG_STATUS.APPROVED, DAILY_LOG_STATUS.RETURNED].map((status) => String(status).toLowerCase());
   const shouldShowReportContent = finalReportStatuses.includes(reportStatus) || submittedLogStatuses.includes(logStatus);
   const reportLabel = `Report ${reportIndex + 1}`;
-  const compaction = isCompactionReport(report);
+  const vdot = isVdotChecklistReport(report);
+  const compaction = !vdot && isCompactionReport(report);
   const compactionStats = compaction ? getCompactionReportStats(report) : null;
   const pdfUrl = report.pdfUrl || report.pdf_url || report.finalPdfUrl || report.final_pdf_url || report.pdfPublicUrl || report.pdf_public_url || "";
   const pdfAvailable = Boolean(pdfUrl || report.pdfStoragePath || report.pdf_storage_path);
@@ -595,7 +598,7 @@ function ConcreteReportSummary({ report, reportIndex = 0, activity, log }) {
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-400">{reportLabel}</p>
-          <h4 className="mt-1 text-base font-bold text-slate-950">{compaction ? "Compaction Report" : "Concrete Report"}</h4>
+          <h4 className="mt-1 text-base font-bold text-slate-950">{vdot ? getVdotChecklist(report).title : compaction ? "Compaction Report" : "Concrete Report"}</h4>
         </div>
         <span className="w-fit rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-bold text-blue-800">{report.status || "Draft"}</span>
       </div>
@@ -623,7 +626,9 @@ function ConcreteReportSummary({ report, reportIndex = 0, activity, log }) {
         </>
       )}
       {shouldShowReportContent && (
-        compaction
+        vdot
+          ? <VdotChecklistInlineContent report={report} reportLabel={reportLabel} />
+          : compaction
           ? <CompactionReportInlineContent report={report} reportLabel={reportLabel} />
           : <ConcreteReportInlineContent report={report} reportLabel={reportLabel} />
       )}

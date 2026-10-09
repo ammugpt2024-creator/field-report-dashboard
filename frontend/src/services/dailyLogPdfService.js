@@ -7,6 +7,8 @@ import { fetchDailyLogFromSupabase, saveDailyLog } from "./dailyLogService.js";
 import { getStorageConfigError, logStorageStep } from "./storageDiagnosticsService.js";
 
 import { getCompanyBranding } from "./brandingService";
+import { renderVdotChecklistToDoc } from "./vdotChecklistPdfService";
+import { isVdotChecklistReport } from "../configs/vdotChecklists";
 
 // Branding resolves from the caller's company (multi-tenant); these getters
 // fall back to the historic defaults inside brandingService.
@@ -1615,6 +1617,7 @@ async function renderReferenceAttachmentContent(doc, attachments, y, title) {
 function getReportKind(report) {
   const type = String(report.type || report.reportType || report.report_type || "").toLowerCase();
   const num = String(report.reportNumber || report.report_number || "").trim();
+  if (isVdotChecklistReport(report)) return "vdot";
   if (type.includes("asphalt") || num.startsWith("ACR-")) return "asphalt";
   if (num.startsWith("CDR-") || (!num.startsWith("ACR-") && (type.includes("compaction") || type.includes("density") || type.includes("nuclear")))) return "compaction";
   if (type.includes("infiltration") || num.startsWith("SIR-")) return "infiltration";
@@ -2285,6 +2288,15 @@ async function renderReferenceSamplesReportBlock(doc, report, reportIndex, y, ac
   return y + 6;
 }
 
+async function renderReferenceVdotChecklistBlock(doc, report, reportIndex, y, activity, log) {
+  // The checklist is drawn in the layout of the VDOT paper form, so it starts on
+  // its own page rather than squeezing under the activity summary.
+  doc.addPage("letter", "portrait");
+  y = renderVdotChecklistToDoc(doc, report, PAGE_TOP_MARGIN);
+  y = await renderReferenceAttachmentContent(doc, getReportAttachments(report, activity, log), y, `Report ${reportIndex + 1} Attachments`);
+  return y + 6;
+}
+
 async function renderReferenceConcreteReportBlock(doc, report, reportIndex, y, activity, log) {
   y = ensurePage(doc, y, 160);
   y = renderReferenceSectionBar(doc, `Concrete Report ${reportIndex + 1} — ${getReportDfrNumber(report)}`, y, {
@@ -2361,7 +2373,9 @@ async function renderReferenceActivityDetails(doc, log, y) {
 
     for (const [reportIndex, report] of reports.entries()) {
       const kind = getReportKind(report);
-      if (kind === "asphalt") {
+      if (kind === "vdot") {
+        y = await renderReferenceVdotChecklistBlock(doc, report, reportIndex, y, activity, log);
+      } else if (kind === "asphalt") {
         y = await renderReferenceAsphaltReportBlock(doc, report, reportIndex, y, activity, log);
       } else if (kind === "compaction") {
         y = await renderReferenceNuclearCompactionReportBlock(doc, report, reportIndex, y, activity, log);

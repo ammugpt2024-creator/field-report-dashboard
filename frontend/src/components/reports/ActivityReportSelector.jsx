@@ -1,6 +1,6 @@
 import { FileText, Plus } from "lucide-react";
 
-export default function ActivityReportSelector({ onAddConcreteReport, onAddCompactionReport, onAddAsphaltReport, onAddInfiltrationReport, onAddProctorReport, onAddSamplesReport, disabled = false }) {
+export default function ActivityReportSelector({ onAddConcreteReport, onAddCompactionReport, onAddAsphaltReport, onAddInfiltrationReport, onAddProctorReport, onAddSamplesReport, onAddMotChecklist, onAddWorkZoneChecklist, disabled = false }) {
   const reportTypes = [
     { label: "Concrete Report", description: "Create concrete testing documentation.", available: true, onClick: onAddConcreteReport },
     { label: "Density Report", description: "Create nuclear density compaction documentation.", available: true, onClick: onAddCompactionReport },
@@ -8,6 +8,8 @@ export default function ActivityReportSelector({ onAddConcreteReport, onAddCompa
     { label: "Surface Infiltration Rate Report", description: "ASTM C1781 — infiltration rate from weight, diameter, and time.", available: true, onClick: onAddInfiltrationReport },
     { label: "One-Point Proctor Report", description: "VTM-12 — one-point proctor density with curve selection and compaction check.", available: true, onClick: onAddProctorReport },
     { label: "Samples Collection Report", description: "Soil, concrete cylinders, grout cubes, asphalt cores/plugs — cast date, count, comments.", available: true, onClick: onAddSamplesReport },
+    { label: "MOT Inspection (Lane Closed)", description: "VDOT Maintenance of Traffic Inspection Form — preparatory, intermediate and completion items with initials and dates.", available: true, onClick: onAddMotChecklist },
+    { label: "Work Zone Safety Checklist", description: "VDOT TE-97001 — signs, arrow board, drums, barrier, flagging, markings; adequate/inadequate with urgent flags.", available: true, onClick: onAddWorkZoneChecklist },
     { label: "Inspection Report", description: "Coming soon", available: false },
     { label: "Other", description: "Coming soon", available: false }
   ];

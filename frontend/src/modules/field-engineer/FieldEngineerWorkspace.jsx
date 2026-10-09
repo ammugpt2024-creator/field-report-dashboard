@@ -21,6 +21,8 @@ import {
 import StatusTabs from "../../components/mobile/StatusTabs";
 import DailyLogEditor from "../../components/daily-log/DailyLogEditor";
 import DailyLogSummaryView from "../../components/daily-log/DailyLogSummaryView";
+import VdotChecklistReportPage from "../../components/reports/VdotChecklistReportPage";
+import { VDOT_CHECKLISTS, buildInitialHeader, getVdotChecklistKey } from "../../configs/vdotChecklists";
 import PhotosAttachmentsSection, { isAllowedDailyLogAttachment } from "../../components/daily-log/PhotosAttachmentsSection";
 import LabReportCatalog from "../../components/lab/LabReportCatalog";
 import {
@@ -3950,6 +3952,7 @@ export default function FieldEngineerWorkspace({
     "infiltration-report",
     "proctor-report",
     "samples-report",
+    "vdot-checklist",
     "reports-home",
     "lab-reports",
     "daily-logs",
@@ -4826,6 +4829,78 @@ export default function FieldEngineerWorkspace({
     navigate(getSamplesReportRoute(log, activityId, report || { id: reportId }));
   }
 
+  function getVdotChecklistRoute(log, activityId, report) {
+    return `/technician/daily-log/${log.id}/activity/${activityId}/vdot-checklist/${report?.id || "new"}?returnTo=${encodeURIComponent(`/technician/daily-log/${log.id}`)}`;
+  }
+
+  function createVdotChecklistForActivity(log, activityId, checklistKey) {
+    const checklist = VDOT_CHECKLISTS[checklistKey];
+    const activity = (log.activities || []).find((item) => item.id === activityId);
+    if (!activity || !checklist) return null;
+    const existing = [...(activity.concreteReports || []), ...(activity.reports || [])][0];
+    if (existing) {
+      if (getVdotChecklistKey(existing) === checklistKey) {
+        navigate(getVdotChecklistRoute(log, activityId, existing));
+      } else {
+        window.alert("Only one report can be attached to each activity.");
+      }
+      return existing;
+    }
+    const projectNumber = log.projectNumber || log.project_number || String(defaultProjectId || "");
+    const now = new Date().toISOString();
+    const report = {
+      id: crypto.randomUUID(),
+      type: checklist.reportType,
+      reportType: checklist.reportType,
+      report_type: checklist.reportType,
+      checklistKey,
+      status: "draft",
+      dailyLogId: log.id,
+      daily_log_id: log.id,
+      activityId,
+      activity_id: activityId,
+      projectName: log.projectName || projectLabel,
+      project_name: log.projectName || projectLabel,
+      projectNumber,
+      project_number: projectNumber,
+      date: log.date || now.slice(0, 10),
+      header: buildInitialHeader(checklist, {
+        projectNumber,
+        location: activity.location || log.projectLocation || log.project_location || "",
+        inspector: log.technicianName || profile?.full_name || "",
+        weather: log.weatherOverride || log.weatherCondition || "",
+        date: log.date || now.slice(0, 10)
+      }),
+      answers: {},
+      sectionNA: {},
+      sectionOptions: {},
+      sectionComments: {},
+      customItems: [],
+      footer: {},
+      createdAt: now,
+      updatedAt: now
+    };
+    const nextLog = saveDailyLog({
+      ...log,
+      activities: (log.activities || []).map((item) =>
+        item.id === activityId
+          ? { ...item, reports: [...(item.reports || []), report], updatedAt: now }
+          : item
+      ),
+      updatedAt: now
+    });
+    refreshLogs(nextLog);
+    navigate(getVdotChecklistRoute(nextLog, activityId, report));
+    return report;
+  }
+
+  function openVdotChecklist(log, activityId, reportId) {
+    if (!log?.id || !activityId || !reportId) return;
+    const activity = (log.activities || []).find((item) => item.id === activityId);
+    const report = (activity?.reports || []).find((item) => item.id === reportId);
+    navigate(getVdotChecklistRoute(log, activityId, report || { id: reportId }));
+  }
+
   function backToDailyLog(logId = selectedDailyLog?.id) {
     if (!logId) return;
     navigate(`/technician/daily-log/${logId}`);
@@ -4938,6 +5013,8 @@ export default function FieldEngineerWorkspace({
               onOpenProctorReport={openProctorReport}
               onCreateSamplesReport={createSamplesReportForActivity}
               onOpenSamplesReport={openSamplesReport}
+              onCreateVdotChecklist={createVdotChecklistForActivity}
+              onOpenVdotChecklist={openVdotChecklist}
             />
           )
         )}
@@ -4994,6 +5071,16 @@ export default function FieldEngineerWorkspace({
 
         {currentView === "samples-report" && selectedDailyLog && (
           <SamplesCollectionReportPage
+            log={selectedDailyLog}
+            activityId={activeActivityId}
+            reportId={activeReportId}
+            onChange={refreshLogs}
+            onBack={() => backToDailyLog(selectedDailyLog.id)}
+          />
+        )}
+
+        {currentView === "vdot-checklist" && selectedDailyLog && (
+          <VdotChecklistReportPage
             log={selectedDailyLog}
             activityId={activeActivityId}
             reportId={activeReportId}

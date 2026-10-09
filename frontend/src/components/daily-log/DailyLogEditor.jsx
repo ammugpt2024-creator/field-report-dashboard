@@ -7,6 +7,8 @@ import AsphaltCompactionReportInlineContent from "../reports/AsphaltCompactionRe
 import SurfaceInfiltrationReportInlineContent from "../reports/SurfaceInfiltrationReportInlineContent";
 import ProctorReportInlineContent from "../reports/ProctorReportInlineContent";
 import SamplesCollectionReportInlineContent from "../reports/SamplesCollectionReportInlineContent";
+import VdotChecklistInlineContent from "../reports/VdotChecklistInlineContent";
+import { getVdotChecklist, hasVdotChecklistContent, isVdotChecklistComplete, isVdotChecklistReport } from "../../configs/vdotChecklists";
 import BottomActionBar from "../mobile/BottomActionBar";
 import SignatureModal from "../SignatureModal";
 import PhotosAttachmentsSection, { isAllowedDailyLogAttachment } from "./PhotosAttachmentsSection";
@@ -344,7 +346,14 @@ function isSamplesReportSubmitReady(report = {}) {
   );
 }
 
+function isVdotChecklistSubmitReady(report = {}) {
+  const reportStatus = String(report.status || "").toLowerCase();
+  if (["completed", "submitted", "approved", "finalized"].includes(reportStatus)) return true;
+  return isVdotChecklistComplete(report);
+}
+
 function isAttachedReportSubmitReady(report = {}) {
+  if (isVdotChecklistReport(report)) return isVdotChecklistSubmitReady(report);
   if (isAsphaltReport(report)) return isAsphaltReportSubmitReady(report);
   if (isCompactionReport(report)) return isCompactionReportSubmitReady(report);
   if (isInfiltrationReport(report)) return isInfiltrationReportSubmitReady(report);
@@ -481,7 +490,7 @@ async function createUploadReadyAttachment(file, attachmentType, context) {
   };
 }
 
-export default function DailyLogEditor({ log, projectOptions = [], onChange, onSubmitted, onCreateConcreteReport, onOpenConcreteReport, onCreateCompactionReport, onOpenCompactionReport, onCreateAsphaltReport, onOpenAsphaltReport, onCreateInfiltrationReport, onOpenInfiltrationReport, onCreateProctorReport, onOpenProctorReport, onCreateSamplesReport, onOpenSamplesReport }) {
+export default function DailyLogEditor({ log, projectOptions = [], onChange, onSubmitted, onCreateConcreteReport, onOpenConcreteReport, onCreateCompactionReport, onOpenCompactionReport, onCreateAsphaltReport, onOpenAsphaltReport, onCreateInfiltrationReport, onOpenInfiltrationReport, onCreateProctorReport, onOpenProctorReport, onCreateSamplesReport, onOpenSamplesReport, onCreateVdotChecklist, onOpenVdotChecklist }) {
   // The real projects the technician is assigned to (normalized to this editor's
   // shape). Falls back to nothing — never the old hardcoded placeholder.
   const projectChoices = (projectOptions.length ? projectOptions : []).map((p) => ({
@@ -741,6 +750,27 @@ export default function DailyLogEditor({ log, projectOptions = [], onChange, onS
       setReportPickerActivityId("");
     } catch (error) {
       console.error("Samples collection report section failed", error);
+      setReportSectionError("Unable to load report section. Please try again.");
+    }
+  }
+
+  function addVdotChecklist(activityId, checklistKey) {
+    try {
+      setReportSectionError("");
+      const activity = (log.activities || []).find((item) => item.id === activityId);
+      if (getActivityAttachedReports(activity).length >= 1) {
+        setReportSectionError("Only one report can be attached to each activity.");
+        setReportPickerActivityId("");
+        return;
+      }
+      const createdReport = onCreateVdotChecklist?.(log, activityId, checklistKey);
+      if (!createdReport) {
+        setReportSectionError("Unable to load report section. Please try again.");
+        return;
+      }
+      setReportPickerActivityId("");
+    } catch (error) {
+      console.error("VDOT checklist section failed", error);
       setReportSectionError("Unable to load report section. Please try again.");
     }
   }
@@ -1482,12 +1512,15 @@ export default function DailyLogEditor({ log, projectOptions = [], onChange, onS
                   </div>
                 </div>
                 {concreteReports.map((report) => {
-                  const asphalt = isAsphaltReport(report);
-                  const compaction = !asphalt && isCompactionReport(report);
+                  const vdot = isVdotChecklistReport(report);
+                  const asphalt = !vdot && isAsphaltReport(report);
+                  const compaction = !vdot && !asphalt && isCompactionReport(report);
                   const infiltration = !asphalt && !compaction && isInfiltrationReport(report);
                   const proctor = !asphalt && !compaction && !infiltration && isProctorReport(report);
                   const samples = !asphalt && !compaction && !infiltration && !proctor && isSamplesReport(report);
-                  const shouldShowReportContent = asphalt
+                  const shouldShowReportContent = vdot
+                    ? hasVdotChecklistContent(report)
+                    : asphalt
                     ? hasAsphaltReportContent(report)
                     : compaction
                       ? hasCompactionReportContent(report)
@@ -1500,7 +1533,9 @@ export default function DailyLogEditor({ log, projectOptions = [], onChange, onS
                             : isAttachedReportSubmitReady(report);
                   visibleReportOrdinal += 1;
                   const reportLabel = `Report ${visibleReportOrdinal}`;
-                  const displayReportType = asphalt
+                  const displayReportType = vdot
+                    ? getVdotChecklist(report).title
+                    : asphalt
                     ? "Asphalt Compaction Report"
                     : compaction
                       ? "Compaction Report"
@@ -1529,7 +1564,9 @@ export default function DailyLogEditor({ log, projectOptions = [], onChange, onS
                           <button
                             type="button"
                             onClick={() => (
-                              asphalt
+                              vdot
+                                ? onOpenVdotChecklist?.(log, activity.id, report.id)
+                                : asphalt
                                 ? onOpenAsphaltReport?.(log, activity.id, report.id, { mode: "edit" })
                                 : compaction
                                   ? onOpenCompactionReport?.(log, activity.id, report.id, { mode: "edit" })
@@ -1550,7 +1587,9 @@ export default function DailyLogEditor({ log, projectOptions = [], onChange, onS
                         </div>
                       </div>
                       {shouldShowReportContent && (
-                        asphalt
+                        vdot
+                          ? <VdotChecklistInlineContent report={report} reportLabel={reportLabel} />
+                          : asphalt
                           ? <AsphaltCompactionReportInlineContent report={report} reportLabel={reportLabel} />
                           : compaction
                             ? <CompactionReportInlineContent report={report} reportLabel={reportLabel} />
@@ -1597,6 +1636,8 @@ export default function DailyLogEditor({ log, projectOptions = [], onChange, onS
                       onAddInfiltrationReport={() => addInfiltrationReport(activity.id)}
                       onAddProctorReport={() => addProctorReport(activity.id)}
                       onAddSamplesReport={() => addSamplesReport(activity.id)}
+                      onAddMotChecklist={() => addVdotChecklist(activity.id, "mot")}
+                      onAddWorkZoneChecklist={() => addVdotChecklist(activity.id, "te97001")}
                     />
                   </div>
                 )}
