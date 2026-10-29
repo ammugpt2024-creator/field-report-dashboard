@@ -8,7 +8,8 @@ import {
   getItemAnswerType,
   getPriorityLabel,
   getVdotChecklist,
-  isItemFlagged
+  isItemFlagged,
+  VDOT_CHECKLISTS
 } from "../configs/vdotChecklists";
 
 const JsPDFConstructor = jsPdfModule.jsPDF || jsPdfModule;
@@ -59,6 +60,33 @@ function fieldValue(field, value) {
   return value;
 }
 
+// Fillable PDF fields. While jsPDF draws the form, each blank on the paper
+// form is recorded here with its position; pdf-lib then adds real form fields
+// at those spots (jsPDF's own AcroForm output has no font resources, so
+// viewers show the fields empty). Values from the app are pre-filled.
+const fieldSpecs = new WeakMap();
+
+function recordField(doc, spec, x, y, width, height) {
+  if (!fieldSpecs.has(doc)) fieldSpecs.set(doc, []);
+  fieldSpecs.get(doc).push({
+    ...spec,
+    page: doc.internal.getCurrentPageInfo().pageNumber,
+    x: x + 1.5,
+    y: y + 1.5,
+    width: width - 3,
+    height: height - 3
+  });
+}
+
+function addTextField(doc, name, value, x, y, width, height, { multiline = false, fontSize = 9, align = "left" } = {}) {
+  recordField(doc, { kind: "text", name, value: String(value ?? ""), multiline, fontSize, align }, x, y, width, height);
+}
+
+function addChoiceField(doc, name, value, options, x, y, width, height) {
+  // The leading blank option lets someone clear a status they picked by mistake.
+  recordField(doc, { kind: "choice", name, value: value || "", options: ["", ...options], fontSize: 9 }, x, y, width, height);
+}
+
 function renderTitle(doc, checklist, report, y) {
   const width = contentWidth(doc);
   doc.setDrawColor(...COLORS.navy);
@@ -74,26 +102,35 @@ function renderTitle(doc, checklist, report, y) {
   doc.setFontSize(8);
   doc.setTextColor(...COLORS.muted);
   doc.text(checklist.formNumber, MARGIN + width - 10, y + 14, { align: "right" });
-  const status = String(report.status || "draft").toUpperCase();
-  doc.setTextColor(...(status === "COMPLETED" ? [4, 120, 87] : COLORS.muted));
-  doc.text(status, MARGIN + width - 10, y + 33, { align: "right" });
+  const status = String(report.status || "").toUpperCase();
+  if (status) {
+    doc.setTextColor(...(status === "COMPLETED" ? [4, 120, 87] : COLORS.muted));
+    doc.text(status, MARGIN + width - 10, y + 33, { align: "right" });
+  }
   return y + 56;
 }
 
-function renderHeaderFields(doc, checklist, report, y) {
+function renderHeaderFields(doc, checklist, report, y, fillable = false) {
   const header = report.header || {};
-  const cells = checklist.headerFields.map((field) => [field.label, text(fieldValue(field, header[field.key]))]);
+  const fields = checklist.headerFields;
+  const cells = fields.map((field) => [field.label, fillable ? "" : text(fieldValue(field, header[field.key]))]);
   const rows = [];
   for (let i = 0; i < cells.length; i += 2) {
     rows.push([...(cells[i] || ["", ""]), ...(cells[i + 1] || ["", ""])]);
   }
   autoTable(doc, {
+    didDrawCell(data) {
+      if (!fillable || data.section !== "body" || (data.column.index !== 1 && data.column.index !== 3)) return;
+      const field = fields[data.row.index * 2 + (data.column.index === 3 ? 1 : 0)];
+      if (!field) return;
+      addTextField(doc, `header_${field.key}`, fieldValue(field, header[field.key]) || "", data.cell.x, data.cell.y, data.cell.width, data.cell.height);
+    },
     startY: y,
     body: rows,
     theme: "grid",
     margin: { left: MARGIN, right: MARGIN, top: TOP, bottom: BOTTOM },
     tableWidth: contentWidth(doc),
-    styles: { font: "helvetica", fontSize: 8.5, cellPadding: 4, lineColor: COLORS.line, lineWidth: 0.4, textColor: COLORS.ink, valign: "middle" },
+    styles: { font: "helvetica", fontSize: 8.5, cellPadding: 4, lineColor: COLORS.line, lineWidth: 0.4, textColor: COLORS.ink, valign: "middle", minCellHeight: fillable ? 20 : 0 },
     columnStyles: {
       0: { fontStyle: "bold", fillColor: COLORS.soft, cellWidth: 105, fontSize: 7.5, textColor: COLORS.muted },
       1: { cellWidth: contentWidth(doc) / 2 - 105 },
@@ -121,6 +158,66 @@ function sectionHeading(section, checklist) {
   return checklist.key === "te97001" ? `${section.id}.  ${section.title.toUpperCase()}` : section.title.toUpperCase();
 }
 
+// The MOT form is one table, like the paper form: section names
+// (Preparatory / Intermediate / Completion / Additional Items) are label rows
+// between the items rather than separate tables.
+function renderPhaseTable(doc, sections, report, y, fillable = false) {
+  const answers = report.answers || {};
+  const width = contentWidth(doc);
+  const phaseOptions = ANSWER_OPTIONS[ANSWER_TYPES.PHASE];
+  const statusLabel = (answer) => (phaseOptions.find((entry) => entry.value === answer.value) || {}).label || "";
+  const rows = [];
+  sections.forEach((section) => {
+    rows.push({ title: section.title });
+    section.items.forEach((item) => rows.push({ item }));
+    for (let index = 1; index <= (section.blankRows || 0); index += 1) rows.push({ item: { id: `blank_${index}`, label: "", blank: true } });
+  });
+  y = ensureSpace(doc, y, 80);
+  autoTable(doc, {
+    startY: y,
+    head: [["Item", "Status", "Inspector (Initial)", "Date", "Remarks"]],
+    body: rows.map((row) => {
+      if (row.title) return [{ content: row.title.toUpperCase(), colSpan: 5 }];
+      const answer = answers[row.item.id] || {};
+      if (fillable) return [row.item.label, "", "", "", ""];
+      return [row.item.label, statusLabel(answer), answer.initials || "", formatDate(answer.date), answer.remarks || ""];
+    }),
+    theme: "grid",
+    margin: { left: MARGIN, right: MARGIN, top: TOP, bottom: BOTTOM },
+    tableWidth: width,
+    showHead: "everyPage",
+    styles: { font: "helvetica", fontSize: 8.5, cellPadding: 4, lineColor: COLORS.line, lineWidth: 0.4, textColor: COLORS.ink, valign: "middle", overflow: "linebreak", minCellHeight: fillable ? 21 : 0 },
+    headStyles: { fillColor: COLORS.head, textColor: COLORS.white, fontStyle: "bold", fontSize: 8 },
+    columnStyles: {
+      0: { cellWidth: width * 0.38 },
+      1: { cellWidth: 62, halign: "center", fontStyle: "bold" },
+      2: { cellWidth: 62, halign: "center" },
+      3: { cellWidth: 62, halign: "center" }
+    },
+    didParseCell(data) {
+      if (data.section !== "body" || !rows[data.row.index]?.title) return;
+      data.cell.styles.fillColor = COLORS.soft;
+      data.cell.styles.fontStyle = "bold";
+      data.cell.styles.textColor = COLORS.navy;
+      data.cell.styles.minCellHeight = 0;
+    },
+    didDrawCell(data) {
+      if (!fillable || data.section !== "body") return;
+      const row = rows[data.row.index];
+      if (!row?.item) return;
+      const answer = answers[row.item.id] || {};
+      const { x, y: cellY, width: w, height: h } = data.cell;
+      const name = row.item.id;
+      if (data.column.index === 0 && row.item.blank) addTextField(doc, `${name}_item`, "", x, cellY, w, h);
+      if (data.column.index === 1) addChoiceField(doc, `${name}_status`, statusLabel(answer), phaseOptions.map((entry) => entry.label), x, cellY, w, h);
+      if (data.column.index === 2) addTextField(doc, `${name}_initials`, answer.initials || "", x, cellY, w, h, { align: "center" });
+      if (data.column.index === 3) addTextField(doc, `${name}_date`, formatDate(answer.date), x, cellY, w, h, { align: "center" });
+      if (data.column.index === 4) addTextField(doc, `${name}_remarks`, answer.remarks || "", x, cellY, w, h, { multiline: h > 26, fontSize: 8 });
+    }
+  });
+  return doc.lastAutoTable.finalY + 10;
+}
+
 function renderSectionTable(doc, checklist, section, report, y) {
   const answers = report.answers || {};
   const notApplicable = Boolean((report.sectionNA || {})[section.id]);
@@ -132,29 +229,6 @@ function renderSectionTable(doc, checklist, section, report, y) {
   const estimatedHeight = notApplicable ? 50 : 46 + section.items.length * 25 + (comment ? 22 : 0);
   y = ensureSpace(doc, y, Math.min(estimatedHeight, 420));
 
-  if (section.answerType === ANSWER_TYPES.PHASE) {
-    autoTable(doc, {
-      startY: y,
-      head: [[{ content: sectionHeading(section, checklist), colSpan: 5 }], ["Item", "Status", "Inspector (Initial)", "Date", "Remarks"]],
-      body: section.items.map((item) => {
-        const answer = answers[item.id] || {};
-        const status = (ANSWER_OPTIONS[ANSWER_TYPES.PHASE].find((entry) => entry.value === answer.value) || {}).label || "";
-        return [item.label, status, answer.initials || "", formatDate(answer.date), answer.remarks || ""];
-      }),
-      theme: "grid",
-      margin: { left: MARGIN, right: MARGIN, top: TOP, bottom: BOTTOM },
-      tableWidth: width,
-      styles: { font: "helvetica", fontSize: 8.5, cellPadding: 4, lineColor: COLORS.line, lineWidth: 0.4, textColor: COLORS.ink, valign: "middle", overflow: "linebreak" },
-      headStyles: { fillColor: COLORS.head, textColor: COLORS.white, fontStyle: "bold", fontSize: 8 },
-      columnStyles: {
-        0: { cellWidth: width * 0.38 },
-        1: { cellWidth: 54, halign: "center", fontStyle: "bold" },
-        2: { cellWidth: 62, halign: "center" },
-        3: { cellWidth: 60, halign: "center" }
-      }
-    });
-    return doc.lastAutoTable.finalY + 8;
-  }
 
   const titleSuffix = [
     option ? `${section.option?.label || "Type"}: ${option}` : "",
@@ -261,8 +335,20 @@ function renderSectionTable(doc, checklist, section, report, y) {
   return y + 8;
 }
 
-function renderTextBox(doc, label, value, y) {
+function renderTextBox(doc, label, value, y, { fillable = false, name = "", height: fixedHeight = 120 } = {}) {
   const width = contentWidth(doc);
+  if (fillable) {
+    y = ensureSpace(doc, y, fixedHeight + 6);
+    doc.setDrawColor(...COLORS.line);
+    doc.setLineWidth(0.4);
+    doc.rect(MARGIN, y, width, fixedHeight);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(7.5);
+    doc.setTextColor(...COLORS.muted);
+    doc.text(label.toUpperCase(), MARGIN + 8, y + 12);
+    addTextField(doc, name, String(value ?? ""), MARGIN + 4, y + 16, width - 8, fixedHeight - 18, { multiline: true });
+    return y + fixedHeight + 10;
+  }
   doc.setFont("helvetica", "normal");
   doc.setFontSize(9);
   const lines = doc.splitTextToSize(text(value), width - 20);
@@ -282,11 +368,18 @@ function renderTextBox(doc, label, value, y) {
   return y + height + 10;
 }
 
-function renderSignatureLine(doc, label, name, date, x, y, width) {
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(9.5);
-  doc.setTextColor(...COLORS.ink);
-  doc.text(`${name || ""}${date ? `   ${formatDate(date)}` : ""}`, x, y + 26);
+function renderSignatureLine(doc, label, name, date, x, y, width, fieldName = "") {
+  if (fieldName) {
+    // Name and date as separate fields above the line; the signature itself
+    // can be added with Acrobat / Preview "Fill & Sign".
+    addTextField(doc, `${fieldName}_name`, name || "", x, y + 10, width * 0.65, 20);
+    addTextField(doc, `${fieldName}_date`, formatDate(date), x + width * 0.67, y + 10, width * 0.33, 20);
+  } else {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9.5);
+    doc.setTextColor(...COLORS.ink);
+    doc.text(`${name || ""}${date ? `   ${formatDate(date)}` : ""}`, x, y + 26);
+  }
   doc.setDrawColor(...COLORS.navy);
   doc.setLineWidth(0.6);
   doc.line(x, y + 30, x + width, y + 30);
@@ -296,16 +389,16 @@ function renderSignatureLine(doc, label, name, date, x, y, width) {
   doc.text(label.toUpperCase(), x, y + 40);
 }
 
-function renderFooter(doc, checklist, report, y) {
+function renderFooter(doc, checklist, report, y, fillable = false) {
   const footer = report.footer || {};
   const header = report.header || {};
   const width = contentWidth(doc);
   const half = (width - 20) / 2;
 
   if (checklist.key === "mot") {
-    y = renderTextBox(doc, "Remarks", footer.remarks, y);
+    y = renderTextBox(doc, "Remarks", footer.remarks, y, { fillable, name: "remarks", height: 100 });
     y = ensureSpace(doc, y, 56);
-    renderSignatureLine(doc, "Inspector (sign & date)", header.inspector, report.completedAt ? report.completedAt.slice(0, 10) : "", MARGIN, y, half);
+    renderSignatureLine(doc, "Inspector (sign & date)", header.inspector, report.completedAt ? report.completedAt.slice(0, 10) : "", MARGIN, y, half, fillable ? "inspector_signature" : "");
     return y + 52;
   }
 
@@ -335,18 +428,48 @@ function renderPageNumbers(doc, checklist, fromPage) {
   }
 }
 
+// Sections for the fillable form: the paper form's blank rows become an
+// "Additional Items" table holding any items named in the app plus empty rows.
+function getFillableSections(checklist, report) {
+  const custom = (report.customItems || []).filter((item) => String(item.label || "").trim());
+  const sections = checklist.sections.slice();
+  if (checklist.allowCustomItems) {
+    sections.push({
+      id: "additional",
+      title: "Additional Items",
+      answerType: checklist.sections[0].answerType,
+      items: custom.map((item) => ({ id: item.id, label: item.label })),
+      blankRows: Math.max(0, checklist.allowCustomItems - custom.length)
+    });
+  }
+  return sections;
+}
+
+// Only the MOT form is produced as a fillable PDF.
+export function isFillableChecklist(report) {
+  return getVdotChecklist(report)?.key === "mot";
+}
+
 // Draws the whole checklist starting at y on the current page; returns the
-// next free y. Used by the standalone PDF and by the daily-log PDF.
-export function renderVdotChecklistToDoc(doc, report, y = TOP) {
+// next free y. Used by the standalone PDF and by the daily-log PDF. The
+// daily-log PDF stays non-fillable: it is merged with attachments, which
+// would orphan the form fields.
+export function renderVdotChecklistToDoc(doc, report, y = TOP, { fillable = false } = {}) {
   const checklist = getVdotChecklist(report);
   if (!checklist) return y;
   y = renderTitle(doc, checklist, report, y);
-  y = renderHeaderFields(doc, checklist, report, y);
-  y = renderSummaryLine(doc, checklist, report, y + 4);
-  getChecklistSections(checklist, report).forEach((section) => {
-    y = renderSectionTable(doc, checklist, section, report, y);
-  });
-  return renderFooter(doc, checklist, report, y + 4);
+  y = renderHeaderFields(doc, checklist, report, y, fillable);
+  // The answered-count line would go stale as soon as someone edits the form.
+  y = fillable ? y + 4 : renderSummaryLine(doc, checklist, report, y + 4);
+  const sections = fillable ? getFillableSections(checklist, report) : getChecklistSections(checklist, report);
+  if (sections.every((section) => section.answerType === ANSWER_TYPES.PHASE)) {
+    y = renderPhaseTable(doc, sections, report, y, fillable);
+  } else {
+    sections.forEach((section) => {
+      y = renderSectionTable(doc, checklist, section, report, y);
+    });
+  }
+  return renderFooter(doc, checklist, report, y + 4, fillable);
 }
 
 export function getVdotChecklistPdfFileName(report) {
@@ -361,26 +484,88 @@ export function buildVdotChecklistPdf(report) {
   const checklist = getVdotChecklist(report);
   if (!checklist) throw new Error("Unknown checklist type");
   const doc = new JsPDFConstructor({ orientation: "portrait", unit: "pt", format: "letter", compress: true });
-  renderVdotChecklistToDoc(doc, report, TOP);
+  renderVdotChecklistToDoc(doc, report, TOP, { fillable: isFillableChecklist(report) });
   renderPageNumbers(doc, checklist, 1);
   return doc;
 }
 
+// Adds the recorded fields to the jsPDF output with pdf-lib and returns the
+// final PDF bytes. Forms without recorded fields are returned unchanged.
+async function addFormFields(doc) {
+  const specs = fieldSpecs.get(doc) || [];
+  const bytes = doc.output("arraybuffer");
+  if (!specs.length) return new Uint8Array(bytes);
+  const { PDFDocument, StandardFonts, TextAlignment } = await import("pdf-lib");
+  const pdf = await PDFDocument.load(bytes);
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  const form = pdf.getForm();
+  specs.forEach((spec) => {
+    const page = pdf.getPage(spec.page - 1);
+    const placement = {
+      x: spec.x,
+      y: page.getHeight() - spec.y - spec.height,
+      width: spec.width,
+      height: spec.height,
+      font,
+      borderWidth: 0
+    };
+    if (spec.kind === "choice") {
+      const dropdown = form.createDropdown(spec.name);
+      dropdown.setOptions(spec.options);
+      if (spec.value) dropdown.select(spec.value);
+      dropdown.addToPage(page, placement);
+      dropdown.setFontSize(spec.fontSize);
+      return;
+    }
+    const field = form.createTextField(spec.name);
+    if (spec.multiline) field.enableMultiline();
+    field.setText(spec.value);
+    field.addToPage(page, placement);
+    field.setFontSize(spec.fontSize);
+    if (spec.align === "center") field.setAlignment(TextAlignment.Center);
+  });
+  form.updateFieldAppearances(font);
+  return pdf.save();
+}
+
+export async function buildVdotChecklistPdfBytes(report) {
+  return addFormFields(buildVdotChecklistPdf(report));
+}
+
+function saveBytes(bytes, fileName) {
+  const url = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
+// A blank copy of the form (no answers) for filling in offline.
+export async function generateBlankVdotChecklistPdf(checklistKey) {
+  const checklist = VDOT_CHECKLISTS[checklistKey];
+  if (!checklist) throw new Error("Unknown checklist type");
+  const bytes = await buildVdotChecklistPdfBytes({ type: checklist.reportType, checklistKey, header: {}, answers: {}, footer: {}, status: "" });
+  saveBytes(bytes, `${checklistKey === "mot" ? "MOT_Inspection" : "TE-97001_Work_Zone_Checklist"}_Blank_Fillable.pdf`);
+}
+
 // mode "download" saves the file; mode "open" shows it in targetWindow (open
 // that window synchronously in the click handler so popup blockers allow it).
-export function generateVdotChecklistPdf(report, { mode = "download", targetWindow = null } = {}) {
-  const doc = buildVdotChecklistPdf(report);
+export async function generateVdotChecklistPdf(report, { mode = "download", targetWindow = null } = {}) {
+  const bytes = await buildVdotChecklistPdfBytes(report);
   const fileName = getVdotChecklistPdfFileName(report);
   if (mode === "download") {
-    doc.save(fileName);
+    saveBytes(bytes, fileName);
     return null;
   }
-  const url = URL.createObjectURL(doc.output("blob"));
+  const url = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
   const viewer = targetWindow && !targetWindow.closed ? targetWindow : window.open(url, "_blank");
   if (!viewer) {
     // Pop-ups blocked: still give the user the file.
     URL.revokeObjectURL(url);
-    doc.save(fileName);
+    saveBytes(bytes, fileName);
     return null;
   }
   if (viewer === targetWindow) viewer.location.href = url;

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { AlertTriangle, CheckCircle2, Download, Eye, Plus, Trash2 } from "lucide-react";
 import { DAILY_LOG_STATUS, saveDailyLog } from "../../services/dailyLogService";
-import { generateVdotChecklistPdf } from "../../services/vdotChecklistPdfService";
+import { generateBlankVdotChecklistPdf, generateVdotChecklistPdf, isFillableChecklist } from "../../services/vdotChecklistPdfService";
 import {
   ANSWER_OPTIONS,
   ANSWER_TYPES,
@@ -206,12 +206,13 @@ export default function VdotChecklistReportPage({ log, activityId, reportId, onC
     onBack();
   }
 
-  function showPdf(mode) {
+  async function showPdf(mode) {
     // Open the tab inside the click so popup blockers allow it.
     const targetWindow = mode === "open" ? window.open("", "_blank") : null;
     setPdfBusy(mode);
     try {
-      generateVdotChecklistPdf(report, { mode, targetWindow });
+      if (mode === "blank") await generateBlankVdotChecklistPdf(checklist.key);
+      else await generateVdotChecklistPdf(report, { mode, targetWindow });
     } catch (error) {
       targetWindow?.close();
       window.alert("Could not generate PDF: " + (error.message || "Unknown error"));
@@ -408,8 +409,14 @@ export default function VdotChecklistReportPage({ log, activityId, reportId, onC
         </button>
         <button type="button" onClick={() => showPdf("download")} disabled={Boolean(pdfBusy)} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-slate-300 bg-white px-4 text-sm font-bold text-slate-800 hover:bg-slate-50 disabled:opacity-60">
           <Download className="h-4 w-4" />
-          Download PDF
+          {isFillableChecklist(report) ? "Download Fillable PDF" : "Download PDF"}
         </button>
+        {isFillableChecklist(report) && (
+          <button type="button" onClick={() => showPdf("blank")} disabled={Boolean(pdfBusy)} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-slate-300 bg-white px-4 text-sm font-bold text-slate-800 hover:bg-slate-50 disabled:opacity-60">
+            <Download className="h-4 w-4" />
+            Blank Fillable Form
+          </button>
+        )}
         {!isReadOnly && <button type="button" onClick={() => saveReport(report)} className="min-h-11 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-800">Save Draft</button>}
         {!isReadOnly && <button type="button" onClick={finishReport} className={`min-h-11 rounded-2xl px-4 text-sm font-bold text-white ${complete ? "bg-emerald-700" : "bg-slate-400"}`}>Finish Report</button>}
       </div>

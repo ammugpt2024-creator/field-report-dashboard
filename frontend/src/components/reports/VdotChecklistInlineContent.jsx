@@ -1,5 +1,5 @@
 import KeyValueList from "../mobile/KeyValueList";
-import { generateVdotChecklistPdf } from "../../services/vdotChecklistPdfService";
+import { generateVdotChecklistPdf, isFillableChecklist } from "../../services/vdotChecklistPdfService";
 import {
   getAnswerLabel,
   getChecklistProgress,
@@ -32,10 +32,10 @@ export default function VdotChecklistInlineContent({ report, reportLabel = "Repo
   });
   const keyFields = checklist.headerFields.filter((field) => field.required || ["contractor", "contractorHq", "postedSpeed"].includes(field.key));
 
-  function showPdf(mode) {
+  async function showPdf(mode) {
     const targetWindow = mode === "open" ? window.open("", "_blank") : null;
     try {
-      generateVdotChecklistPdf(report, { mode, targetWindow });
+      await generateVdotChecklistPdf(report, { mode, targetWindow });
     } catch (error) {
       targetWindow?.close();
       window.alert("Could not generate PDF: " + (error.message || "Unknown error"));
@@ -55,7 +55,7 @@ export default function VdotChecklistInlineContent({ report, reportLabel = "Repo
           </div>
           <div className="flex gap-2">
             <button type="button" onClick={() => showPdf("open")} className="inline-flex min-h-9 items-center rounded-xl bg-slate-950 px-3 text-xs font-bold text-white">View PDF</button>
-            <button type="button" onClick={() => showPdf("download")} className="inline-flex min-h-9 items-center rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-800">Download PDF</button>
+            <button type="button" onClick={() => showPdf("download")} className="inline-flex min-h-9 items-center rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-800">{isFillableChecklist(report) ? "Download Fillable PDF" : "Download PDF"}</button>
           </div>
         </div>
       </section>
