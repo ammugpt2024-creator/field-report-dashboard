@@ -83,7 +83,14 @@ export async function createCompany({
       role: 'company_admin',
       status: 'invited'
     });
-    if (inviteError) console.warn('Company admin invite could not be recorded.', inviteError.message);
+    if (inviteError) {
+      // The company row exists but has no administrator, and the caller used
+      // to be told nothing at all. Hand back the company with the reason, so
+      // the screen can say what to fix (most often: the address already
+      // belongs to another company).
+      console.warn('Company admin invite could not be recorded.', inviteError.message);
+      return { ...company, adminInviteError: inviteError.message };
+    }
     sendInviteEmail(company.id, cleanEmail, String(primaryContactName || '').trim());
   }
 

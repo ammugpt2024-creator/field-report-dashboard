@@ -248,10 +248,17 @@ export default function PlatformAdminDashboard() {
     if (!form.companyName.trim()) return;
     setBusy(true);
     try {
-      await createCompany(form);
+      const created = await createCompany(form);
+      await refresh();
+      if (created?.adminInviteError) {
+        // The company exists but nobody can administer it yet, so the modal
+        // stays open with the reason rather than closing on a half-done job.
+        setError(`${created.company_name} was created, but its administrator could not be invited: ${created.adminInviteError}`);
+        setBusy(false);
+        return;
+      }
       setShowCreate(false);
       setForm(EMPTY_FORM);
-      await refresh();
     } catch (err) {
       setError(err.message);
     }

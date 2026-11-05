@@ -104,7 +104,12 @@ export function AuthProvider({ children }) {
         if (claimError) console.warn("Pending invite could not be claimed:", claimError.message);
       }
       const [membershipRes, platformRes] = await Promise.all([
-        supabase.from("company_users").select("company_id, role, status").eq("user_id", userId).eq("status", "active").maybeSingle(),
+        // Oldest membership first, matching auth_company_id() in the database.
+        // maybeSingle() errored outright when a login had been added to two
+        // companies, so the screen fell back to profiles.company_id while
+        // every database rule used the other company.
+        supabase.from("company_users").select("company_id, role, status").eq("user_id", userId).eq("status", "active")
+          .order("created_at", { ascending: true }).limit(1).maybeSingle(),
         supabase.from("platform_admins").select("user_id, status").eq("user_id", userId).eq("status", "active").maybeSingle()
       ]);
       setCompanyRole(membershipRes.data?.role || "");
