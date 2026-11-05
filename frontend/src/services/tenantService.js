@@ -537,8 +537,13 @@ export async function removeMember(member) {
 
 // Edit a project's core details.
 export async function updateProject(project, fields) {
-  const { error } = await supabase.from('projects').update(fields).eq('id', project.id);
+  // .select() so a change blocked by policy is not reported as saved: a
+  // filtered UPDATE matches no rows and PostgREST calls that success.
+  const { data, error } = await supabase.from('projects').update(fields).eq('id', project.id).select('id');
   if (error) throw error;
+  if (!Array.isArray(data) || !data.length) {
+    throw new Error('That project could not be updated. Only a company admin or project manager can change it.');
+  }
   logAuditEvent({
     companyId: project.company_id,
     action: 'project_updated',

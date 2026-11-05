@@ -1365,6 +1365,7 @@ export default function CompanyAdminDashboard() {
             company={company}
             roster={context.roster}
             roles={roles}
+            clients={clients}
             assignments={assignments.filter((a) => a.project_id === manageProject.id)}
             onClose={() => setManageProject(null)}
             onChanged={refresh}
@@ -1432,13 +1433,17 @@ function RoleEditorModal({ role, onClose, onSave }) {
 
 // Manage an existing project: edit its details, manage the team (PM / DPM /
 // technicians with per-person access), archive, or delete it.
-function ManageProjectModal({ project, company, roster, roles, assignments, onClose, onChanged, onRemoved }) {
+function ManageProjectModal({ project, company, roster, roles, clients, assignments, onClose, onChanged, onRemoved }) {
   const [fields, setFields] = useState({
     project_name: project.project_name || "",
     project_number: project.project_number || "",
     client_name: project.client_name || "",
     project_location: project.project_location || "",
     status: project.status || "Active"
+  });
+  const [distribution, setDistribution] = useState({
+    client_id: project.client_id || null,
+    cc: (project.client_cc_emails || []).join(", ")
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -1465,6 +1470,25 @@ function ManageProjectModal({ project, company, roster, roles, assignments, onCl
   }
 
   async function saveDetails() { await run(() => updateProject(project, fields)); }
+
+  // The addresses an approved report would reach today, shown before saving
+  // so an admin can see the effect of the change.
+  const ccList = String(distribution.cc || "")
+    .split(/[,;\s]+/)
+    .map((email) => email.trim().toLowerCase())
+    .filter(Boolean);
+  const selectedClient = (clients || []).find((c) => c.id === distribution.client_id);
+  const distributionPreview = [...new Set(
+    [selectedClient?.status !== "inactive" ? selectedClient?.contact_email : "", ...ccList]
+      .map((email) => String(email || "").trim().toLowerCase())
+      .filter((email) => email.includes("@"))
+  )];
+
+  async function saveDistribution() {
+    const invalid = ccList.find((email) => !/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(email));
+    if (invalid) { setError(`"${invalid}" is not a valid email address in Copy to.`); return; }
+    await run(() => updateProject(project, { client_id: distribution.client_id, client_cc_emails: ccList }));
+  }
 
   async function toggleArchive() {
     const next = isArchived ? "Active" : "Inactive";
@@ -1528,6 +1552,42 @@ function ManageProjectModal({ project, company, roster, roles, assignments, onCl
             ))}
           </div>
           <button type="button" onClick={saveDetails} disabled={busy} className="mt-2 inline-flex min-h-9 items-center rounded-lg bg-blue-700 px-3 text-xs font-bold text-white hover:bg-blue-800 disabled:opacity-60">Save details</button>
+
+          {/* Report distribution: who outside the company receives this
+              project's approved daily reports. Existing projects were created
+              before this existed, so this is where they get linked. */}
+          <p className="mt-6 text-xs font-bold uppercase tracking-wide text-slate-500">Report distribution</p>
+          <p className="mt-1 text-[11px] font-medium text-slate-400">
+            After a manager approves a daily report they are asked whether to send it here. Nothing is sent automatically.
+          </p>
+          <div className="mt-2 space-y-2">
+            <label className="block"><span className="text-xs font-semibold text-slate-600">Client record</span>
+              <select
+                value={distribution.client_id || ""}
+                onChange={(e) => setDistribution({ ...distribution, client_id: e.target.value || null })}
+                className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm font-semibold"
+              >
+                <option value="">No client contact</option>
+                {(clients || []).filter((c) => c.status !== "inactive").map((c) => (
+                  <option key={c.id} value={c.id}>{c.client_name}{c.contact_email ? ` — ${c.contact_email}` : " (no email)"}</option>
+                ))}
+              </select>
+            </label>
+            <label className="block"><span className="text-xs font-semibold text-slate-600">Copy to (comma separated)</span>
+              <input
+                value={distribution.cc}
+                onChange={(e) => setDistribution({ ...distribution, cc: e.target.value })}
+                placeholder="owner.rep@example.com, gc.office@example.com"
+                className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 px-3 text-sm font-semibold"
+              />
+            </label>
+            <div className="flex flex-wrap items-center gap-3">
+              <button type="button" onClick={saveDistribution} disabled={busy} className="inline-flex min-h-9 items-center rounded-lg bg-blue-700 px-3 text-xs font-bold text-white hover:bg-blue-800 disabled:opacity-60">Save distribution</button>
+              {distributionPreview.length
+                ? <span className="text-[11px] font-medium text-slate-500">Approved reports go to: {distributionPreview.join(", ")}</span>
+                : <span className="text-[11px] font-medium text-amber-700">No recipients yet — approved reports stay inside QCore.</span>}
+            </div>
+          </div>
 
           {/* Team */}
           <p className="mt-6 text-xs font-bold uppercase tracking-wide text-slate-500">Team</p>
