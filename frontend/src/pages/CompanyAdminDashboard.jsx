@@ -562,10 +562,20 @@ export default function CompanyAdminDashboard() {
     setError("");
     // Pull the team selections out of the form state — they live on separate
     // tables (projects.project_manager_* + project_assignments), not on projects' columns.
-    const { _pmUserId, _pmAccess, _dpmUserId, _dpmAccess, _technicianIds, _technicianAccess, ...projectFields } = newProject;
+    const { _pmUserId, _pmAccess, _dpmUserId, _dpmAccess, _technicianIds, _technicianAccess, _clientCc, ...projectFields } = newProject;
     const pm = assignableMembers.find((m) => m.user_id === _pmUserId);
+    const clientCcEmails = String(_clientCc || "")
+      .split(/[,;\s]+/)
+      .map((email) => email.trim().toLowerCase())
+      .filter(Boolean);
+    const invalidCc = clientCcEmails.find((email) => !/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(email));
+    if (invalidCc) {
+      setError(`"${invalidCc}" is not a valid email address in Copy to.`);
+      return;
+    }
     const payload = {
       ...projectFields,
+      client_cc_emails: clientCcEmails,
       project_manager_id: pm?.user_id || null,
       project_manager_name: pm?.full_name || null,
       project_manager_email: pm?.invited_email || null
@@ -813,7 +823,7 @@ export default function CompanyAdminDashboard() {
             icon={FolderKanban}
             title="Projects"
             count={projects.length}
-            action={<SmallButton onClick={() => setNewProject({ project_name: "", project_number: "", client_name: "", project_location: "", status: "Active", _pmUserId: "", _pmAccess: "full", _dpmUserId: "", _dpmAccess: "full", _technicianIds: [], _technicianAccess: {} })}><Plus className="h-3.5 w-3.5" />Add</SmallButton>}
+            action={<SmallButton onClick={() => setNewProject({ project_name: "", project_number: "", client_name: "", project_location: "", status: "Active", client_id: null, _clientCc: "", _pmUserId: "", _pmAccess: "full", _dpmUserId: "", _dpmAccess: "full", _technicianIds: [], _technicianAccess: {} })}><Plus className="h-3.5 w-3.5" />Add</SmallButton>}
           >
             <div className="-my-1 divide-y divide-slate-100">
               {projects.map((project) => (
@@ -1220,6 +1230,35 @@ export default function CompanyAdminDashboard() {
                   <label key={key} className="block"><span className="text-xs font-bold uppercase text-slate-500">{label}</span>
                     <input required={label.includes("*")} value={newProject[key]} onChange={(event) => setNewProject({ ...newProject, [key]: event.target.value })} className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 px-3 text-sm font-semibold" /></label>
                 ))}
+
+                {/* Who receives this project's approved reports. Without a
+                    client record linked here, approval has nobody to send to. */}
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                  <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Report distribution</p>
+                  <label className="mt-2 block"><span className="text-xs font-semibold text-slate-600">Client record</span>
+                    <select
+                      value={newProject.client_id || ""}
+                      onChange={(event) => setNewProject({ ...newProject, client_id: event.target.value || null })}
+                      className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm font-semibold"
+                    >
+                      <option value="">No client contact</option>
+                      {clients.filter((c) => c.status !== "inactive").map((c) => (
+                        <option key={c.id} value={c.id}>{c.client_name}{c.contact_email ? ` — ${c.contact_email}` : " (no email)"}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="mt-2 block"><span className="text-xs font-semibold text-slate-600">Copy to (comma separated)</span>
+                    <input
+                      value={newProject._clientCc}
+                      onChange={(event) => setNewProject({ ...newProject, _clientCc: event.target.value })}
+                      placeholder="owner.rep@example.com, gc.office@example.com"
+                      className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 px-3 text-sm font-semibold"
+                    />
+                  </label>
+                  <p className="mt-1 text-[11px] font-medium text-slate-400">
+                    After a manager approves a daily report they are asked whether to send it to these addresses. Nothing is sent automatically.
+                  </p>
+                </div>
 
                 <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
                   <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Project Team</p>

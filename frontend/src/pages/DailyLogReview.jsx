@@ -16,7 +16,7 @@ import {
 } from "../services/dailyLogService";
 import { createDailyLogPdfSignedUrl, openDailyLogPdf, regenerateDailyLogPdf } from "../services/dailyLogPdfService";
 import { logAuditEvent } from "../services/auditLogService";
-import { sendDailyLogApprovalEmail } from "../services/notificationService";
+import { getProjectClientRecipients, sendClientDailyLogEmail, sendDailyLogApprovalEmail } from "../services/notificationService";
 
 function Section({ kicker, title, children }) {
   return (
@@ -140,8 +140,38 @@ export default function DailyLogReview() {
           pdfBlob,
           pdfUrl
         });
+        // Issue the approved report to the client, once the reviewer has
+        // confirmed the recipients. This leaves the company, so it is never
+        // automatic: a wrong client link or a mistaken approval would reach
+        // the client before anyone could stop it.
+        const projectId = approvedPdfLog.projectId || approvedPdfLog.project_id;
+        const { recipients, clientName } = await getProjectClientRecipients(projectId);
+        if (recipients.length) {
+          const confirmed = window.confirm(
+            `Send this approved report to the client?\n\n` +
+            `${clientName ? `${clientName}\n` : ""}${recipients.join("\n")}\n\n` +
+            "The report PDF is attached. Internal review comments are not included."
+          );
+          if (confirmed) {
+            try {
+              await sendClientDailyLogEmail(approvedPdfLog, {
+                recipients,
+                clientName,
+                companyName: profile?.company_name || "",
+                pdfBlob
+              });
+              window.alert(`The report was sent to ${recipients.join(", ")}.`);
+            } catch (clientError) {
+              console.error("Client delivery failed", clientError);
+              window.alert(
+                `The log is approved, but the client copy could not be sent: ${clientError.message || "email error"}. ` +
+                "You can send it from the client's copy of the PDF, or try again from the log."
+              );
+            }
+          }
+        }
       } catch (emailError) {
-        console.warn("Technician approval notification could not be sent", emailError);
+        console.warn("Approval notification could not be sent", emailError);
       }
 
       setSignatureModalOpen(false);

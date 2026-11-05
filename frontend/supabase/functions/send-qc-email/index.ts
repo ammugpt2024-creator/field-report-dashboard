@@ -101,6 +101,27 @@ Deno.serve(async (req) => {
       if (payrollEmail) companyEmails.add(payrollEmail);
     }
 
+    // Client recipients for this company: the contact on each client record,
+    // and the extra addresses configured on each project. A manager sends an
+    // approved report to these deliberately, so they are allowed even though
+    // they sit outside the roster.
+    if (companyId) {
+      const [{ data: clientRows }, { data: projectRows }] = await Promise.all([
+        admin.from("clients").select("contact_email").eq("company_id", companyId).eq("status", "active"),
+        admin.from("projects").select("client_cc_emails").eq("company_id", companyId)
+      ]);
+      for (const row of clientRows || []) {
+        const email = normalizeEmail((row as Record<string, any>).contact_email);
+        if (email) companyEmails.add(email);
+      }
+      for (const row of projectRows || []) {
+        for (const cc of ((row as Record<string, any>).client_cc_emails || [])) {
+          const email = normalizeEmail(cc);
+          if (email) companyEmails.add(email);
+        }
+      }
+    }
+
     // The company's own configured notification addresses stay allowed.
     const { data: settingsRows } = await admin
       .from("notification_settings")

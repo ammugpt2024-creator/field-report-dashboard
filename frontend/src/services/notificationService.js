@@ -319,6 +319,89 @@ export function buildTimesheetDecisionEmail({ card, decision, reviewerName, comm
   };
 }
 
+// Who outside the company receives this project's approved reports: the
+// client record's contact, plus the project's extra addresses.
+export async function getProjectClientRecipients(projectId) {
+  if (!projectId) return { recipients: [], clientName: '' };
+  const { data: project, error } = await supabase
+    .from('projects')
+    .select('client_id, client_cc_emails, client_name')
+    .eq('id', projectId)
+    .maybeSingle();
+  if (error || !project) {
+    if (error) console.warn('Project client recipients could not be loaded.', error.message);
+    return { recipients: [], clientName: '' };
+  }
+
+  let clientName = project.client_name || '';
+  let contactEmail = '';
+  if (project.client_id) {
+    const { data: client } = await supabase
+      .from('clients')
+      .select('client_name, contact_email, status')
+      .eq('id', project.client_id)
+      .maybeSingle();
+    if (client && client.status !== 'inactive') {
+      clientName = client.client_name || clientName;
+      contactEmail = String(client.contact_email || '').trim();
+    }
+  }
+
+  const recipients = [...new Set(
+    [contactEmail, ...(project.client_cc_emails || [])]
+      .map((email) => String(email || '').trim().toLowerCase())
+      .filter((email) => email.includes('@'))
+  )];
+  return { recipients, clientName };
+}
+
+// The approved daily report, as the client sees it. Internal review comments
+// are deliberately left out: those are a conversation between the technician
+// and the reviewer, not part of the deliverable.
+export function buildClientDailyLogEmail({ log, companyName, clientName, viewUrl }) {
+  const logNumber = getDailyLogNumber(log);
+  const projectName = log.projectName || log.project_name || 'Project';
+  return {
+    subject: `Daily Field Report ${logNumber} — ${projectName} — ${log.date || ''}`.trim(),
+    html: baseEmailShell({
+      title: 'Daily Field Report',
+      intro: `${clientName ? `${clientName}, p` : 'P'}lease find attached the approved Daily Field Report for ${projectName}, issued by ${companyName || BRAND.name}.`,
+      rows: [
+        ['Report #', logNumber],
+        ['Project', projectName],
+        ['Report Date', log.date || '-'],
+        ['Shift', log.shift || '-'],
+        ['Field Technician', log.technicianName || log.technician_name || '-'],
+        ['Reviewed & Approved By', log.approvedBy || log.approved_by || '-'],
+        ['Approved On', formatDateTime(log.approvedAt || log.approved_at || new Date())],
+        ['Report PDF', 'Attached to this email']
+      ],
+      ctaLabel: viewUrl ? 'View Report' : '',
+      ctaUrl: viewUrl || ''
+    })
+  };
+}
+
+// Sends an approved daily log to a project's client recipients. The manager
+// confirms each send, so the recipients are passed in explicitly rather than
+// resolved inside the send.
+export async function sendClientDailyLogEmail(log, { recipients = [], clientName = '', companyName = '', pdfBlob = null } = {}) {
+  const to = recipients.map((email) => String(email || '').trim()).filter(Boolean);
+  if (!to.length) return null;
+  const { subject, html } = buildClientDailyLogEmail({ log, companyName, clientName, viewUrl: '' });
+  const projectPart = String(log.projectNumber || log.project_number || 'project').replace(/[^a-zA-Z0-9_.-]/g, '_');
+  const datePart = String(log.date || '').replace(/[^0-9-]/g, '') || 'date';
+  return queueAndSendNotification({
+    reportId: null,
+    recipientEmail: to,
+    subject,
+    html,
+    notificationType: 'daily_log_client_delivery',
+    pdfBlob,
+    pdfFileName: `Daily-Field-Report-${projectPart}-${datePart}.pdf`
+  });
+}
+
 export function buildPayrollTimesheetEmail({ card, reviewerName, periodLabel, companyName }) {
   const timesheetNumber = card.timesheetNumber || card.timesheet_number || `TS-${String(card.id || '').slice(0, 8).toUpperCase()}`;
   const employee = card.technicianName || card.technician_name || '-';
@@ -602,12 +685,18 @@ export async function queueAndSendNotification({
     ? DEFAULT_QC_REVIEWER_EMAIL
     : recipientEmail || DEFAULT_QC_REVIEWER_EMAIL;
   if (!resolvedRecipientEmail) return null;
+  // Client deliveries go to several addresses at once; the queue row holds one
+  // text column, so record them as a list and send the array onward.
+  const queuedRecipient = Array.isArray(resolvedRecipientEmail)
+    ? resolvedRecipientEmail.join(', ')
+    : resolvedRecipientEmail;
+  if (!queuedRecipient) return null;
 
   const { data: queued, error } = await supabase
     .from('notification_queue')
     .insert({
       report_id: reportId,
-      recipient_email: resolvedRecipientEmail,
+      recipient_email: queuedRecipient,
       subject,
       body_html: html,
       notification_type: notificationType,
