@@ -98,11 +98,19 @@ export async function createCompany({
 }
 
 export async function setCompanyStatus(company, nextStatus) {
-  const { error } = await supabase
+  // .select() so a blocked write is not mistaken for a successful one:
+  // Postgres does not error when a policy filters an UPDATE, it just matches
+  // no rows, and PostgREST reports that as success. The dashboard then
+  // redrew the company exactly as it was, with no hint that nothing changed.
+  const { data, error } = await supabase
     .from('companies')
     .update({ status: nextStatus, updated_at: new Date().toISOString() })
-    .eq('id', company.id);
+    .eq('id', company.id)
+    .select('id, status');
   if (error) throw error;
+  if (!Array.isArray(data) || !data.length) {
+    throw new Error('That company could not be updated. Your account may not have platform administrator rights.');
+  }
   logAuditEvent({
     companyId: company.id,
     action: nextStatus === 'suspended' ? 'company_suspended' : 'company_status_changed',
@@ -114,11 +122,20 @@ export async function setCompanyStatus(company, nextStatus) {
 }
 
 export async function setSubscriptionPlan(companyId, plan) {
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from('company_subscriptions')
     .update({ plan, updated_at: new Date().toISOString() })
-    .eq('company_id', companyId);
+    .eq('company_id', companyId)
+    .select('company_id');
   if (error) throw error;
+  if (!Array.isArray(data) || !data.length) {
+    // Either the company has no subscription row yet, or the write was
+    // filtered. Create the row; a filtered insert raises a real error.
+    const { error: insertError } = await supabase
+      .from('company_subscriptions')
+      .insert({ company_id: companyId, plan });
+    if (insertError) throw insertError;
+  }
   logAuditEvent({
     companyId,
     action: 'subscription_plan_changed',

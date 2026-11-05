@@ -261,13 +261,26 @@ export default function PlatformAdminDashboard() {
   async function toggleStatus(company) {
     const next = company.status === "suspended" ? "active" : "suspended";
     if (!window.confirm(`${next === "suspended" ? "Suspend" : "Activate"} ${company.company_name}?`)) return;
-    await setCompanyStatus(company, next);
-    await refresh();
+    try {
+      await setCompanyStatus(company, next);
+      await refresh();
+    } catch (error) {
+      // Silence here was the bug: the status stayed as it was and the screen
+      // redrew unchanged, so the suspension looked applied until someone
+      // noticed the counts had not moved.
+      console.error("Company status change failed", error);
+      window.alert(error.message || `${company.company_name} could not be ${next === "suspended" ? "suspended" : "activated"}. Please try again.`);
+    }
   }
 
   async function changePlan(company, plan) {
-    await setSubscriptionPlan(company.id, plan);
-    await refresh();
+    try {
+      await setSubscriptionPlan(company.id, plan);
+      await refresh();
+    } catch (error) {
+      console.error("Subscription plan change failed", error);
+      window.alert(error.message || `The plan for ${company.company_name} could not be changed. Please try again.`);
+    }
   }
 
   // An active grant = approved, not ended, not expired.
