@@ -43,6 +43,7 @@ import {
 } from "../services/ptoService";
 import { companyStoragePath, preloadCompanyBranding } from "../services/brandingService";
 import KeyValueList from "../components/mobile/KeyValueList";
+import { isValidEmail } from "../utils/email";
 
 // Friendly labels + one-line "what they can do" copy for the invite flow, so the
 // admin picks a role by meaning instead of a raw enum value.
@@ -376,7 +377,7 @@ export default function CompanyAdminDashboard() {
 
   async function savePayrollSettings() {
     const email = String(payrollDraft.payroll_email || "").trim();
-    if (email && !/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(email)) {
+    if (email && !isValidEmail(email)) {
       setPayrollSave({ busy: false, message: "", error: "Enter a valid email address, or leave it empty." });
       return;
     }
@@ -573,7 +574,7 @@ export default function CompanyAdminDashboard() {
     event.preventDefault();
     setError("");
     const email = String(newContact.email || "").trim().toLowerCase();
-    if (email && !/^[^@s]+@[^@s]+.[a-z]{2,}$/i.test(email)) {
+    if (email && !isValidEmail(email)) {
       setError("Enter a valid email address for this contact, or leave it empty.");
       return;
     }
@@ -610,7 +611,7 @@ ${inUse.length} project(s) send reports to this contact. They will fall back to 
     setError("");
     const { id, ...fields } = newClient;
     const email = String(fields.contact_email || "").trim().toLowerCase();
-    if (email && !/^[^@s]+@[^@s]+.[a-z]{2,}$/i.test(email)) {
+    if (email && !isValidEmail(email)) {
       setError("Enter a valid email address for the account contact, or leave it empty.");
       return;
     }
@@ -643,7 +644,7 @@ ${inUse.length} project(s) send reports to this contact. They will fall back to 
       .split(/[,;\s]+/)
       .map((email) => email.trim().toLowerCase())
       .filter(Boolean);
-    const invalidCc = clientCcEmails.find((email) => !/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(email));
+    const invalidCc = clientCcEmails.find((email) => !isValidEmail(email));
     if (invalidCc) {
       setError(`"${invalidCc}" is not a valid email address in Copy to.`);
       return;
@@ -1667,7 +1668,7 @@ function ManageProjectModal({ project, company, roster, roles, clients, clientCo
   )];
 
   async function saveDistribution() {
-    const invalid = ccList.find((email) => !/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(email));
+    const invalid = ccList.find((email) => !isValidEmail(email));
     if (invalid) { setError(`"${invalid}" is not a valid email address in Copy to.`); return; }
     await run(() => updateProject(project, {
       client_id: distribution.client_id,
