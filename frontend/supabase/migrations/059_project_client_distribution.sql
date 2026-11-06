@@ -1,8 +1,9 @@
 -- Who outside the company receives a project's approved reports.
 --
--- projects.client_id has existed since 023 but nothing ever set it: the Add
--- Project form never asked, so no project knows its client. Approved daily
--- logs therefore reached the technician and nobody else.
+-- Approved daily logs reached the technician and nobody else: no project knew
+-- its client. (This file originally claimed projects.client_id had existed
+-- since 023 -- it had not; that column belongs to invoices. Migration 061
+-- adds it.)
 --
 -- client_cc_emails holds the extra addresses for that project (an owner's
 -- rep, a GC inbox) alongside the client record's own contact email.

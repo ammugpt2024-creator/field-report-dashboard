@@ -145,7 +145,13 @@ export default function DailyLogReview() {
         // automatic: a wrong client link or a mistaken approval would reach
         // the client before anyone could stop it.
         const projectId = approvedPdfLog.projectId || approvedPdfLog.project_id;
-        const { recipients, clientName } = await getProjectClientRecipients(projectId);
+        const { recipients, clientName, failed } = await getProjectClientRecipients(projectId);
+        if (failed) {
+          window.alert(
+            "The log is approved, but QCore could not check who the client copy should go to. " +
+            "Nothing was sent to the client. Please tell your administrator."
+          );
+        }
         if (recipients.length) {
           const confirmed = window.confirm(
             `Send this approved report to the client?\n\n` +

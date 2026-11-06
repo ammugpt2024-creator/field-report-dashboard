@@ -329,8 +329,10 @@ export async function getProjectClientRecipients(projectId) {
     .eq('id', projectId)
     .maybeSingle();
   if (error || !project) {
-    if (error) console.warn('Project client recipients could not be loaded.', error.message);
-    return { recipients: [], clientName: '' };
+    // A query error here used to look exactly like "this project has no
+    // client", which hid a missing column for a whole release. Say which it is.
+    if (error) console.error('Project client recipients could not be loaded — approved reports will not offer a client send.', error.message);
+    return { recipients: [], clientName: '', failed: Boolean(error) };
   }
 
   let clientName = project.client_name || '';
