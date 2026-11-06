@@ -89,6 +89,26 @@ const LEVEL_ORDER = ["none", "view", "create_edit", "approve", "manage"];
 // A member only truly counts as active once they've claimed their invite (have a
 // linked account). Until then they're "invited" regardless of the status column.
 const displayStatus = (member) => (member.user_id ? member.status : "invited");
+
+// An invitation link is good for about 24 hours; the roster row is not. A
+// pending row looked identical on day one and day thirty, so an admin had no
+// way to tell who was about to accept from who needed a fresh link.
+const INVITE_LINK_HOURS = 24;
+function inviteAge(member) {
+  if (member.user_id || member.status !== "invited") return null;
+  const issued = Date.parse(member.invited_at || member.created_at || "");
+  if (Number.isNaN(issued)) return null;
+  const hours = (Date.now() - issued) / 3600000;
+  const stale = hours >= INVITE_LINK_HOURS;
+  let label;
+  if (hours < 1) label = "invited just now";
+  else if (hours < 24) label = `invited ${Math.round(hours)}h ago`;
+  else {
+    const days = Math.floor(hours / 24);
+    label = `invited ${days} day${days === 1 ? "" : "s"} ago`;
+  }
+  return { label, stale, hours };
+}
 // A person's role on a project follows their company role — no separate
 // per-project role to avoid contradicting it.
 function deriveAssignmentRole(companyRole) {
@@ -790,21 +810,38 @@ export default function CompanyAdminDashboard() {
             action={<SmallButton onClick={openInvite}><UserPlus className="h-3.5 w-3.5" />Invite</SmallButton>}
           >
             <div className="-my-1 divide-y divide-slate-100">
-              {context.roster.map((member) => (
+              {context.roster.map((member) => {
+                const pending = inviteAge(member);
+                return (
                 <div key={member.id} className="flex flex-wrap items-center gap-3 py-3">
                   <InitialAvatar name={member.full_name || member.invited_email} color={company.brand_color || "#1d4ed8"} className="h-9 w-9 text-sm" />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <p className="truncate text-sm font-bold text-slate-900">{member.full_name || member.invited_email || "—"}</p>
                       <RowStatus status={displayStatus(member)} />
+                      {pending?.stale && (
+                        <span className="inline-flex shrink-0 items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-700">
+                          Link expired
+                        </span>
+                      )}
                     </div>
                     <p className="truncate text-xs font-medium text-slate-400">
                       {roles.find((r) => r.id === member.role_id)?.name || roleLabel(member.role)} · {member.invited_email}
                       {member.user_id ? ` · ${assignments.filter((a) => a.user_id === member.user_id).length} project(s)` : ""}
+                      {pending ? ` · ${pending.label}` : ""}
                     </p>
+                    {pending?.stale && (
+                      <p className="truncate text-[11px] font-semibold text-amber-700">
+                        Invitation links last about {INVITE_LINK_HOURS} hours. Resend to give them a fresh one.
+                      </p>
+                    )}
                   </div>
                   {!member.user_id && (
-                    <SmallButton onClick={() => handleResend(member)} disabled={resendingId === member.id} className="border-blue-200 text-blue-700 hover:bg-blue-50">
+                    <SmallButton
+                      onClick={() => handleResend(member)}
+                      disabled={resendingId === member.id}
+                      className={pending?.stale ? "border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100" : "border-blue-200 text-blue-700 hover:bg-blue-50"}
+                    >
                       {resendingId === member.id ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />Sending…</> : <><Mail className="h-3.5 w-3.5" />Resend</>}
                     </SmallButton>
                   )}
@@ -812,7 +849,8 @@ export default function CompanyAdminDashboard() {
                     <Settings2 className="h-3.5 w-3.5" />Manage
                   </SmallButton>
                 </div>
-              ))}
+                );
+              })}
               {!context.roster.length && <p className="py-3 text-sm font-semibold text-slate-500">No employees yet — invite your first team member.</p>}
             </div>
           </SectionCard>

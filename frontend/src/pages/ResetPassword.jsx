@@ -55,7 +55,11 @@ function ResetPassword() {
       return;
     }
     setBusy(true);
-    const { error: updateError } = await supabase.auth.updateUser({ password });
+    // password_set is how the invitation screen knows whether an account has
+    // ever chosen a password. Only that screen used to write it, so anyone who
+    // set theirs here was later asked to choose one again when a sign-in link
+    // brought them back through /welcome.
+    const { error: updateError } = await supabase.auth.updateUser({ password, data: { password_set: true } });
     if (updateError) {
       setError(updateError.message);
       setBusy(false);

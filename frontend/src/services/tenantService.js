@@ -459,7 +459,17 @@ export async function inviteMember(companyId, { email, fullName, roleId }) {
     .insert({ company_id: companyId, invited_email: cleanEmail, full_name: String(fullName || '').trim(), role_id: roleId, status: 'invited' })
     .select()
     .single();
-  if (error) throw error;
+  if (error) {
+    // The database rules say more than their raw text does. 23505 is the
+    // unique index on pending invitations; the one-company trigger raises the
+    // same code with a sentence already written for the admin.
+    if (error.code === '23505') {
+      throw new Error(/already has a QCore account|already belongs to/i.test(error.message)
+        ? error.message
+        : `${cleanEmail} already has an invitation waiting for this company. Use Resend to send the link again.`);
+    }
+    throw error;
+  }
   logAuditEvent({
     companyId,
     action: 'user_invited',
@@ -476,6 +486,13 @@ export async function inviteMember(companyId, { email, fullName, roleId }) {
 // link and delivers it via Resend.
 export async function resendInvite(companyId, member) {
   const delivery = await sendInviteEmail(companyId, member.invited_email, member.full_name);
+  // Age is measured from the last link actually sent, not from the first.
+  if (delivery.ok) {
+    await supabase
+      .from('company_users')
+      .update({ invited_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+      .eq('id', member.id);
+  }
   logAuditEvent({
     companyId,
     action: 'user_invite_resent',
