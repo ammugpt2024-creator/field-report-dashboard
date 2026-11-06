@@ -42,7 +42,7 @@ export async function preloadCompanyBranding() {
 
     const { data: company } = await supabase
       .from('companies')
-      .select('company_name, legal_name, logo_url, logo_storage_path, brand_color')
+      .select('company_name, legal_name, logo_url, logo_storage_path, brand_color, address, phone')
       .eq('id', companyId)
       .maybeSingle();
     if (!company) return cachedBranding;
@@ -58,7 +58,11 @@ export async function preloadCompanyBranding() {
     cachedBranding = {
       name: company.company_name || company.legal_name || FALLBACK.name,
       logoUrl: logoUrl, // the company's own uploaded logo, or '' → UI shows the name
-      brandColor: company.brand_color || FALLBACK.brandColor
+      brandColor: company.brand_color || FALLBACK.brandColor,
+      // Printed in the report letterhead.
+      address: company.address || '',
+      phone: company.phone || '',
+      hasCompany: true
     };
   } catch (error) {
     console.warn('Company branding could not be preloaded.', error?.message);

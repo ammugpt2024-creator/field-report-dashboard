@@ -10,6 +10,7 @@ import { getCompanyBranding } from "./brandingService";
 import { renderVdotChecklistToDoc } from "./vdotChecklistPdfService";
 import { isVdotChecklistReport } from "../configs/vdotChecklists";
 import { reserveTab } from "../utils/openInNewTab.js";
+import { BRAND } from "../config/branding.js";
 
 // Branding resolves from the caller's company (multi-tenant); these getters
 // fall back to the historic defaults inside brandingService.
@@ -25,10 +26,16 @@ const REPORT_FONT_FAMILY = "Inter";
 // Version 4: comments the reviewer left when approving are printed.
 // Version 5: an attached PDF that cannot be embedded gets a notice instead of
 // a blank page.
-export const DAILY_LOG_PDF_LAYOUT_VERSION = 5;
+// Version 6: QCore report design -- page header in the company brand colour
+// with a document-control block, numbered sections, summary panel, photo log.
+export const DAILY_LOG_PDF_LAYOUT_VERSION = 6;
 let reportFontsRegistered = false;
 const PDF_COLORS = {
   navy: [16, 24, 40],
+  ink: [31, 41, 55],
+  labelBg: [244, 246, 249],
+  rule: [209, 214, 222],
+  zebra: [250, 251, 252],
   blue: [37, 99, 235],
   green: [4, 120, 87],
   amber: [180, 83, 9],
@@ -44,8 +51,18 @@ const DAILY_LOG_PDF_BUCKET = "daily-log-pdfs";
 const SIGNED_URL_TTL_SECONDS = 60 * 10;
 const JsPDFConstructor = jsPdfModule?.jsPDF || jsPdfModule?.default || jsPdfModule;
 const PAGE_MARGIN = 40;
-const PAGE_TOP_MARGIN = 36;
+// Where content starts on a page. The daily log reserves room for the company
+// letterhead drawn on every page (LETTERHEAD_CONTENT_TOP) while it generates;
+// the standalone Proctor/Samples PDFs and form-style pages use FORM_PAGE_TOP.
+const FORM_PAGE_TOP = 36;
+const LETTERHEAD_CONTENT_TOP = 96;
+let PAGE_TOP_MARGIN = FORM_PAGE_TOP;
 const PAGE_BOTTOM_MARGIN = 42;
+// Pages drawn in the layout of a paper form (VDOT checklists, Proctor curves)
+// position their own content from the top, so they get no letterhead.
+let _pagesWithoutLetterhead = new Set();
+// Photos are numbered through the whole report: "Photo 1", "Photo 2", ...
+let _photoCounter = 0;
 const LOCAL_PDF_CACHE_LIMIT_BYTES = 2_500_000;
 function pdfValue(value) {
   return value == null || value === "" ? "N/A" : String(value);
@@ -341,38 +358,6 @@ function getReportSpecificationValue(report, keys) {
     if (value != null && value !== "") return value;
   }
   return "";
-}
-
-function getDullesLogoDataUrl() {
-  const canvas = document.createElement("canvas");
-  canvas.width = 360;
-  canvas.height = 120;
-  const context = canvas.getContext("2d");
-  if (!context) return "";
-  context.fillStyle = "#ffffff";
-  context.fillRect(0, 0, canvas.width, canvas.height);
-  context.strokeStyle = "#1b75bb";
-  context.lineWidth = 10;
-  context.beginPath();
-  context.moveTo(20, 96);
-  context.lineTo(72, 20);
-  context.lineTo(124, 96);
-  context.stroke();
-  context.strokeStyle = "#111827";
-  context.lineWidth = 5;
-  context.beginPath();
-  context.moveTo(72, 22);
-  context.lineTo(72, 98);
-  context.moveTo(46, 98);
-  context.lineTo(98, 98);
-  context.stroke();
-  context.fillStyle = "#1b75bb";
-  context.font = "700 25px Arial";
-  context.fillText("DULLES", 145, 48);
-  context.fillStyle = "#111827";
-  context.font = "700 25px Arial";
-  context.fillText("ENGINEERING", 145, 80);
-  return canvas.toDataURL("image/png");
 }
 
 function getActivityReports(activity) {
@@ -1073,9 +1058,9 @@ function getAttachmentCategory(attachment = {}) {
 }
 
 function renderAttachmentCard(doc, attachment, x, y, width, height) {
-  doc.setDrawColor(...PDF_COLORS.line);
-  doc.setFillColor(...PDF_COLORS.soft);
-  doc.roundedRect(x, y, width, height, 4, 4, "FD");
+  doc.setDrawColor(...PDF_COLORS.rule);
+  doc.setFillColor(...PDF_COLORS.labelBg);
+  doc.rect(x, y, width, height, "FD");
   setReportFont(doc, "semibold", 9, PDF_COLORS.navy);
   doc.text(doc.splitTextToSize(getAttachmentFileName(attachment), width - 18), x + 9, y + 15);
   setReportFont(doc, "regular", 8, PDF_COLORS.slate);
@@ -1089,22 +1074,154 @@ function renderAttachmentCard(doc, attachment, x, y, width, height) {
   doc.text(doc.splitTextToSize(meta || "Attachment", width - 18), x + 9, y + height - 12);
 }
 
-function PdfFooter(doc, log) {
+// Accent colour for the header bar, section chips, table headers and figure
+// labels: the company's own brand colour, so each company's reports carry its
+// identity. Set per document in generateDailyLogPdfBlob.
+const DEFAULT_ACCENT = [29, 78, 216];
+let _accent = DEFAULT_ACCENT;
+
+function hexToRgb(hex) {
+  const match = /^#?([0-9a-f]{6})$/i.exec(String(hex || "").trim());
+  if (!match) return null;
+  const value = parseInt(match[1], 16);
+  return [(value >> 16) & 255, (value >> 8) & 255, value & 255];
+}
+
+function mixColor(color, target, amount) {
+  return color.map((channel, index) => Math.round(channel + (target[index] - channel) * amount));
+}
+
+function colorLuminance([r, g, b]) {
+  return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+}
+
+// The accent as text on white: a light brand colour is deepened to stay legible.
+function accentText() {
+  return colorLuminance(_accent) > 0.55 ? mixColor(_accent, [0, 0, 0], 0.45) : _accent;
+}
+
+function accentTint() {
+  return mixColor(_accent, [255, 255, 255], 0.9);
+}
+
+function textOnAccent() {
+  return colorLuminance(_accent) > 0.6 ? PDF_COLORS.ink : PDF_COLORS.white;
+}
+
+// Footer: who issued the report on the left, how and when it was generated on
+// the right. Page numbers live in the header's document-control block; pages
+// drawn as paper forms have no header, so theirs go here.
+function PdfFooter(doc, log, letterhead = {}) {
   const pageCount = doc.getNumberOfPages();
-  const reportNumber = getDailyReportNumber(log);
-  const projectName = doc.splitTextToSize(getProjectName(log), 230)[0];
   const generatedAt = formatDateTime(log.pdfGeneratedAt || log.pdf_generated_at || new Date().toISOString());
+  const issuer = [letterhead.name, letterhead.address, letterhead.phone ? `Tel ${letterhead.phone}` : ""]
+    .filter(Boolean)
+    .join("  ·  ");
 
   for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
     doc.setPage(pageNumber);
     const pageWidth = getPageWidth(doc);
     const pageHeight = getPageHeight(doc);
-    doc.setDrawColor(...PDF_COLORS.line);
-    doc.line(PAGE_MARGIN, pageHeight - 24, pageWidth - PAGE_MARGIN, pageHeight - 24);
-    setReportFont(doc, "regular", 8, PDF_COLORS.muted);
-    doc.text(projectName, PAGE_MARGIN, pageHeight - 12);
-    doc.text(`${reportNumber}  •  Generated ${generatedAt}`, pageWidth / 2, pageHeight - 12, { align: "center" });
-    doc.text(`Page ${pageNumber} of ${pageCount}`, pageWidth - PAGE_MARGIN, pageHeight - 12, { align: "right" });
+    doc.setDrawColor(...PDF_COLORS.rule);
+    doc.setLineWidth(0.5);
+    doc.line(PAGE_MARGIN, pageHeight - 28, pageWidth - PAGE_MARGIN, pageHeight - 28);
+    setReportFont(doc, "regular", 7, PDF_COLORS.muted);
+    const generated = [
+      _pagesWithoutLetterhead.has(pageNumber) ? `Page ${pageNumber} of ${pageCount}` : "",
+      `Generated with ${BRAND.name}  ·  ${generatedAt}`
+    ].filter(Boolean).join("  ·  ");
+    doc.text(generated, pageWidth - PAGE_MARGIN, pageHeight - 16, { align: "right" });
+    if (issuer) {
+      const room = getContentWidth(doc) - doc.getTextWidth(generated) - 24;
+      doc.text(doc.splitTextToSize(issuer, Math.max(room, 80))[0], PAGE_MARGIN, pageHeight - 16);
+    }
+  }
+}
+
+// Company identity for the page header: its own logo, or its name when no logo
+// was uploaded. Never another company's logo.
+async function loadLetterhead(log) {
+  const branding = getCompanyBranding();
+  const logo = await sourceToDataUrl(log.companyLogoUrl || log.company_logo_url || COMPANY_LOGO_URL.current);
+  return {
+    logo: logo?.startsWith("data:image/") ? logo : "",
+    name: log.companyName || log.company_name || (branding.hasCompany ? branding.name : ""),
+    address: branding.address || "",
+    phone: branding.phone || ""
+  };
+}
+
+// Page header: a brand-colour bar beside the company's logo, and on the right a
+// document-control block identifying the report on every page.
+function drawPageHeader(doc, letterhead, logoSize, meta, pageNumber, pageCount) {
+  const top = 28;
+  const height = 52;
+  const right = getPageWidth(doc) - PAGE_MARGIN;
+
+  doc.setFillColor(..._accent);
+  doc.rect(PAGE_MARGIN, top, 3.5, height, "F");
+  const identityX = PAGE_MARGIN + 13;
+  if (logoSize) {
+    doc.addImage(letterhead.logo, getImageFormat(letterhead.logo), identityX, top + (height - logoSize.height) / 2, logoSize.width, logoSize.height, "company-logo", "FAST");
+  } else if (letterhead.name) {
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(13);
+    doc.setTextColor(...PDF_COLORS.ink);
+    doc.text(doc.splitTextToSize(letterhead.name, 240)[0], identityX, top + height / 2 + 4.5);
+  }
+
+  const blockWidth = 236;
+  const cellWidth = blockWidth / 2;
+  const cellHeight = height / 2;
+  const blockX = right - blockWidth;
+  const cells = [
+    ["Report No.", meta.reportNumber],
+    ["Date", meta.date],
+    ["Project No.", meta.projectNumber],
+    ["Page", `${pageNumber} of ${pageCount}`]
+  ];
+  cells.forEach(([label, value], index) => {
+    const cellX = blockX + (index % 2) * cellWidth;
+    const cellY = top + Math.floor(index / 2) * cellHeight;
+    doc.setDrawColor(...PDF_COLORS.rule);
+    doc.setLineWidth(0.5);
+    doc.rect(cellX, cellY, cellWidth, cellHeight, "S");
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(6.2);
+    doc.setTextColor(...PDF_COLORS.muted);
+    doc.text(label.toUpperCase(), cellX + 7, cellY + 9, { charSpace: 0.3 });
+    const text = String(pdfValue(value));
+    let size = 9;
+    doc.setFontSize(size);
+    while (doc.getTextWidth(text) > cellWidth - 14 && size > 6) {
+      size -= 0.5;
+      doc.setFontSize(size);
+    }
+    doc.setTextColor(...PDF_COLORS.ink);
+    doc.text(doc.splitTextToSize(text, cellWidth - 14)[0] || "", cellX + 7, cellY + 20.5);
+  });
+  doc.setDrawColor(..._accent);
+  doc.setLineWidth(2);
+  doc.line(blockX, top, right, top);
+  doc.setLineWidth(0.5);
+}
+
+function renderPageHeaders(doc, letterhead, meta) {
+  let logoSize = null;
+  if (letterhead.logo) {
+    try {
+      const props = doc.getImageProperties(letterhead.logo);
+      const ratio = Math.min(160 / props.width, 40 / props.height);
+      logoSize = { width: props.width * ratio, height: props.height * ratio };
+    } catch (error) {
+      console.warn("[Daily Log PDF] Unable to embed company logo", error);
+    }
+  }
+  const pageCount = doc.getNumberOfPages();
+  for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
+    if (_pagesWithoutLetterhead.has(pageNumber)) continue;
+    doc.setPage(pageNumber);
+    drawPageHeader(doc, letterhead, logoSize, meta, pageNumber, pageCount);
   }
 }
 
@@ -1120,12 +1237,15 @@ function sentenceCase(text) {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
+// Table header rows take a tint of the company's accent colour.
 function getDarkTableHeadStyles(fontSize = 9) {
   return {
-    fillColor: PDF_COLORS.navy,
-    textColor: PDF_COLORS.white,
+    fillColor: accentTint(),
+    textColor: accentText(),
     fontStyle: "bold",
-    fontSize
+    fontSize,
+    lineColor: PDF_COLORS.rule,
+    lineWidth: 0.5
   };
 }
 
@@ -1233,168 +1353,207 @@ function getRecordValue(record, keys) {
   return pdfValue(getRecordField(record, keys));
 }
 
-async function renderReferenceDailyLogHeader(doc, log, y) {
-  const logoSource = await sourceToDataUrl(log.companyLogoUrl || log.company_logo_url || COMPANY_LOGO_URL.current) || getDullesLogoDataUrl();
-  const pageWidth = getPageWidth(doc);
-  const headerX = PAGE_MARGIN;
-  const headerWidth = getContentWidth(doc);
-  const headerHeight = 96;
-  const statusText = formatStatus(log.status || "Draft");
-  const headerMuted = [203, 213, 225];
-  const headerSoft = [226, 232, 240];
-  const setHeaderFont = (color, size, style = "normal") => {
-    doc.setTextColor(...color);
-    doc.setFont("helvetica", style);
-    doc.setFontSize(size);
-  };
-  y = ensurePage(doc, y, headerHeight + 18);
-
-  doc.setFillColor(...PDF_COLORS.navy);
-  doc.roundedRect(headerX, y, headerWidth, headerHeight, 12, 12, "F");
-
-  const logoBoxSize = 58;
-  const logoX = headerX + 16;
-  const logoY = y + (headerHeight - logoBoxSize) / 2;
-  doc.setFillColor(...PDF_COLORS.white);
-  doc.roundedRect(logoX, logoY, logoBoxSize, logoBoxSize, 9, 9, "F");
-  const logoRendered = logoSource?.startsWith("data:image/")
-    ? addImageToPdf(doc, logoSource, { fileType: "image/png" }, logoX + 7, logoY + 15, logoBoxSize - 14, 28)
-    : false;
-  if (!logoRendered) {
-    setHeaderFont(PDF_COLORS.navy, 16, "bold");
-    doc.text("DE", logoX + logoBoxSize / 2, logoY + 36, { align: "center" });
-  }
-
-  // Title block, centred. The technician is already in Project Information
-  // and the generated time is in the footer, so neither is squeezed in here.
-  setHeaderFont(PDF_COLORS.white, 20, "bold");
-  doc.text("Daily Field Report", pageWidth / 2, y + 36, { align: "center" });
-  setHeaderFont(headerMuted, 10.5, "bold");
-  doc.text(getProjectName(log), pageWidth / 2, y + 54, { align: "center" });
-  setHeaderFont(headerSoft, 8.5, "normal");
-  const shift = log.shift || log.shift_name;
-  // The number already reads "<initials>DFR<n>" (PRDFR4), so a "DFR" prefix
-  // printed it twice. Label it as what it is.
-  const metaLine = [`Report No. ${getDailyReportNumber(log)}`, formatDateOnly(getLogDate(log)), shift].filter(Boolean).join("   •   ");
-  doc.text(metaLine, pageWidth / 2, y + 72, { align: "center" });
-
-  setHeaderFont(PDF_COLORS.navy, 7.4, "bold");
-  const badgeText = statusText.toUpperCase();
-  const pillWidth = Math.max(78, doc.getTextWidth(badgeText) + 14);
-  const pillHeight = 18;
-  const pillX = headerX + headerWidth - pillWidth - 14;
-  const pillY = y + (headerHeight - pillHeight) / 2;
-  doc.setFillColor(...PDF_COLORS.soft);
-  doc.roundedRect(pillX, pillY, pillWidth, pillHeight, 7, 7, "F");
-  setHeaderFont(PDF_COLORS.navy, 7.4, "bold");
-  doc.text(badgeText, pillX + pillWidth / 2, pillY + 12, { align: "center" });
-
-  return y + headerHeight + 18;
-}
-
-function renderReferenceSectionBar(doc, title, y, options = {}) {
-  const barHeight = options.height || 20;
-  y = ensurePage(doc, y, barHeight + 22);
-  doc.setFillColor(...PDF_COLORS.navy);
-  doc.roundedRect(PAGE_MARGIN, y, getContentWidth(doc), barHeight, 4, 4, "F");
+// Report title on page one: the title with its status pill, the project
+// beneath. Number, date and page are in the header's control block.
+function renderReferenceDailyLogHeader(doc, log, y) {
+  const title = "Daily Field Report";
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(options.size || 9.2);
-  doc.setTextColor(...PDF_COLORS.white);
-  doc.text(String(title).toUpperCase(), PAGE_MARGIN + 10, y + 13.5);
-  if (options.rightText) {
-    doc.setFontSize(7.4);
-    doc.setTextColor(203, 213, 225);
-    doc.text(String(options.rightText).toUpperCase(), PAGE_MARGIN + getContentWidth(doc) - 10, y + 13.5, { align: "right" });
-  }
-  return y + barHeight + (options.afterGap ?? 12);
+  doc.setFontSize(18);
+  doc.setTextColor(...PDF_COLORS.ink);
+  doc.text(title, PAGE_MARGIN, y + 16);
+  const titleWidth = doc.getTextWidth(title);
+
+  const status = formatStatus(log.status || "Draft").toUpperCase();
+  doc.setFontSize(6.8);
+  const pillWidth = doc.getTextWidth(status) + 14;
+  const pillX = PAGE_MARGIN + titleWidth + 10;
+  doc.setFillColor(...accentTint());
+  doc.roundedRect(pillX, y + 5, pillWidth, 13, 6.5, 6.5, "F");
+  doc.setTextColor(...accentText());
+  doc.text(status, pillX + pillWidth / 2, y + 13.8, { align: "center", charSpace: 0.3 });
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9.5);
+  doc.setTextColor(...PDF_COLORS.slate);
+  doc.text(doc.splitTextToSize(getProjectName(log), getContentWidth(doc))[0], PAGE_MARGIN, y + 32);
+  return y + 48;
 }
 
+// Project particulars in a tinted panel: labels stacked above their values in
+// three columns; a long value may span two.
+function renderSummaryPanel(doc, rows, y) {
+  const width = getContentWidth(doc);
+  const pad = 12;
+  const columnGap = 16;
+  const columnWidth = (width - pad * 2 - columnGap * 2) / 3;
+  const lineHeight = 11.5;
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+  const laidOut = rows.map((row) => {
+    let column = 0;
+    const cells = row.map((cell) => {
+      const span = cell.span || 1;
+      const cellWidth = columnWidth * span + columnGap * (span - 1);
+      const laid = {
+        ...cell,
+        x: PAGE_MARGIN + pad + column * (columnWidth + columnGap),
+        lines: doc.splitTextToSize(pdfValue(cell.value), cellWidth).slice(0, 3)
+      };
+      column += span;
+      return laid;
+    });
+    return { cells, height: 13 + Math.max(...cells.map((cell) => cell.lines.length)) * lineHeight + 7 };
+  });
+  const panelHeight = pad + laidOut.reduce((sum, row) => sum + row.height, 0) + pad - 7;
+  y = ensurePage(doc, y, panelHeight + 10);
+
+  doc.setFillColor(...PDF_COLORS.labelBg);
+  doc.rect(PAGE_MARGIN, y, width, panelHeight, "F");
+  let rowY = y + pad;
+  for (const row of laidOut) {
+    for (const cell of row.cells) {
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(6.6);
+      doc.setTextColor(...PDF_COLORS.muted);
+      doc.text(String(cell.label).toUpperCase(), cell.x, rowY + 6, { charSpace: 0.3 });
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      doc.setTextColor(...PDF_COLORS.ink);
+      doc.text(cell.lines, cell.x, rowY + 17.5, { lineHeightFactor: lineHeight / 9 });
+    }
+    rowY += row.height;
+  }
+  return y + panelHeight + 18;
+}
+
+// Section heading. Top-level sections carry a number in an accent chip
+// (1 Project Summary, 2 Field Activities, ...); headings inside them get a
+// short accent underline running into a hairline.
+function renderReferenceSectionBar(doc, title, y, options = {}) {
+  y = ensurePage(doc, y, 46);
+  const right = PAGE_MARGIN + getContentWidth(doc);
+  const drawRightText = (baseline) => {
+    if (!options.rightText) return;
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7.4);
+    doc.setTextColor(...PDF_COLORS.muted);
+    doc.text(String(options.rightText), right, baseline, { align: "right" });
+  };
+
+  if (options.number != null) {
+    const chip = 16;
+    doc.setFillColor(..._accent);
+    doc.rect(PAGE_MARGIN, y, chip, chip, "F");
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(8.5);
+    doc.setTextColor(...textOnAccent());
+    doc.text(String(options.number), PAGE_MARGIN + chip / 2, y + 11.2, { align: "center" });
+    doc.setFontSize(11.5);
+    doc.setTextColor(...PDF_COLORS.ink);
+    doc.text(String(title), PAGE_MARGIN + chip + 8, y + 12);
+    drawRightText(y + 12);
+    return y + chip + (options.afterGap ?? 12);
+  }
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10);
+  doc.setTextColor(...PDF_COLORS.ink);
+  doc.text(doc.splitTextToSize(String(title), getContentWidth(doc) - 120)[0], PAGE_MARGIN, y + 10);
+  drawRightText(y + 10);
+  doc.setDrawColor(...PDF_COLORS.rule);
+  doc.setLineWidth(0.5);
+  doc.line(PAGE_MARGIN + 28, y + 15, right, y + 15);
+  doc.setDrawColor(..._accent);
+  doc.setLineWidth(1.6);
+  doc.line(PAGE_MARGIN, y + 15, PAGE_MARGIN + 28, y + 15);
+  doc.setLineWidth(0.5);
+  return y + 15 + (options.afterGap ?? 12);
+}
+
+// One labelled value as a flat tinted tile; tiles sit in a grid with narrow
+// white gutters.
 function renderReferenceFieldCard(doc, item, x, y, width, height) {
   const label = String(item.label || "").toUpperCase();
   const value = pdfValue(item.value);
-  doc.setFillColor(...PDF_COLORS.soft);
-  doc.setDrawColor(205, 216, 228);
-  doc.roundedRect(x, y, width, height, 6, 6, "FD");
+  doc.setFillColor(...PDF_COLORS.labelBg);
+  doc.rect(x, y, width, height, "F");
 
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(6.6);
+  doc.setTextColor(...PDF_COLORS.muted);
+  doc.text(doc.splitTextToSize(label, width - 16)[0] || "", x + 8, y + 11, { charSpace: 0.3 });
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(9);
+  doc.setTextColor(...PDF_COLORS.ink);
+  const valueLines = doc.splitTextToSize(value, width - 16);
+  doc.text(valueLines.slice(0, 2), x + 8, y + 23.5, { lineHeightFactor: 1.15 });
+}
+
+// Sub-heading inside a report block: small accent capitals.
+function renderReferenceSubTitle(doc, title, y, options = {}) {
+  y = ensurePage(doc, y, options.minSpace || 40);
   doc.setFont("helvetica", "bold");
   doc.setFontSize(7.6);
-  doc.setTextColor(50, 74, 104);
-  doc.text(label, x + 10, y + 12, { charSpace: 0.5 });
-
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(9.4);
-  doc.setTextColor(...PDF_COLORS.navy);
-  const valueLines = doc.splitTextToSize(value, width - 20);
-  doc.text(valueLines.slice(0, 2), x + 10, y + 26, { lineHeightFactor: 1.15 });
-}
-
-function renderReferenceSection(doc, title, items, y, options = {}) {
-  const columns = options.columns || 2;
-  const gapX = options.gapX ?? 10;
-  const gapY = options.gapY ?? 8;
-  const cardHeight = options.cardHeight || 36;
-  const rows = Math.ceil(items.length / columns);
-  const sectionHeight = 20 + 12 + rows * cardHeight + Math.max(rows - 1, 0) * gapY + 14;
-  y = ensurePage(doc, y, Math.max(options.minSpace || 86, sectionHeight));
-  y = renderReferenceSectionBar(doc, title, y);
-
-  const cardWidth = (getContentWidth(doc) - gapX * (columns - 1)) / columns;
-  items.forEach((item, index) => {
-    const row = Math.floor(index / columns);
-    const column = index % columns;
-    const x = PAGE_MARGIN + column * (cardWidth + gapX);
-    const cardY = y + row * (cardHeight + gapY);
-    renderReferenceFieldCard(doc, item, x, cardY, cardWidth, cardHeight);
-  });
-
-  return y + rows * cardHeight + Math.max(rows - 1, 0) * gapY + (options.afterGap ?? 14);
-}
-
-function renderReferenceSubTitle(doc, title, y, options = {}) {
-  // Sub-section headings share the same navy bar treatment as the main section headings.
-  return renderReferenceSectionBar(doc, title, y, {
-    height: 18,
-    size: 8.6,
-    afterGap: options.afterGap ?? 10,
-    rightText: options.rightText
-  });
+  doc.setTextColor(...accentText());
+  doc.text(String(title).toUpperCase(), PAGE_MARGIN, y + 8, { charSpace: 0.5 });
+  if (options.rightText) {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7.2);
+    doc.setTextColor(...PDF_COLORS.muted);
+    doc.text(String(options.rightText), PAGE_MARGIN + getContentWidth(doc), y + 8, { align: "right" });
+  }
+  return y + 8 + (options.afterGap ?? 8);
 }
 
 function renderReferenceCardGrid(doc, items, y, options = {}) {
   const columns = options.columns || 3;
-  const gapX = options.gapX ?? 10;
-  const gapY = options.gapY ?? 8;
+  const gap = 3;
   const cardHeight = options.cardHeight || 36;
-  const cardWidth = (getContentWidth(doc) - gapX * (columns - 1)) / columns;
+  const cardWidth = (getContentWidth(doc) - gap * (columns - 1)) / columns;
   for (let start = 0; start < items.length; start += columns) {
-    y = ensurePage(doc, y, cardHeight + gapY);
+    y = ensurePage(doc, y, cardHeight + 4);
     items.slice(start, start + columns).forEach((item, index) => {
-      renderReferenceFieldCard(doc, item, PAGE_MARGIN + index * (cardWidth + gapX), y, cardWidth, cardHeight);
+      renderReferenceFieldCard(doc, item, PAGE_MARGIN + index * (cardWidth + gap), y, cardWidth, cardHeight);
     });
-    y += cardHeight + gapY;
+    y += cardHeight + gap;
   }
-  return y + (options.afterGap ?? 6);
+  return y - gap + (options.afterGap ?? 12);
 }
 
+// A labelled block of running text (work performed, remarks, notices). The
+// text flows onto the next page instead of being drawn past the page end.
 function renderReferenceTextBox(doc, label, text, y, options = {}) {
   const width = getContentWidth(doc);
+  const fontSize = 9.5;
+  const lineHeight = fontSize * 1.42;
   doc.setFont("helvetica", "normal");
-  doc.setFontSize(9);
-  const lines = doc.splitTextToSize(String(text || "N/A"), width - 22);
-  const boxHeight = Math.max(40, lines.length * 9 * 1.35 + 28);
-  y = ensurePage(doc, y, boxHeight + 8);
-  doc.setFillColor(...PDF_COLORS.white);
-  doc.setDrawColor(205, 216, 228);
-  doc.roundedRect(PAGE_MARGIN, y, width, boxHeight, 6, 6, "FD");
+  doc.setFontSize(fontSize);
+  const lines = doc.splitTextToSize(String(text || "N/A"), width);
+  y = ensurePage(doc, y, 22 + lineHeight * Math.min(lines.length, 3));
+
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(7.8);
-  doc.setTextColor(50, 74, 104);
-  doc.text(String(label).toUpperCase(), PAGE_MARGIN + 10, y + 13);
+  doc.setFontSize(7.4);
+  doc.setTextColor(...PDF_COLORS.muted);
+  doc.text(String(label).toUpperCase(), PAGE_MARGIN, y + 8, { charSpace: 0.4 });
+
   doc.setFont("helvetica", "normal");
-  doc.setFontSize(9);
-  doc.setTextColor(...PDF_COLORS.navy);
-  doc.text(lines, PAGE_MARGIN + 10, y + 27, { lineHeightFactor: 1.35 });
-  return y + boxHeight + (options.afterGap ?? 12);
+  doc.setFontSize(fontSize);
+  doc.setTextColor(...PDF_COLORS.ink);
+  const pageBottom = getPageHeight(doc) - PAGE_BOTTOM_MARGIN;
+  let baseline = y + 21;
+  for (const line of lines) {
+    if (baseline > pageBottom) {
+      doc.addPage("letter", "portrait");
+      baseline = PAGE_TOP_MARGIN + 10;
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(fontSize);
+      doc.setTextColor(...PDF_COLORS.ink);
+    }
+    doc.text(line, PAGE_MARGIN, baseline);
+    baseline += lineHeight;
+  }
+  return baseline - lineHeight + 6 + (options.afterGap ?? 12);
 }
 
 function getInspectionRequirementItems(report) {
@@ -1463,17 +1622,23 @@ function renderReferenceComplianceSummary(doc, records, y) {
   ], y, { columns: 5, cardHeight: 34, afterGap: 10 });
 }
 
+// Photo log: each photo in a ruled frame with a caption strip along its foot,
+// "Fig. N" and the file name on the left, when it was taken on the right.
+// Figures are numbered through the whole report.
 async function renderReferencePhotoGrid(doc, photos, y) {
-  const gap = 10;
+  const gap = 12;
   const columns = 2;
+  const stripHeight = 20;
 
   for (let index = 0; index < photos.length; index += columns) {
     const row = photos.slice(index, index + columns);
-    // A lone photo in a row gets the full content width, like the web summary
-    // view, but height-capped so it reads as a figure rather than a full page.
-    const isSingle = row.length === 1;
+    // A section's only photo gets the full content width, like the web summary
+    // view, height-capped so it reads as a figure rather than a full page. An
+    // odd last photo keeps the grid's size so the figures stay uniform.
+    const isSingle = photos.length === 1;
     const frameWidth = isSingle ? getContentWidth(doc) : (getContentWidth(doc) - gap) / columns;
-    const maxImageHeight = isSingle ? 240 : 170;
+    const frameHeight = isSingle ? 310 : 260;
+    const imageHeight = frameHeight - stripHeight;
     const rendered = [];
     for (const [rowIndex, attachment] of row.entries()) {
       const x = PAGE_MARGIN + rowIndex * (frameWidth + gap);
@@ -1482,7 +1647,7 @@ async function renderReferencePhotoGrid(doc, photos, y) {
         source = await compressImageDataUrl(source, { maxWidth: 1400, maxHeight: 1400, quality: 0.74 });
         try {
           const props = doc.getImageProperties(source);
-          const ratio = Math.min((frameWidth - 12) / props.width, maxImageHeight / props.height, 2);
+          const ratio = Math.min((frameWidth - 8) / props.width, (imageHeight - 8) / props.height, 2);
           rendered.push({ attachment, source, x, width: props.width * ratio, height: props.height * ratio });
           continue;
         } catch (error) {
@@ -1492,30 +1657,47 @@ async function renderReferencePhotoGrid(doc, photos, y) {
       rendered.push({ attachment, source: "", x, width: 0, height: 0 });
     }
 
-    const rowImageHeight = Math.max(...rendered.map((item) => item.height), 60);
-    const frameHeight = rowImageHeight + 30;
-    y = ensurePage(doc, y, frameHeight + 10);
+    y = ensurePage(doc, y, frameHeight + 4);
 
     for (const item of rendered) {
-      doc.setDrawColor(205, 216, 228);
+      _photoCounter += 1;
       doc.setFillColor(...PDF_COLORS.white);
-      doc.roundedRect(item.x, y, frameWidth, frameHeight, 6, 6, "FD");
+      doc.rect(item.x, y, frameWidth, frameHeight, "F");
       if (item.source) {
-        doc.addImage(item.source, getImageFormat(item.source, item.attachment), item.x + (frameWidth - item.width) / 2, y + 6, item.width, item.height, undefined, "FAST");
+        doc.addImage(item.source, getImageFormat(item.source, item.attachment), item.x + (frameWidth - item.width) / 2, y + (imageHeight - item.height) / 2, item.width, item.height, undefined, "FAST");
       } else {
         doc.setFont("helvetica", "normal");
         doc.setFontSize(8.5);
         doc.setTextColor(...PDF_COLORS.muted);
-        doc.text("Image unavailable", item.x + 10, y + 24);
+        doc.text("Image unavailable", item.x + frameWidth / 2, y + imageHeight / 2, { align: "center" });
       }
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(7.5);
-      doc.setTextColor(...PDF_COLORS.muted);
+
+      const stripY = y + imageHeight;
+      doc.setFillColor(...PDF_COLORS.labelBg);
+      doc.rect(item.x, stripY, frameWidth, stripHeight, "F");
+      doc.setDrawColor(...PDF_COLORS.rule);
+      doc.setLineWidth(0.5);
+      doc.rect(item.x, y, frameWidth, frameHeight, "S");
+
+      const figure = `Fig. ${_photoCounter}`;
       const uploadedAt = item.attachment?.createdAt || item.attachment?.created_at || item.attachment?.uploadedAt || item.attachment?.uploaded_at;
-      const caption = [getAttachmentFileName(item.attachment), uploadedAt ? formatDateTime(uploadedAt) : ""].filter(Boolean).join(" • ");
-      doc.text(doc.splitTextToSize(caption, frameWidth - 20)[0] || "", item.x + 10, y + rowImageHeight + 20);
+      const taken = uploadedAt ? formatDateTime(uploadedAt) : "";
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(7.8);
+      doc.setTextColor(...accentText());
+      doc.text(figure, item.x + 8, stripY + 13);
+      const nameX = item.x + 8 + doc.getTextWidth(figure) + 6;
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(7);
+      const takenWidth = taken ? doc.getTextWidth(taken) + 10 : 0;
+      doc.setTextColor(...PDF_COLORS.muted);
+      if (taken) doc.text(taken, item.x + frameWidth - 8, stripY + 13, { align: "right" });
+      doc.setFontSize(7.8);
+      doc.setTextColor(...PDF_COLORS.ink);
+      const nameRoom = item.x + frameWidth - 8 - takenWidth - nameX;
+      doc.text(doc.splitTextToSize(getAttachmentFileName(item.attachment), Math.max(nameRoom, 30))[0] || "", nameX, stripY + 13);
     }
-    y += frameHeight + 12;
+    y += frameHeight + gap;
   }
   return y;
 }
@@ -1562,13 +1744,13 @@ async function renderReferenceAttachmentContent(doc, attachments, y, title) {
   const otherFiles = valid.filter((attachment) => !isRenderableImageAttachment(attachment) && !isPdfAttachment(attachment) && !isDocxAttachment(attachment));
 
   // Keep the section bar on the same page as its first content block: a lone
-  // photo frame (~280pt), a photo pair row (~240pt), or a document card row.
+  // photo frame (~330pt), a photo pair row (~280pt), or a document card row.
   // Attached PDFs are merged in as whole pages, so they can never share a page
   // with the bar; reserving room for "an attached-PDF page" only pushed the bar
   // onto a page of its own, followed by the attachment on the next. The bar now
   // stays at the end of the activity with the attached files named under it.
   const firstBlockSpace = photos.length
-    ? (photos.length === 1 ? 320 : 280)
+    ? (photos.length === 1 ? 370 : 320)
     : pdfs.length
       ? 40 + pdfs.length * 14
       : 130;
@@ -1689,9 +1871,9 @@ async function renderReferenceAsphaltReportBlock(doc, report, reportIndex, y, ac
         tableWidth: getContentWidth(doc),
         showHead: "everyPage",
         styles: { font: fontFamily, fontSize: 8, textColor: PDF_COLORS.navy, cellPadding: 5, valign: "middle" },
-        headStyles: { fillColor: PDF_COLORS.navy, textColor: PDF_COLORS.white, fontStyle: "bold", fontSize: 8 },
+        headStyles: getDarkTableHeadStyles(8),
         bodyStyles: { fillColor: PDF_COLORS.white },
-        alternateRowStyles: { fillColor: PDF_COLORS.soft },
+        alternateRowStyles: { fillColor: PDF_COLORS.zebra },
         didParseCell(data) {
           if (data.section === "body") {
             if (data.column.index === 4) {
@@ -1793,9 +1975,9 @@ async function renderReferenceNuclearCompactionReportBlock(doc, report, reportIn
     tableWidth: getContentWidth(doc),
     showHead: "everyPage",
     styles: { font: fontFamily, fontSize: 8, textColor: PDF_COLORS.navy, cellPadding: 5, valign: "middle" },
-    headStyles: { fillColor: PDF_COLORS.navy, textColor: PDF_COLORS.white, fontStyle: "bold", fontSize: 8 },
+    headStyles: getDarkTableHeadStyles(8),
     bodyStyles: { fillColor: PDF_COLORS.white },
-    alternateRowStyles: { fillColor: PDF_COLORS.soft }
+    alternateRowStyles: { fillColor: PDF_COLORS.zebra }
   };
 
   y = ensurePage(doc, y, 160);
@@ -1918,9 +2100,9 @@ async function renderReferenceInfiltrationReportBlock(doc, report, reportIndex, 
       tableWidth: getContentWidth(doc),
       showHead: "everyPage",
       styles: { font: fontFamily, fontSize: 8, textColor: PDF_COLORS.navy, cellPadding: 5, valign: "middle" },
-      headStyles: { fillColor: PDF_COLORS.navy, textColor: PDF_COLORS.white, fontStyle: "bold", fontSize: 8 },
+      headStyles: getDarkTableHeadStyles(8),
       bodyStyles: { fillColor: PDF_COLORS.white },
-      alternateRowStyles: { fillColor: PDF_COLORS.soft },
+      alternateRowStyles: { fillColor: PDF_COLORS.zebra },
       didParseCell: ({ cell, column }) => {
         if (column.index === 5 && cell.section === "body") {
           const val = String(cell.raw || "").trim();
@@ -1986,7 +2168,7 @@ function renderProctorCurvesPage(doc, report) {
   const pageH = getPageHeight(doc);
 
   // ── Title ──────────────────────────────────────────────────────────────────
-  let ty = PAGE_TOP_MARGIN + 8;
+  let ty = FORM_PAGE_TOP + 8;
   doc.setFont(fontFamily, "bold");
   doc.setFontSize(10);
   doc.setTextColor(...PDF_COLORS.navy);
@@ -2226,9 +2408,9 @@ async function renderReferenceProctorReportBlock(doc, report, reportIndex, y, ac
       tableWidth: getContentWidth(doc),
       showHead: "everyPage",
       styles: { font: fontFamily, fontSize: 7, textColor: PDF_COLORS.navy, cellPadding: 3, valign: "middle" },
-      headStyles: { fillColor: PDF_COLORS.navy, textColor: PDF_COLORS.white, fontStyle: "bold", fontSize: 7 },
+      headStyles: getDarkTableHeadStyles(7),
       bodyStyles: { fillColor: PDF_COLORS.white },
-      alternateRowStyles: { fillColor: PDF_COLORS.soft },
+      alternateRowStyles: { fillColor: PDF_COLORS.zebra },
       didParseCell: ({ cell, column }) => {
         if (cell.section === "body") {
           if (column.index === resultColIndex) {
@@ -2261,6 +2443,7 @@ async function renderReferenceProctorReportBlock(doc, report, reportIndex, y, ac
 
   // Figure 1: moisture-density curves on a dedicated page (mirrors TL-125A page 2)
   doc.addPage("letter", "portrait");
+  _pagesWithoutLetterhead.add(doc.getNumberOfPages());
   y = renderProctorCurvesPage(doc, report);
   // Attachments start on a new page only when there are attachments to render;
   // ensurePage will handle the page break if there isn't enough room.
@@ -2293,8 +2476,12 @@ async function renderReferenceSamplesReportBlock(doc, report, reportIndex, y, ac
 async function renderReferenceVdotChecklistBlock(doc, report, reportIndex, y, activity, log) {
   // The checklist is drawn in the layout of the VDOT paper form, so it starts on
   // its own page rather than squeezing under the activity summary.
+  // Its pages are laid out from the top like the paper form, so they carry
+  // no letterhead.
   doc.addPage("letter", "portrait");
-  y = renderVdotChecklistToDoc(doc, report, PAGE_TOP_MARGIN);
+  const firstChecklistPage = doc.getNumberOfPages();
+  y = renderVdotChecklistToDoc(doc, report, FORM_PAGE_TOP);
+  for (let page = firstChecklistPage; page <= doc.getNumberOfPages(); page += 1) _pagesWithoutLetterhead.add(page);
   y = await renderReferenceAttachmentContent(doc, getReportAttachments(report, activity, log), y, `Report ${reportIndex + 1} Attachments`);
   return y + 6;
 }
@@ -2325,6 +2512,13 @@ async function renderReferenceActivityDetails(doc, log, y) {
   const activities = log.activities || [];
   if (!activities.length) return y;
 
+  y = ensurePage(doc, y, 180);
+  y = renderReferenceSectionBar(doc, "Field Activities", y, {
+    number: 2,
+    afterGap: 12,
+    rightText: `${activities.length} ${activities.length === 1 ? "activity" : "activities"}`
+  });
+
   for (const [index, activity] of activities.entries()) {
     // Later activities start on a fresh page so each one's reports and
     // attachments stay together. The first follows Project Information
@@ -2333,32 +2527,57 @@ async function renderReferenceActivityDetails(doc, log, y) {
       doc.addPage("letter", "portrait");
       y = PAGE_TOP_MARGIN;
     } else {
-      y = ensurePage(doc, y + 6, 160);
+      y = ensurePage(doc, y, 140);
     }
 
     const reports = getScopedActivityReports(activity, log);
     const attachments = getActivityAttachments(activity, log);
     const photoCount = attachments.filter(isRenderableImageAttachment).length;
     const fileCount = attachments.length - photoCount;
+    const counts = `${reports.length} report${reports.length === 1 ? "" : "s"}  ·  ${photoCount} photo${photoCount === 1 ? "" : "s"}  ·  ${fileCount} file${fileCount === 1 ? "" : "s"}`;
 
+    // Each activity opens with a tinted band: "Activity 1 of 2" and its
+    // counts above the activity name, an accent stripe down the left.
+    const width = getContentWidth(doc);
+    const right = PAGE_MARGIN + width;
+    const bandHeight = 38;
+    doc.setFillColor(...PDF_COLORS.labelBg);
+    doc.rect(PAGE_MARGIN, y, width, bandHeight, "F");
+    doc.setFillColor(..._accent);
+    doc.rect(PAGE_MARGIN, y, 3, bandHeight, "F");
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(9.2);
-    const barTitle = doc.splitTextToSize(
-      `Activity ${String(index + 1).padStart(2, "0")} — ${getActivityName(activity, index)}`,
-      getContentWidth(doc) - 160
-    )[0];
-    y = renderReferenceSectionBar(doc, barTitle, y, {
-      afterGap: 10,
-      rightText: `${reports.length} report${reports.length === 1 ? "" : "s"} • ${photoCount} photo${photoCount === 1 ? "" : "s"} • ${fileCount} file${fileCount === 1 ? "" : "s"}`
-    });
+    doc.setFontSize(6.8);
+    doc.setTextColor(...accentText());
+    doc.text(`ACTIVITY ${index + 1} OF ${activities.length}`, PAGE_MARGIN + 12, y + 13, { charSpace: 0.4 });
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7.4);
+    doc.setTextColor(...PDF_COLORS.muted);
+    doc.text(counts, right - 10, y + 13, { align: "right" });
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11.5);
+    doc.setTextColor(...PDF_COLORS.ink);
+    doc.text(doc.splitTextToSize(getActivityName(activity, index), width - 24)[0], PAGE_MARGIN + 12, y + 28.5);
+    y += bandHeight + 14;
 
-    // No Status card: every activity is created "in_progress" and nothing in
-    // the editor ever changes it, so it read "In Progress" on every activity
-    // of every report, approved ones included. It was a default, not a fact.
-    y = renderReferenceCardGrid(doc, [
-      { label: "Location", value: activity.location || "N/A" },
-      { label: "Type", value: getActivityType(activity) }
-    ], y, { columns: 2, afterGap: 8 });
+    // Where and what kind of work, as label/value pairs. No Status: every
+    // activity is created "in_progress" and nothing in the editor ever
+    // changes it, so it read "In Progress" on every activity of every report,
+    // approved ones included. It was a default, not a fact.
+    let pairX = PAGE_MARGIN;
+    for (const [label, value] of [["Location", activity.location || "N/A"], ["Type", getActivityType(activity)]]) {
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(8.2);
+      doc.setTextColor(...PDF_COLORS.slate);
+      doc.text(`${label}:`, pairX, y);
+      pairX += doc.getTextWidth(`${label}:`) + 4;
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      doc.setTextColor(...PDF_COLORS.ink);
+      const text = doc.splitTextToSize(String(value), Math.max(right - pairX - 130, 80))[0] || "";
+      doc.text(text, pairX, y);
+      pairX += doc.getTextWidth(text) + 22;
+    }
+    y += 16;
 
     y = renderReferenceTextBox(doc, "Work Performed", sentenceCase(activity.description || "No description recorded."), y);
 
@@ -2397,13 +2616,13 @@ async function renderReferenceActivityDetails(doc, log, y) {
   return y;
 }
 
-// The technician's notes for the day -- delays, safety observations, site
-// conditions. They are entered in the editor's Comments box but were never
-// printed, so the PDF of record dropped them.
+// Section 3, Remarks: the technician's notes for the day -- delays, safety
+// observations, site conditions -- followed by any notes the reviewer wrote
+// while approving.
 function renderReferenceComments(doc, log, y) {
   const notes = String(log.notes || "").trim();
   y = ensurePage(doc, y + 6, 80);
-  y = renderReferenceSectionBar(doc, "Comments", y, { afterGap: 10 });
+  y = renderReferenceSectionBar(doc, "Remarks", y, { number: 3, afterGap: 12 });
   return renderReferenceTextBox(doc, "Issues, delays, and site notes", notes || "No comments recorded.", y);
 }
 
@@ -2413,55 +2632,67 @@ function renderReferenceComments(doc, log, y) {
 function renderReferenceReviewerComments(doc, log, y) {
   const notes = (Array.isArray(log.managerComments) ? log.managerComments : [])
     .filter((comment) => comment?.kind === "approval" && String(comment.comment || "").trim());
-  if (!notes.length) return y;
-  y = ensurePage(doc, y + 6, 80);
-  y = renderReferenceSectionBar(doc, "Reviewer Comments", y, { afterGap: 10 });
   for (const note of notes) {
-    const byline = [note.author, note.createdAt ? formatDateOnly(note.createdAt) : ""].filter(Boolean).join(" \u00b7 ");
-    y = renderReferenceTextBox(doc, byline ? `Approval note \u2014 ${byline}` : "Approval note", String(note.comment).trim(), y);
+    const byline = [note.author, note.createdAt ? formatDateOnly(note.createdAt) : ""].filter(Boolean).join(" · ");
+    y = renderReferenceTextBox(doc, byline ? `Reviewer note — ${byline}` : "Reviewer note", String(note.comment).trim(), y);
   }
   return y;
 }
 
-// Each signature carries who signed and when. The old block showed two
-// unnamed signature images and a lone "Date Approved", so the page never said
-// who the reviewer was or when the technician submitted.
+// Section 4, Sign-off: a box each for who prepared the report and who
+// reviewed it, with the signature, name, role and date.
 async function renderReferenceSignatures(doc, log, y) {
-  y = ensurePage(doc, y, 150);
+  y = ensurePage(doc, y, 132);
   y += 6;
-  y = renderReferenceSectionBar(doc, "Signatures", y, { afterGap: 16 });
-  const width = getContentWidth(doc);
-  const blockWidth = width * 0.44;
-  const columns = [PAGE_MARGIN, PAGE_MARGIN + width * 0.56];
+  y = renderReferenceSectionBar(doc, "Sign-off", y, { number: 4, afterGap: 12 });
+  const gap = 14;
+  const boxWidth = (getContentWidth(doc) - gap) / 2;
+  const boxHeight = 92;
   const submittedAt = log.submittedAt || log.submitted_at;
   const approvedAt = log.approvedAt || log.approved_at;
   const blocks = [
     {
-      label: "Technician Signature",
+      label: "Prepared by",
+      role: "Technician",
       image: log.technicianSignature || log.technician_signature || log.technicianSignatureUrl || log.technician_signature_url,
       name: getTechnicianName(log),
       detail: submittedAt ? `Submitted ${formatDateOnly(submittedAt)}` : "Not yet submitted"
     },
     {
-      label: "QA Reviewer Signature",
+      label: "Reviewed by",
+      role: "QA Reviewer",
       image: log.qcSignature || log.qc_signature || log.qcSignatureUrl || log.qc_signature_url,
       name: log.approvedBy || log.approved_by || "",
       detail: approvedAt ? `Approved ${formatDateOnly(approvedAt)}` : "Pending review"
     }
   ];
   for (const [index, block] of blocks.entries()) {
-    const x = columns[index];
-    setReportFont(doc, "medium", 8, PDF_COLORS.muted);
-    doc.text(block.label.toUpperCase(), x, y, { charSpace: 0.4 });
-    await renderSignatureImage(doc, block.image, x, y + 8, blockWidth, 30);
-    doc.setDrawColor(...PDF_COLORS.line);
-    doc.line(x, y + 44, x + blockWidth, y + 44);
-    setReportFont(doc, "semibold", 9.5, PDF_COLORS.navy);
-    doc.text(block.name || "—", x, y + 57);
-    setReportFont(doc, "regular", 8, PDF_COLORS.muted);
-    doc.text(block.detail, x, y + 69);
+    const x = PAGE_MARGIN + index * (boxWidth + gap);
+    doc.setDrawColor(...PDF_COLORS.rule);
+    doc.setLineWidth(0.5);
+    doc.rect(x, y, boxWidth, boxHeight, "S");
+    doc.setDrawColor(..._accent);
+    doc.setLineWidth(2);
+    doc.line(x, y, x + boxWidth, y);
+    doc.setLineWidth(0.5);
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(6.8);
+    doc.setTextColor(...accentText());
+    doc.text(block.label.toUpperCase(), x + 10, y + 14, { charSpace: 0.4 });
+    await renderSignatureImage(doc, block.image, x + 10, y + 20, boxWidth - 20, 32);
+    doc.setDrawColor(...PDF_COLORS.rule);
+    doc.line(x + 10, y + 58, x + boxWidth - 10, y + 58);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9.5);
+    doc.setTextColor(...PDF_COLORS.ink);
+    doc.text(block.name || "—", x + 10, y + 72);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(...PDF_COLORS.muted);
+    doc.text(`${block.role}  ·  ${block.detail}`, x + 10, y + 84);
   }
-  return y + 80;
+  return y + boxHeight + 10;
 }
 // Fully hydrated generation (project info, DB attachment rows, concrete report
 // records) — guarantees the blob matches what regenerateDailyLogPdf produces.
@@ -2472,28 +2703,47 @@ export async function generateHydratedDailyLogPdfBlob(log) {
 
 export async function generateDailyLogPdfBlob(log) {
   _pdfMergeQueue = [];
+  _pagesWithoutLetterhead = new Set();
+  _photoCounter = 0;
 
   const doc = new JsPDFConstructor({ orientation: "portrait", unit: "pt", format: "letter", compress: true });
   await registerReportFonts(doc);
-  let y = PAGE_TOP_MARGIN;
+  const letterhead = await loadLetterhead(log);
 
-  y = await renderReferenceDailyLogHeader(doc, log, y);
-  y = renderReferenceSection(doc, "Project Information", [
-    { label: "Project Number", value: getProjectNumber(log) },
-    { label: "Project Name", value: getProjectName(log) },
-    { label: "General Contractor", value: log.generalContractor || log.general_contractor || log.project?.general_contractor || "Not recorded" },
-    { label: "GC Representative", value: log.gcRepresentative || log.gc_representative || "Not recorded" },
-    { label: "Project Location", value: getProjectLocation(log) },
-    { label: "Technician Name", value: getTechnicianName(log) },
-    { label: "Weather", value: getWeatherText(log) },
-    { label: "Shift", value: log.shift || log.shift_name || "Not recorded" }
-  ], y, { columns: 2, cardHeight: 38, minSpace: 128 });
-  y = await renderReferenceActivityDetails(doc, log, y);
-  y = renderReferenceComments(doc, log, y);
-  y = renderReferenceReviewerComments(doc, log, y);
-  // Signatures last: they attest the work recorded above them.
-  await renderReferenceSignatures(doc, log, y);
-  PdfFooter(doc, log);
+  // Every page keeps the top band free for the page header, drawn once the
+  // page count is known. Accent and margin are restored afterwards for the
+  // standalone PDFs.
+  _accent = hexToRgb(log.brandColor || log.brand_color || getCompanyBranding().brandColor) || DEFAULT_ACCENT;
+  PAGE_TOP_MARGIN = LETTERHEAD_CONTENT_TOP;
+  try {
+    let y = PAGE_TOP_MARGIN;
+    y = renderReferenceDailyLogHeader(doc, log, y);
+    y = renderReferenceSectionBar(doc, "Project Summary", y, { number: 1, afterGap: 10 });
+    y = renderSummaryPanel(doc, [
+      [{ label: "Project", value: getProjectName(log), span: 2 }, { label: "Project No.", value: getProjectNumber(log) }],
+      [{ label: "Location", value: getProjectLocation(log), span: 2 }, { label: "Report Date", value: formatDateOnly(getLogDate(log)) }],
+      [
+        { label: "General Contractor", value: log.generalContractor || log.general_contractor || log.project?.general_contractor || "Not recorded" },
+        { label: "GC Representative", value: log.gcRepresentative || log.gc_representative || "Not recorded" },
+        { label: "Shift", value: log.shift || log.shift_name || "Not recorded" }
+      ],
+      [{ label: "Technician", value: getTechnicianName(log) }, { label: "Weather", value: getWeatherText(log), span: 2 }]
+    ], y);
+    y = await renderReferenceActivityDetails(doc, log, y);
+    y = renderReferenceComments(doc, log, y);
+    y = renderReferenceReviewerComments(doc, log, y);
+    // Sign-off last: it attests the work recorded above it.
+    await renderReferenceSignatures(doc, log, y);
+    renderPageHeaders(doc, letterhead, {
+      reportNumber: getDailyReportNumber(log),
+      date: formatDateOnly(getLogDate(log)),
+      projectNumber: getProjectNumber(log)
+    });
+    PdfFooter(doc, log, letterhead);
+  } finally {
+    PAGE_TOP_MARGIN = FORM_PAGE_TOP;
+    _accent = DEFAULT_ACCENT;
+  }
 
   const mainBlob = doc.output("blob");
   return mergePdfAttachments(mainBlob, _pdfMergeQueue);
@@ -2783,7 +3033,7 @@ export async function generateProctorStandalonePdf(report, { download = true } =
       font: fontFamily, fontSize: 8, textColor: PDF_COLORS.navy,
       cellPadding: { top: 4, bottom: 4, left: 7, right: 7 }, valign: "middle"
     },
-    headStyles: { fillColor: PDF_COLORS.navy, textColor: PDF_COLORS.white, fontStyle: "bold", fontSize: 8 },
+    headStyles: getDarkTableHeadStyles(8),
     bodyStyles: { fillColor: PDF_COLORS.white },
     didParseCell: ({ cell, column, row, section }) => {
       if (section !== "body") return;
