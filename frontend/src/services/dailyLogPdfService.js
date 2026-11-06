@@ -28,7 +28,9 @@ const REPORT_FONT_FAMILY = "Inter";
 // a blank page.
 // Version 6: QCore report design -- page header in the company brand colour
 // with a document-control block, numbered sections, summary panel, photo log.
-export const DAILY_LOG_PDF_LAYOUT_VERSION = 6;
+// Version 7: concrete reports show Inspection Requirements as a light spec
+// list and label their own number as the concrete log number, not a DFR.
+export const DAILY_LOG_PDF_LAYOUT_VERSION = 7;
 let reportFontsRegistered = false;
 const PDF_COLORS = {
   navy: [16, 24, 40],
@@ -395,9 +397,13 @@ function getLinkedReportId(report) {
   return /^\d+$/.test(String(reportId || "")) ? String(reportId) : "";
 }
 
-function getReportDfrNumber(report) {
+// The concrete test log's own number. It is stored as "dfr_number" and reads
+// "DFR-<project>-<seq>", but it is generated per concrete log and unique per
+// project -- not the daily report's DFR number -- so the PDF labels it as the
+// concrete log's number rather than printing a second, different "DFR".
+function getConcreteLogNumber(report) {
   const specs = report?.specifications || {};
-  return specs.dfr_number || report?.dfrNumber || report?.dfr_number || report?.reportNumber || report?.report_number || "Concrete Report";
+  return String(specs.dfr_number || report?.dfrNumber || report?.dfr_number || report?.reportNumber || report?.report_number || "").trim();
 }
 
 function getRecordSignature(record) {
@@ -1566,13 +1572,59 @@ function getInspectionRequirementItems(report) {
     { label: "Mix No.", keys: ["mix_number", "mix_no", "mixNumber", "mixNo"] },
     { label: "Batch Plant", keys: ["batch_plant", "batchPlant", "batch_plant_supplier", "batchPlantSupplier"] },
     { label: "J-Ring (in)", keys: ["j_ring_in", "j_ring", "jRing", "jRingIn"] },
-    { label: "Specified Strength (PSI)", keys: ["speed_of_stress_psi", "speed_of_stress", "strength_spec", "specified_strength_psi", "specified_strength", "specifiedStrength"] },
-    { label: "DFR Number", value: getReportDfrNumber(report) },
-    { label: "Comments", keys: ["comments", "notes"] }
+    { label: "Specified Strength (PSI)", keys: ["speed_of_stress_psi", "speed_of_stress", "strength_spec", "specified_strength_psi", "specified_strength", "specifiedStrength"] }
   ].map((item) => ({
     label: item.label,
-    value: item.value ?? pdfValue(getReportSpecificationValue(report, item.keys))
+    value: String(getReportSpecificationValue(report, item.keys) ?? "").trim()
   }));
+}
+
+// Specified values as a light spec list: label and value on one ruled line,
+// three to a row. Requirements the report never specified are left out
+// rather than printed as a wall of "N/A".
+function renderReferenceSpecList(doc, items, y, options = {}) {
+  const filled = items.filter((item) => item.value && item.value !== "N/A");
+  if (!filled.length) {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.setTextColor(...PDF_COLORS.muted);
+    y = ensurePage(doc, y, 20);
+    doc.text(options.emptyText || "None recorded.", PAGE_MARGIN, y + 8);
+    return y + 8 + (options.afterGap ?? 12);
+  }
+  const columns = options.columns || 3;
+  const gap = 18;
+  const columnWidth = (getContentWidth(doc) - gap * (columns - 1)) / columns;
+  const lineHeight = 11;
+  for (let start = 0; start < filled.length; start += columns) {
+    const row = filled.slice(start, start + columns).map((item) => {
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      const labelWidth = doc.getTextWidth(item.label);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(9);
+      const lines = doc.splitTextToSize(String(item.value), Math.max(columnWidth - labelWidth - 10, 40)).slice(0, 3);
+      return { ...item, lines };
+    });
+    const rowHeight = 8 + Math.max(...row.map((item) => item.lines.length)) * lineHeight;
+    y = ensurePage(doc, y, rowHeight + 2);
+    row.forEach((item, index) => {
+      const x = PAGE_MARGIN + index * (columnWidth + gap);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      doc.setTextColor(...PDF_COLORS.slate);
+      doc.text(item.label, x, y + 11);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(9);
+      doc.setTextColor(...PDF_COLORS.ink);
+      doc.text(item.lines, x + columnWidth, y + 11, { align: "right", lineHeightFactor: lineHeight / 9 });
+      doc.setDrawColor(...PDF_COLORS.rule);
+      doc.setLineWidth(0.5);
+      doc.line(x, y + rowHeight, x + columnWidth, y + rowHeight);
+    });
+    y += rowHeight;
+  }
+  return y + (options.afterGap ?? 12);
 }
 
 function renderReferenceRecordsTable(doc, records, y) {
@@ -2488,13 +2540,22 @@ async function renderReferenceVdotChecklistBlock(doc, report, reportIndex, y, ac
 
 async function renderReferenceConcreteReportBlock(doc, report, reportIndex, y, activity, log) {
   y = ensurePage(doc, y, 160);
-  y = renderReferenceSectionBar(doc, `Concrete Report ${reportIndex + 1} — ${getReportDfrNumber(report)}`, y, {
+  const logNumber = getConcreteLogNumber(report);
+  y = renderReferenceSectionBar(doc, `Concrete Report ${reportIndex + 1}`, y, {
     afterGap: 10,
-    rightText: formatStatus(report.status || report.reportStatus || "Draft")
+    rightText: [logNumber ? `Concrete Log No. ${logNumber}` : "", formatStatus(report.status || report.reportStatus || "Draft")]
+      .filter(Boolean)
+      .join("  ·  ")
   });
 
-  y = renderReferenceSubTitle(doc, "Inspection Requirements", y);
-  y = renderReferenceCardGrid(doc, getInspectionRequirementItems(report), y, { columns: 3, afterGap: 10 });
+  y = renderReferenceSubTitle(doc, "Inspection Requirements", y, { afterGap: 2 });
+  y = renderReferenceSpecList(doc, getInspectionRequirementItems(report), y, {
+    columns: 3,
+    afterGap: 12,
+    emptyText: "No inspection requirements were specified for this report."
+  });
+  const reportComments = String(getReportSpecificationValue(report, ["comments", "notes"]) ?? "").trim();
+  if (reportComments) y = renderReferenceTextBox(doc, "Report comments", reportComments, y);
 
   const records = getReportRecords(report);
   if (records.length) {
