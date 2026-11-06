@@ -9,6 +9,7 @@ import { getStorageConfigError, logStorageStep } from "./storageDiagnosticsServi
 import { getCompanyBranding } from "./brandingService";
 import { renderVdotChecklistToDoc } from "./vdotChecklistPdfService";
 import { isVdotChecklistReport } from "../configs/vdotChecklists";
+import { reserveTab } from "../utils/openInNewTab.js";
 
 // Branding resolves from the caller's company (multi-tenant); these getters
 // fall back to the historic defaults inside brandingService.
@@ -569,14 +570,15 @@ function openDataUrl(dataUrl, { download, fileName }) {
     return dataUrl;
   }
 
-  const pdfWindow = window.open("", "_blank", "noopener,noreferrer");
-  if (pdfWindow) {
-    pdfWindow.document.write(`<iframe title="Daily Log PDF" src="${dataUrl}" style="border:0;height:100vh;width:100vw"></iframe>`);
-    pdfWindow.document.close();
-  } else {
-    window.open(dataUrl, "_blank", "noopener,noreferrer");
-  }
-  return dataUrl;
+  // A data: URL cannot be opened as a tab's address in Chrome, and an iframe
+  // of one is refused on iOS. A blob: URL works in both.
+  const [header, base64 = ""] = String(dataUrl).split(",");
+  const mime = header.match(/^data:([^;]+)/)?.[1] || "application/pdf";
+  const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+  const blobUrl = URL.createObjectURL(new Blob([bytes], { type: mime }));
+  reserveTab().show(blobUrl);
+  window.setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+  return blobUrl;
 }
 
 function compressImageDataUrl(source, { maxWidth = 1400, maxHeight = 1800, quality = 0.74 } = {}) {
@@ -2653,18 +2655,26 @@ export async function openDailyLogPdf(log, { download = false } = {}) {
   if (!storagePath && (log.pdfDataUrl || log.pdf_data_url)) {
     return openDataUrl(log.pdfDataUrl || log.pdf_data_url, { download, fileName });
   }
-  const signedUrl = await createDailyLogPdfSignedUrl(storagePath);
-  if (download) {
-    const link = document.createElement("a");
-    link.href = signedUrl;
-    link.download = fileName;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
+  // Claim the tab now, while the tap still counts. Fetching the signed URL
+  // first loses the gesture, and phones then block the window with no error.
+  const tab = download ? null : reserveTab();
+  try {
+    const signedUrl = await createDailyLogPdfSignedUrl(storagePath);
+    if (download) {
+      const link = document.createElement("a");
+      link.href = signedUrl;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      return signedUrl;
+    }
+    tab.show(signedUrl);
     return signedUrl;
+  } catch (error) {
+    tab?.close();
+    throw error;
   }
-  window.open(signedUrl, "_blank", "noopener,noreferrer");
-  return signedUrl;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

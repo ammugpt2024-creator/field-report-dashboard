@@ -6,6 +6,7 @@ import { getStorageConfigError, logStorageStep } from "./storageDiagnosticsServi
 
 const TIME_CARD_PDF_BUCKET = "timesheet-pdfs";
 import { getCompanyBranding } from "./brandingService";
+import { reserveTab } from "../utils/openInNewTab.js";
 
 // Session-only cache of generated PDFs. Data URLs are too large for localStorage
 // (a handful of timesheets exceeds the quota), so the durable copy lives in
@@ -93,7 +94,7 @@ function blobToDataUrl(blob) {
   });
 }
 
-function openDataUrl(dataUrl, { download, fileName }) {
+function openDataUrl(dataUrl, { download, fileName, tab = null }) {
   if (download) {
     const link = document.createElement("a");
     link.href = dataUrl;
@@ -111,7 +112,7 @@ function openDataUrl(dataUrl, { download, fileName }) {
   const mime = header.match(/^data:([^;]+)/)?.[1] || "application/pdf";
   const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
   const blobUrl = URL.createObjectURL(new Blob([bytes], { type: mime }));
-  window.open(blobUrl, "_blank", "noopener,noreferrer");
+  (tab || reserveTab()).show(blobUrl);
   window.setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
   return blobUrl;
 }
@@ -399,6 +400,9 @@ function storedPdfPredatesDecision(card) {
 }
 
 export async function openTimeCardPdf(card, { download = false } = {}) {
+  // Claimed during the tap. Everything below awaits (a rebuild, a signed
+  // URL), and by then a phone no longer treats the window as user-opened.
+  const tab = download ? null : reserveTab();
   if (storedPdfPredatesDecision(card)) {
     // Draw it again from the record as it stands now, and try to store it so
     // everyone else gets the same copy. If storing is refused, still show the
@@ -408,7 +412,7 @@ export async function openTimeCardPdf(card, { download = false } = {}) {
     const refreshedFailed = (refreshed.pdfGenerationStatus || refreshed.pdf_generation_status) !== "generated";
     const freshDataUrl = pdfDataUrlCache.get(card.id);
     if (refreshedFailed && freshDataUrl) {
-      return openDataUrl(freshDataUrl, { download, fileName: getFileName(refreshed) });
+      return openDataUrl(freshDataUrl, { download, fileName: getFileName(refreshed) , tab });
     }
     card = refreshed;
   }
@@ -418,7 +422,7 @@ export async function openTimeCardPdf(card, { download = false } = {}) {
   const cachedDataUrl = card.pdfDataUrl || pdfDataUrlCache.get(card.id);
   if (!storagePath && cachedDataUrl) {
     logPdfStep(download ? "PDF downloaded from browser cache" : "PDF opened from browser cache", { timesheetId: card.id });
-    return openDataUrl(cachedDataUrl, { download, fileName });
+    return openDataUrl(cachedDataUrl, { download, fileName , tab });
   }
   if (!storagePath) throw new Error(card.pdfGenerationFailureReason || "PDF is still being generated. Please try again in a few seconds.");
 
@@ -428,7 +432,7 @@ export async function openTimeCardPdf(card, { download = false } = {}) {
   if (error) {
     const storageError = getStorageConfigError(TIME_CARD_PDF_BUCKET, error);
     logPdfStep("Signed URL failed", { timesheetId: card.id, storagePath, bucket: TIME_CARD_PDF_BUCKET, reason: storageError.message });
-    if (cachedDataUrl) return openDataUrl(cachedDataUrl, { download, fileName });
+    if (cachedDataUrl) return openDataUrl(cachedDataUrl, { download, fileName , tab });
     throw storageError;
   }
   logPdfStep("Signed URL created", { timesheetId: card.id, storagePath });
@@ -443,6 +447,6 @@ export async function openTimeCardPdf(card, { download = false } = {}) {
     return data.signedUrl;
   }
 
-  window.open(data.signedUrl, "_blank", "noopener,noreferrer");
+  tab.show(data.signedUrl);
   return data.signedUrl;
 }

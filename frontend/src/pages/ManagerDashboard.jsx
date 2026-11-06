@@ -38,6 +38,7 @@ import { fetchTimesheetQueue, syncTimesheet } from "../services/timesheetSyncSer
 import { CYLINDER_BREAK_STATUS, approveLabReport, getSubmittedLabReports, returnLabReport } from "../services/labCylinderService";
 import { openCylinderBreakPdf as openLabPdf } from "../services/cylinderBreakPdfService";
 import MobileRecordCard from "../components/mobile/MobileRecordCard";
+import { reserveTab } from "../utils/openInNewTab";
 
 const DAY_LABELS = { Monday: "Mon", Tuesday: "Tue", Wednesday: "Wed", Thursday: "Thu", Friday: "Fri", Saturday: "Sat", Sunday: "Sun" };
 const fmtHours = (value) => (Number(value) || 0).toFixed(2);
@@ -946,18 +947,23 @@ function ManagerDashboard() {
   }
 
   async function openDailyLogPdf(log) {
+    // Reserved during the tap: fetching the signed URL first costs the
+    // gesture, and a phone then blocks the window without saying so.
+    const tab = reserveTab();
     try {
       if (log.pdfStoragePath) {
         const url = await createDailyLogPdfSignedUrl(log.pdfStoragePath);
-        window.open(url, "_blank", "noopener,noreferrer");
+        tab.show(url);
         return;
       }
       if (log.pdfUrl) {
-        window.open(log.pdfUrl, "_blank", "noopener,noreferrer");
+        tab.show(log.pdfUrl);
         return;
       }
+      tab.close();
       window.alert("The PDF for this daily log is not available yet.");
     } catch (err) {
+      tab.close();
       console.error("Unable to open daily log PDF", err);
       window.alert("Unable to open the PDF right now. Please try again.");
     }
