@@ -18,6 +18,11 @@ function Login() {
     if (new URLSearchParams(window.location.search).has("password_reset")) {
       return "Your password has been updated. Sign in with your new password.";
     }
+    // Set by the idle timeout, so being signed out reads as a deliberate
+    // protection rather than the app dropping someone mid-shift.
+    if (new URLSearchParams(window.location.search).get("signed_out") === "idle") {
+      return "You were signed out because this device was left idle. Sign in to carry on — any draft report is still saved on this device.";
+    }
     if (sessionStorage.getItem("qcore-auth-error")) {
       sessionStorage.removeItem("qcore-auth-error");
       return "That link has expired or was already used. Invitation and reset links work once — ask your admin to resend your invite, or use “Forgot password?” below to set a new password.";
@@ -39,7 +44,8 @@ function Login() {
 
   // Drop the marker once it has been read so a refresh doesn't repeat it.
   useEffect(() => {
-    if (!new URLSearchParams(window.location.search).has("password_reset")) return;
+    const params = new URLSearchParams(window.location.search);
+    if (!params.has("password_reset") && !params.has("signed_out")) return;
     window.history.replaceState(null, "", window.location.pathname);
   }, []);
 

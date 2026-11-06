@@ -4,6 +4,7 @@ import { supabase } from "../services/supabase";
 import { BRAND } from "../config/branding";
 import Logo from "../components/Logo";
 import loginBg from "../assets/login-bg.png";
+import { MIN_PASSWORD_LENGTH, checkPassword, passwordStrength } from "../utils/passwordPolicy";
 
 const Requirement = ({ met, label }) => (
   <span className={`inline-flex items-center gap-1.5 text-xs font-semibold ${met ? "text-emerald-600" : "text-slate-400"}`}>
@@ -40,14 +41,16 @@ function ResetPassword() {
     return () => { active = false; };
   }, []);
 
-  const longEnough = password.length >= 8;
+  const policy = checkPassword(password, { email });
+  const longEnough = password.length >= MIN_PASSWORD_LENGTH;
+  const strength = passwordStrength(password, { email });
   const matches = confirm.length > 0 && password === confirm;
 
   async function handleSubmit(event) {
     event.preventDefault();
     setError("");
-    if (!longEnough) {
-      setError("Password must be at least 8 characters.");
+    if (!policy.ok) {
+      setError(policy.problem);
       return;
     }
     if (password !== confirm) {
@@ -160,7 +163,8 @@ function ResetPassword() {
             />
 
             <div className="flex flex-wrap gap-x-4 gap-y-1.5 pt-0.5">
-              <Requirement met={longEnough} label="At least 8 characters" />
+              <Requirement met={longEnough} label={`At least ${MIN_PASSWORD_LENGTH} characters`} />
+              <Requirement met={policy.ok} label={policy.ok ? (strength.label || "Not easily guessed") : (password ? policy.problem : "Not easily guessed")} />
               <Requirement met={matches} label="Passwords match" />
             </div>
 
@@ -170,7 +174,7 @@ function ResetPassword() {
 
             <button
               type="submit"
-              disabled={busy || !longEnough || !matches}
+              disabled={busy || !policy.ok || !matches}
               className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-blue-700 text-sm font-bold text-white hover:bg-blue-800 disabled:opacity-50"
             >
               {busy ? <><Loader2 className="h-4 w-4 animate-spin" />Saving your password…</> : "Save password"}

@@ -4,6 +4,7 @@ import { supabase } from "../services/supabase";
 import { BRAND } from "../config/branding";
 import Logo from "../components/Logo";
 import loginBg from "../assets/login-bg.png";
+import { MIN_PASSWORD_LENGTH, checkPassword, passwordStrength } from "../utils/passwordPolicy";
 
 // Who this link belongs to, and why that matters: opening it signs the reader
 // in as that address, so a forwarded invitation would hand over the account.
@@ -26,6 +27,19 @@ function IdentityNotice({ email }) {
 // Invite acceptance: the link in the invitation email signs the invitee in
 // with a one-time token and lands here so they can set their password and be
 // attached to their company before entering the app.
+// Declared here, not inside the screen: a component created during render is
+// rebuilt on every keystroke and loses its state.
+function Requirement({ met, label }) {
+  return (
+    <span className={`inline-flex items-center gap-1.5 text-xs font-semibold ${met ? "text-emerald-600" : "text-slate-400"}`}>
+      <span className={`grid h-4 w-4 place-items-center rounded-full ${met ? "bg-emerald-100" : "bg-slate-100"}`}>
+        <Check className="h-3 w-3" />
+      </span>
+      {label}
+    </span>
+  );
+}
+
 function AcceptInvite({ flow = "" }) {
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -83,7 +97,11 @@ function AcceptInvite({ flow = "" }) {
     return () => { active = false; };
   }, [flow]);
 
-  const longEnough = password.length >= 8;
+  // Length floor plus the handful of patterns that get guessed first; the
+  // old rule accepted "password" and the person's own email address.
+  const policy = checkPassword(password, { email: identity.email, fullName: identity.name });
+  const longEnough = password.length >= MIN_PASSWORD_LENGTH;
+  const strength = passwordStrength(password, { email: identity.email, fullName: identity.name });
   const matches = confirm.length > 0 && password === confirm;
   const firstName = identity.name ? identity.name.split(" ")[0] : "";
 
@@ -109,8 +127,8 @@ function AcceptInvite({ flow = "" }) {
       setError(`Confirm that you are ${identity.email || "the invited person"} to continue.`);
       return;
     }
-    if (!longEnough) {
-      setError("Password must be at least 8 characters.");
+    if (!policy.ok) {
+      setError(policy.problem);
       return;
     }
     if (password !== confirm) {
@@ -137,14 +155,6 @@ function AcceptInvite({ flow = "" }) {
     }
   }
 
-  const Requirement = ({ met, label }) => (
-    <span className={`inline-flex items-center gap-1.5 text-xs font-semibold ${met ? "text-emerald-600" : "text-slate-400"}`}>
-      <span className={`grid h-4 w-4 place-items-center rounded-full ${met ? "bg-emerald-100" : "bg-slate-100"}`}>
-        <Check className="h-3 w-3" />
-      </span>
-      {label}
-    </span>
-  );
 
   return (
     <div
@@ -279,7 +289,8 @@ function AcceptInvite({ flow = "" }) {
             />
 
             <div className="flex flex-wrap gap-x-4 gap-y-1.5 pt-0.5">
-              <Requirement met={longEnough} label="At least 8 characters" />
+              <Requirement met={longEnough} label={`At least ${MIN_PASSWORD_LENGTH} characters`} />
+              <Requirement met={policy.ok} label={policy.ok ? (strength.label || "Not easily guessed") : (password ? policy.problem : "Not easily guessed")} />
               <Requirement met={matches} label="Passwords match" />
             </div>
 
@@ -289,7 +300,7 @@ function AcceptInvite({ flow = "" }) {
 
             <button
               type="submit"
-              disabled={busy || !confirmedIdentity || !longEnough || !matches}
+              disabled={busy || !confirmedIdentity || !policy.ok || !matches}
               className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-blue-700 text-sm font-bold text-white hover:bg-blue-800 disabled:opacity-50"
             >
               {busy ? <><Loader2 className="h-4 w-4 animate-spin" />Setting up your account…</> : "Create account & continue"}
