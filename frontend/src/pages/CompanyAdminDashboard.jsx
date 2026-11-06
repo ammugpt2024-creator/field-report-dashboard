@@ -1098,7 +1098,7 @@ ${inUse.length} project(s) send reports to this contact. They will fall back to 
             icon={Building2}
             title="Clients & Contractors"
             count={clients.length}
-            action={<SmallButton onClick={() => setNewClient({ client_name: "", client_type: "owner", contact_name: "", contact_email: "" })}><Plus className="h-3.5 w-3.5" />Add</SmallButton>}
+            action={<SmallButton onClick={() => setNewClient({ client_name: "", client_type: "owner", contact_name: "", contact_title: "", contact_email: "" })}><Plus className="h-3.5 w-3.5" />Add</SmallButton>}
           >
             <div className="-my-1 divide-y divide-slate-100">
               {clients.map((client) => {
@@ -1108,12 +1108,12 @@ ${inUse.length} project(s) send reports to this contact. They will fall back to 
                   <div className="flex items-center justify-between gap-3">
                     <button
                       type="button"
-                      onClick={() => { setError(""); setNewClient({ id: client.id, client_name: client.client_name, client_type: client.client_type, contact_name: client.contact_name || "", contact_email: client.contact_email || "" }); }}
+                      onClick={() => { setError(""); setNewClient({ id: client.id, client_name: client.client_name, client_type: client.client_type, contact_name: client.contact_name || "", contact_title: client.contact_title || "", contact_email: client.contact_email || "" }); }}
                       className="min-w-0 flex-1 text-left"
                       title="Edit this client"
                     >
                       <p className="truncate text-sm font-bold capitalize text-slate-900 hover:text-blue-700">{client.client_name}</p>
-                      <p className="truncate text-xs font-medium text-slate-400">{client.client_type.replace(/_/g, " ")} · {client.contact_name || "—"} {client.contact_email ? `· ${client.contact_email}` : ""}</p>
+                      <p className="truncate text-xs font-medium text-slate-400">{client.client_type.replace(/_/g, " ")} · {client.contact_name || "—"}{client.contact_title ? ` (${client.contact_title})` : ""} {client.contact_email ? `· ${client.contact_email}` : ""}</p>
                     </button>
                     <SmallButton onClick={() => setNewContact({ client_id: client.id, full_name: "", title: "", email: "", phone: "" })} className="border-blue-200 text-blue-700 hover:bg-blue-50">
                       <Plus className="h-3.5 w-3.5" />Contact
@@ -1352,8 +1352,12 @@ ${inUse.length} project(s) send reports to this contact. They will fall back to 
                   <select value={newClient.client_type} onChange={(event) => setNewClient({ ...newClient, client_type: event.target.value })} className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 px-3 text-sm font-semibold">
                     {CLIENT_TYPES.map((t) => <option key={t} value={t}>{t.replace(/_/g, " ")}</option>)}
                   </select></label>
-                <label className="block"><span className="text-xs font-bold uppercase text-slate-500">Contact Name</span>
-                  <input value={newClient.contact_name} onChange={(event) => setNewClient({ ...newClient, contact_name: event.target.value })} className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 px-3 text-sm font-semibold" /></label>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <label className="block"><span className="text-xs font-bold uppercase text-slate-500">Contact Name</span>
+                    <input value={newClient.contact_name} onChange={(event) => setNewClient({ ...newClient, contact_name: event.target.value })} className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 px-3 text-sm font-semibold" /></label>
+                  <label className="block"><span className="text-xs font-bold uppercase text-slate-500">Title</span>
+                    <input value={newClient.contact_title} onChange={(event) => setNewClient({ ...newClient, contact_title: event.target.value })} placeholder="President, Owner, Director" className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 px-3 text-sm font-semibold" /></label>
+                </div>
                 <label className="block"><span className="text-xs font-bold uppercase text-slate-500">Contact Email</span>
                   <input type="email" value={newClient.contact_email} onChange={(event) => setNewClient({ ...newClient, contact_email: event.target.value })} className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 px-3 text-sm font-semibold" /></label>
                 <p className="text-[11px] font-medium text-slate-400">
