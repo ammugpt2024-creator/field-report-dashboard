@@ -2,6 +2,7 @@ import { useState } from "react";
 import { AlertTriangle, CheckCircle2, Download, Eye, Plus, Trash2 } from "lucide-react";
 import { DAILY_LOG_STATUS, saveDailyLog } from "../../services/dailyLogService";
 import { generateBlankVdotChecklistPdf, generateVdotChecklistPdf, isFillableChecklist } from "../../services/vdotChecklistPdfService";
+import { localDateString } from "../../utils/dates";
 import {
   ANSWER_OPTIONS,
   ANSWER_TYPES,
@@ -102,7 +103,7 @@ function ChecklistItemRow({ section, item, index, answer, disabled, showMissing,
     // which is what the paper form's two columns are for.
     if (answerType === ANSWER_TYPES.PHASE && value === "complete") {
       if (!answer.initials) patch.initials = getInitials(inspectorName);
-      if (!answer.date) patch.date = new Date().toISOString().slice(0, 10);
+      if (!answer.date) patch.date = localDateString();
     }
     if (!isItemFlagged(section, item, { value })) patch.priority = "";
     onChange({ ...answer, ...patch });
