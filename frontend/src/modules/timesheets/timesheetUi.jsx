@@ -632,7 +632,7 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, onJumpToDate
           <button
             type="button"
             onClick={handleAddProject}
-            className="inline-flex min-h-9 items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 text-[13px] font-semibold text-slate-800 transition hover:border-slate-400 hover:bg-slate-50 sm:min-h-10 sm:gap-1.5 sm:rounded-xl sm:px-4 sm:text-sm"
+            className="inline-flex min-h-11 items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 text-[13px] font-semibold text-slate-800 transition hover:border-slate-400 hover:bg-slate-50 sm:min-h-10 sm:gap-1.5 sm:rounded-xl sm:px-4 sm:text-sm"
           >
             <Plus className="h-4 w-4" /> Add Project
           </button>
@@ -814,7 +814,7 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, onJumpToDate
                           {dayLabel}
                           {isToday && <span className="ml-1.5 rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] font-bold uppercase text-blue-700">Today</span>}
                         </span>
-                        <input type="text" inputMode="decimal" value={isFutureDay ? "" : hourCellValue(row, dayName)} placeholder={isFutureDay ? "–" : ""} disabled={!canEditHours || isFutureDay} onChange={(event) => handleHoursChange(row.id, dayName, event.target.value)} onBlur={() => handleHoursBlur(row.id, dayName)} className="h-9 w-16 rounded-lg border border-slate-300 px-2 text-center text-[15px] font-semibold text-slate-900 outline-none transition focus:border-blue-700 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:border-dashed disabled:bg-slate-50 disabled:text-slate-400" />
+                        <input type="text" inputMode="decimal" value={isFutureDay ? "" : hourCellValue(row, dayName)} placeholder={isFutureDay ? "–" : ""} disabled={!canEditHours || isFutureDay} onChange={(event) => handleHoursChange(row.id, dayName, event.target.value)} onBlur={() => handleHoursBlur(row.id, dayName)} className="h-11 w-16 rounded-lg border border-slate-300 px-2 text-center text-[15px] font-semibold text-slate-900 outline-none transition focus:border-blue-700 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:border-dashed disabled:bg-slate-50 disabled:text-slate-400" />
                       </div>
                     );
                   })}
@@ -847,7 +847,7 @@ function TimeCardEditor({ card, onChange, onSubmit, onNavigateWeek, onJumpToDate
 
       {/* ── Weekly comments ── */}
       {canEditHours && !comments && !commentsOpen && (
-        <button type="button" onClick={() => setCommentsOpen(true)} className="mt-3 text-[13px] font-bold text-blue-700 sm:hidden">
+        <button type="button" onClick={() => setCommentsOpen(true)} className="mt-3 inline-flex min-h-11 items-center text-[13px] font-bold text-blue-700 sm:hidden">
           + Add Weekly Comment
         </button>
       )}

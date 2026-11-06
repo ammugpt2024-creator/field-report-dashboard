@@ -89,9 +89,12 @@ export default function WeatherConditionsCard({ log, onUpdate }) {
           </span>
           <div className="min-w-0">
             <p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">Weather Summary</p>
-            <p className="mt-0.5 truncate text-base font-bold text-slate-950">
+            {/* Wraps on a phone instead of truncating: the line is longer than
+                a 375px screen, so the temperatures were being cut off exactly
+                where crews read them. */}
+            <p className="mt-0.5 text-base font-bold text-slate-950 sm:truncate">
               Weather: {weatherCondition || "-"}
-              <span className="font-semibold text-slate-500"> • Min {minTemperature ? `${minTemperature}°F` : "--"} | Max {maxTemperature ? `${maxTemperature}°F` : "--"}</span>
+              <span className="block font-semibold text-slate-500 sm:inline"> • Min {minTemperature ? `${minTemperature}°F` : "--"} | Max {maxTemperature ? `${maxTemperature}°F` : "--"}</span>
             </p>
           </div>
         </div>
