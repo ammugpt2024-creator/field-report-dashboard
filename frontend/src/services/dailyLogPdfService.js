@@ -30,7 +30,8 @@ const REPORT_FONT_FAMILY = "Inter";
 // with a document-control block, numbered sections, summary panel, photo log.
 // Version 7: concrete reports show Inspection Requirements as a light spec
 // list and label their own number as the concrete log number, not a DFR.
-export const DAILY_LOG_PDF_LAYOUT_VERSION = 7;
+// Version 8: Project Summary as two ruled record groups; long date in title.
+export const DAILY_LOG_PDF_LAYOUT_VERSION = 8;
 let reportFontsRegistered = false;
 const PDF_COLORS = {
   navy: [16, 24, 40],
@@ -341,16 +342,28 @@ function isPhotoAttachment(attachment) {
   return type.includes("photo") || type.includes("image/");
 }
 
-function getWeatherText(log) {
-  // Mirror the Weather Summary card on the daily log screen: auto-captured
-  // condition first, then manual override, plus single-reading temperature fallback.
-  const condition = pdfValue(
+// Mirror the Weather Summary card on the daily log screen: auto-captured
+// condition first, then manual override, plus single-reading temperature fallback.
+function getWeatherCondition(log) {
+  return pdfValue(
     log.weatherCondition || log.weather_condition || log.weatherOverride || log.weather_override || log.weather
   );
+}
+
+function getTemperatureText(log) {
   const min = log.minTemperature || log.min_temperature || log.temperature;
   const max = log.maxTemperature || log.max_temperature || log.temperature;
-  const tempText = [min ? `Min ${min}°F` : "", max ? `Max ${max}°F` : ""].filter(Boolean).join(" / ");
-  return tempText ? `${condition} (${tempText})` : condition;
+  if (min && max && String(min) !== String(max)) return `${min}°F low  ·  ${max}°F high`;
+  return min || max ? `${min || max}°F` : "Not recorded";
+}
+
+// "Monday, October 26, 2026" for a date-only value, read from its parts so
+// the timezone never shifts it to the previous day.
+function formatLongDate(value) {
+  const dateOnly = DATE_ONLY_PATTERN.exec(String(value || "").trim());
+  if (!dateOnly) return formatDateOnly(value);
+  const date = new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]));
+  return date.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
 }
 
 function getReportSpecificationValue(report, keys) {
@@ -1359,8 +1372,8 @@ function getRecordValue(record, keys) {
   return pdfValue(getRecordField(record, keys));
 }
 
-// Report title on page one: the title with its status pill, the project
-// beneath. Number, date and page are in the header's control block.
+// Report title on page one: the title with its status pill, the full report
+// date beneath. Number, date and page are in the header's control block.
 function renderReferenceDailyLogHeader(doc, log, y) {
   const title = "Daily Field Report";
   doc.setFont("helvetica", "bold");
@@ -1381,55 +1394,59 @@ function renderReferenceDailyLogHeader(doc, log, y) {
   doc.setFont("helvetica", "normal");
   doc.setFontSize(9.5);
   doc.setTextColor(...PDF_COLORS.slate);
-  doc.text(doc.splitTextToSize(getProjectName(log), getContentWidth(doc))[0], PAGE_MARGIN, y + 32);
+  // The project is in the summary below; the title line says which day.
+  doc.text(formatLongDate(getLogDate(log)), PAGE_MARGIN, y + 32);
   return y + 48;
 }
 
-// Project particulars in a tinted panel: labels stacked above their values in
-// three columns; a long value may span two.
-function renderSummaryPanel(doc, rows, y) {
-  const width = getContentWidth(doc);
-  const pad = 12;
-  const columnGap = 16;
-  const columnWidth = (width - pad * 2 - columnGap * 2) / 3;
-  const lineHeight = 11.5;
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(9);
-  const laidOut = rows.map((row) => {
-    let column = 0;
-    const cells = row.map((cell) => {
-      const span = cell.span || 1;
-      const cellWidth = columnWidth * span + columnGap * (span - 1);
-      const laid = {
-        ...cell,
-        x: PAGE_MARGIN + pad + column * (columnWidth + columnGap),
-        lines: doc.splitTextToSize(pdfValue(cell.value), cellWidth).slice(0, 3)
-      };
-      column += span;
-      return laid;
-    });
-    return { cells, height: 13 + Math.max(...cells.map((cell) => cell.lines.length)) * lineHeight + 7 };
-  });
-  const panelHeight = pad + laidOut.reduce((sum, row) => sum + row.height, 0) + pad - 7;
-  y = ensurePage(doc, y, panelHeight + 10);
+// Project particulars as two side-by-side record groups (Project, Site
+// Conditions): an accent caption over ruled lines, label on the left and its
+// value beside it, wrapping onto further lines when long.
+function renderProjectSummary(doc, groups, y) {
+  const gap = 24;
+  const groupWidth = (getContentWidth(doc) - gap * (groups.length - 1)) / groups.length;
+  const labelWidth = 84;
+  const valueWidth = groupWidth - labelWidth - 6;
+  const lineHeight = 12;
+  const captionHeight = 17;
 
-  doc.setFillColor(...PDF_COLORS.labelBg);
-  doc.rect(PAGE_MARGIN, y, width, panelHeight, "F");
-  let rowY = y + pad;
-  for (const row of laidOut) {
-    for (const cell of row.cells) {
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(6.6);
-      doc.setTextColor(...PDF_COLORS.muted);
-      doc.text(String(cell.label).toUpperCase(), cell.x, rowY + 6, { charSpace: 0.3 });
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9.5);
+  const laidOut = groups.map((group) => {
+    const rows = group.items.map((item) => {
+      const lines = doc.splitTextToSize(pdfValue(item.value), valueWidth).slice(0, 3);
+      return { ...item, lines, height: 9 + lines.length * lineHeight };
+    });
+    return { ...group, rows, height: captionHeight + rows.reduce((sum, row) => sum + row.height, 0) };
+  });
+  y = ensurePage(doc, y, Math.max(...laidOut.map((group) => group.height)) + 8);
+
+  laidOut.forEach((group, index) => {
+    const x = PAGE_MARGIN + index * (groupWidth + gap);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(7.4);
+    doc.setTextColor(...accentText());
+    doc.text(group.title.toUpperCase(), x, y + 8, { charSpace: 0.5 });
+    doc.setDrawColor(..._accent);
+    doc.setLineWidth(0.9);
+    doc.line(x, y + captionHeight - 4, x + groupWidth, y + captionHeight - 4);
+    doc.setLineWidth(0.5);
+
+    let rowY = y + captionHeight - 4;
+    for (const row of group.rows) {
       doc.setFont("helvetica", "normal");
-      doc.setFontSize(9);
+      doc.setFontSize(8.2);
+      doc.setTextColor(...PDF_COLORS.slate);
+      doc.text(row.label, x, rowY + 14);
+      doc.setFontSize(9.5);
       doc.setTextColor(...PDF_COLORS.ink);
-      doc.text(cell.lines, cell.x, rowY + 17.5, { lineHeightFactor: lineHeight / 9 });
+      doc.text(row.lines, x + labelWidth, rowY + 14, { lineHeightFactor: lineHeight / 9.5 });
+      rowY += row.height;
+      doc.setDrawColor(...PDF_COLORS.rule);
+      doc.line(x, rowY, x + groupWidth, rowY);
     }
-    rowY += row.height;
-  }
-  return y + panelHeight + 18;
+  });
+  return y + Math.max(...laidOut.map((group) => group.height)) + 18;
 }
 
 // Section heading. Top-level sections carry a number in an accent chip
@@ -2779,16 +2796,29 @@ export async function generateDailyLogPdfBlob(log) {
   try {
     let y = PAGE_TOP_MARGIN;
     y = renderReferenceDailyLogHeader(doc, log, y);
-    y = renderReferenceSectionBar(doc, "Project Summary", y, { number: 1, afterGap: 10 });
-    y = renderSummaryPanel(doc, [
-      [{ label: "Project", value: getProjectName(log), span: 2 }, { label: "Project No.", value: getProjectNumber(log) }],
-      [{ label: "Location", value: getProjectLocation(log), span: 2 }, { label: "Report Date", value: formatDateOnly(getLogDate(log)) }],
-      [
-        { label: "General Contractor", value: log.generalContractor || log.general_contractor || log.project?.general_contractor || "Not recorded" },
-        { label: "GC Representative", value: log.gcRepresentative || log.gc_representative || "Not recorded" },
-        { label: "Shift", value: log.shift || log.shift_name || "Not recorded" }
-      ],
-      [{ label: "Technician", value: getTechnicianName(log) }, { label: "Weather", value: getWeatherText(log), span: 2 }]
+    y = renderReferenceSectionBar(doc, "Project Summary", y, { number: 1, afterGap: 12 });
+    // Report number and date are in every page's header; the summary holds
+    // what the header does not.
+    y = renderProjectSummary(doc, [
+      {
+        title: "Project",
+        items: [
+          { label: "Project", value: getProjectName(log) },
+          { label: "Project No.", value: getProjectNumber(log) },
+          { label: "Location", value: getProjectLocation(log) },
+          { label: "Contractor", value: log.generalContractor || log.general_contractor || log.project?.general_contractor || "Not recorded" },
+          { label: "Contractor Rep.", value: log.gcRepresentative || log.gc_representative || "Not recorded" }
+        ]
+      },
+      {
+        title: "Site Conditions",
+        items: [
+          { label: "Technician", value: getTechnicianName(log) },
+          { label: "Shift", value: log.shift || log.shift_name || "Not recorded" },
+          { label: "Weather", value: getWeatherCondition(log) },
+          { label: "Temperature", value: getTemperatureText(log) }
+        ]
+      }
     ], y);
     y = await renderReferenceActivityDetails(doc, log, y);
     y = renderReferenceComments(doc, log, y);
