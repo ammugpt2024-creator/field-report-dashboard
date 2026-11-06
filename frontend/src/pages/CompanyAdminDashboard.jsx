@@ -921,7 +921,7 @@ ${inUse.length} project(s) send reports to this contact. They will fall back to 
             icon={FolderKanban}
             title="Projects"
             count={projects.length}
-            action={<SmallButton onClick={() => setNewProject({ project_name: "", project_number: "", client_name: "", project_location: "", status: "Active", client_id: null, _clientCc: "", _pmUserId: "", _pmAccess: "full", _dpmUserId: "", _dpmAccess: "full", _technicianIds: [], _technicianAccess: {} })}><Plus className="h-3.5 w-3.5" />Add</SmallButton>}
+            action={<SmallButton onClick={() => setNewProject({ project_name: "", project_number: "", client_name: "", project_location: "", status: "Active", client_id: null, client_contact_id: null, _clientCc: "", _pmUserId: "", _pmAccess: "full", _dpmUserId: "", _dpmAccess: "full", _technicianIds: [], _technicianAccess: {} })}><Plus className="h-3.5 w-3.5" />Add</SmallButton>}
           >
             <div className="-my-1 divide-y divide-slate-100">
               {projects.map((project) => (
@@ -1414,18 +1414,51 @@ ${inUse.length} project(s) send reports to this contact. They will fall back to 
                     client record linked here, approval has nobody to send to. */}
                 <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
                   <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Report distribution</p>
-                  <label className="mt-2 block"><span className="text-xs font-semibold text-slate-600">Client record</span>
+                  <label className="mt-2 block"><span className="text-xs font-semibold text-slate-600">Client</span>
                     <select
                       value={newProject.client_id || ""}
-                      onChange={(event) => setNewProject({ ...newProject, client_id: event.target.value || null })}
+                      onChange={(event) => setNewProject({ ...newProject, client_id: event.target.value || null, client_contact_id: null })}
                       className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm font-semibold"
                     >
-                      <option value="">No client contact</option>
+                      <option value="">No client</option>
                       {clients.filter((c) => c.status !== "inactive").map((c) => (
-                        <option key={c.id} value={c.id}>{c.client_name}{c.contact_email ? ` — ${c.contact_email}` : " (no email)"}</option>
+                        <option key={c.id} value={c.id}>{c.client_name}</option>
                       ))}
                     </select>
                   </label>
+                  {/* The client's own contact is usually the president, who
+                      signs the contract but does not want the daily reports.
+                      This project's reports go to the person named here. */}
+                  <label className="mt-2 block"><span className="text-xs font-semibold text-slate-600">Reports go to</span>
+                    <select
+                      value={newProject.client_contact_id || ""}
+                      onChange={(event) => setNewProject({ ...newProject, client_contact_id: event.target.value || null })}
+                      disabled={!newProject.client_id}
+                      className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm font-semibold disabled:bg-slate-100 disabled:text-slate-400"
+                    >
+                      <option value="">
+                        {(() => {
+                          const client = clients.find((c) => c.id === newProject.client_id);
+                          if (!client) return "Account contact";
+                          return client.contact_email
+                            ? `Account contact — ${client.contact_name || client.client_name}${client.contact_title ? ` (${client.contact_title})` : ""}`
+                            : "Account contact (no email on file)";
+                        })()}
+                      </option>
+                      {clientContacts
+                        .filter((c) => c.client_id === newProject.client_id && c.status !== "inactive")
+                        .map((contact) => (
+                          <option key={contact.id} value={contact.id}>
+                            {contact.full_name}{contact.title ? ` · ${contact.title}` : ""}{contact.email ? ` — ${contact.email}` : " (no email)"}
+                          </option>
+                        ))}
+                    </select>
+                  </label>
+                  {newProject.client_id && !clientContacts.some((c) => c.client_id === newProject.client_id && c.status !== "inactive") && (
+                    <p className="mt-1 text-[11px] font-medium text-amber-700">
+                      This client has no named contacts yet, so reports would go to the account contact. Add the project manager under Clients &amp; Contractors → + Contact.
+                    </p>
+                  )}
                   <label className="mt-2 block"><span className="text-xs font-semibold text-slate-600">Copy to (comma separated)</span>
                     <input
                       value={newProject._clientCc}
