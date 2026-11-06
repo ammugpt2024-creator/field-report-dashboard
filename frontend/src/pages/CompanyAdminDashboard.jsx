@@ -580,7 +580,10 @@ export default function CompanyAdminDashboard() {
     }
     try {
       const { id, ...fields } = newContact;
-      const patch = { ...fields, email: email || null };
+      // company_id is set here rather than left to the column default: that
+      // default is empty for anyone who is not a member of this company (a
+      // platform admin managing it, for instance), and the row is rejected.
+      const patch = { ...fields, email: email || null, company_id: company.id };
       if (id) await updateCompanyRow("client_contacts", company.id, id, patch, "client_contact_updated");
       else await insertCompanyRow("client_contacts", company.id, patch, "client_contact_added");
       setNewContact(null);
@@ -610,6 +613,7 @@ ${inUse.length} project(s) send reports to this contact. They will fall back to 
     event.preventDefault();
     setError("");
     const { id, ...fields } = newClient;
+    fields.company_id = company.id;
     const email = String(fields.contact_email || "").trim().toLowerCase();
     if (email && !isValidEmail(email)) {
       setError("Enter a valid email address for the account contact, or leave it empty.");
