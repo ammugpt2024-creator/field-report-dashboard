@@ -1,9 +1,27 @@
 import { useEffect, useState } from "react";
-import { Eye, EyeOff, Check, Loader2, ShieldCheck, PartyPopper } from "lucide-react";
+import { Eye, EyeOff, Check, Loader2, PartyPopper, AlertTriangle } from "lucide-react";
 import { supabase } from "../services/supabase";
 import { BRAND } from "../config/branding";
 import Logo from "../components/Logo";
 import loginBg from "../assets/login-bg.png";
+
+// Who this link belongs to, and why that matters: opening it signs the reader
+// in as that address, so a forwarded invitation would hand over the account.
+function IdentityNotice({ email }) {
+  return (
+    <div className="mt-4 flex gap-2.5 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5">
+      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+      <div className="min-w-0 text-sm text-amber-900">
+        <p className="font-bold">
+          This invitation is for <span className="break-all">{email || "the invited person"}</span>
+        </p>
+        <p className="mt-0.5 font-medium">
+          If that isn't you, don't continue — choose "This isn't me". Team members each get their own invitation from their company admin.
+        </p>
+      </div>
+    </div>
+  );
+}
 
 // Invite acceptance: the link in the invitation email signs the invitee in
 // with a one-time token and lands here so they can set their password and be
@@ -15,8 +33,14 @@ function AcceptInvite({ flow = "" }) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [identity, setIdentity] = useState({ name: "", email: "" });
+  // The link signs whoever opens it in as the invited address, so a forwarded
+  // email hands over that account. Nobody proceeds until they confirm the
+  // address shown is theirs.
+  const [confirmedIdentity, setConfirmedIdentity] = useState(false);
   // loading → checking the link; form → new invitee may set a password;
-  // expired → no valid session (stale/expired link).
+  // confirm → an existing account opened its sign-in link; notMe → the person
+  // said the address is not theirs and was signed out; expired → no valid
+  // session (stale/expired link).
   const [phase, setPhase] = useState("loading");
 
   useEffect(() => {
@@ -48,14 +72,12 @@ function AcceptInvite({ flow = "" }) {
       // An invite link is only ever issued for a freshly created account, so it
       // never has a password - treat it as conclusive on its own.
       const passwordAlreadySet = !fromInviteLink && user.user_metadata?.password_set === true;
-      if (passwordAlreadySet) {
-        try { await supabase.rpc("claim_company_invite"); } catch { /* already linked */ }
-        window.location.replace("/");
-        return;
-      }
+      setIdentity({ name: user.user_metadata?.full_name || "", email: user.email || "" });
+      // An existing account's sign-in link: still confirm who is opening it
+      // before joining the company and entering the app.
+      if (passwordAlreadySet) { setPhase("confirm"); return; }
 
       // New invitee with a valid link — let them set a password.
-      setIdentity({ name: user.user_metadata?.full_name || "", email: user.email || "" });
       setPhase("form");
     })();
     return () => { active = false; };
@@ -65,9 +87,28 @@ function AcceptInvite({ flow = "" }) {
   const matches = confirm.length > 0 && password === confirm;
   const firstName = identity.name ? identity.name.split(" ")[0] : "";
 
+  // Not the invited person: end the session the link created before anything
+  // is attached to the account.
+  async function handleNotMe() {
+    setBusy(true);
+    try { await supabase.auth.signOut(); } catch { /* session already gone */ }
+    setBusy(false);
+    setPhase("notMe");
+  }
+
+  async function handleContinueExisting() {
+    setBusy(true);
+    try { await supabase.rpc("claim_company_invite"); } catch { /* already linked */ }
+    window.location.replace("/");
+  }
+
   async function handleSubmit(event) {
     event.preventDefault();
     setError("");
+    if (!confirmedIdentity) {
+      setError(`Confirm that you are ${identity.email || "the invited person"} to continue.`);
+      return;
+    }
     if (!longEnough) {
       setError("Password must be at least 8 characters.");
       return;
@@ -140,6 +181,53 @@ function AcceptInvite({ flow = "" }) {
             </div>
           )}
 
+          {phase === "notMe" && (
+            <div className="py-4 text-center">
+              <h2 className="text-xl font-bold text-slate-900">You've been signed out</h2>
+              <p className="mt-2 text-sm font-medium text-slate-500">
+                This invitation belongs to <span className="font-bold text-slate-700">{identity.email || "someone else"}</span>, so nothing was set up.
+              </p>
+              <p className="mt-3 text-sm font-medium text-slate-500">
+                To join, ask your company admin to invite your own email address from Company Settings. Please let {identity.email || "the invited person"} know their link was opened — they'll need their admin to resend it.
+              </p>
+              <button
+                type="button"
+                onClick={() => window.location.replace("/")}
+                className="mt-5 min-h-12 w-full rounded-xl bg-blue-700 text-sm font-bold text-white hover:bg-blue-800"
+              >
+                Go to sign in
+              </button>
+            </div>
+          )}
+
+          {phase === "confirm" && (
+            <>
+              <h2 className="text-xl font-bold text-slate-900">Continue as {identity.email || "this account"}?</h2>
+              <p className="mt-1 text-sm font-medium text-slate-500">
+                This sign-in link opens the QCore account for this address.
+              </p>
+              <IdentityNotice email={identity.email} />
+              <div className="mt-5 grid gap-2">
+                <button
+                  type="button"
+                  onClick={handleContinueExisting}
+                  disabled={busy}
+                  className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-blue-700 text-sm font-bold text-white hover:bg-blue-800 disabled:opacity-50"
+                >
+                  {busy ? <><Loader2 className="h-4 w-4 animate-spin" />Signing you in…</> : `Yes, I'm ${identity.email || "this person"}`}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleNotMe}
+                  disabled={busy}
+                  className="min-h-12 w-full rounded-xl border border-slate-300 bg-white text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  This isn't me
+                </button>
+              </div>
+            </>
+          )}
+
           {phase === "form" && (
           <>
           <div className="flex items-center gap-2 text-blue-700">
@@ -153,12 +241,19 @@ function AcceptInvite({ flow = "" }) {
             Create a password to activate your account and get started.
           </p>
 
-          {identity.email && (
-            <div className="mt-4 flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
-              <ShieldCheck className="h-4 w-4 shrink-0 text-slate-400" />
-              <span className="truncate text-sm font-semibold text-slate-700">{identity.email}</span>
-            </div>
-          )}
+          <IdentityNotice email={identity.email} />
+
+          <label className="mt-3 flex cursor-pointer items-start gap-2.5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
+            <input
+              type="checkbox"
+              checked={confirmedIdentity}
+              onChange={(e) => setConfirmedIdentity(e.target.checked)}
+              className="mt-0.5 h-4 w-4 shrink-0 accent-blue-700"
+            />
+            <span className="text-sm font-semibold text-slate-700">
+              I am <span className="break-all">{identity.email || "the invited person"}</span>
+            </span>
+          </label>
 
           <form onSubmit={handleSubmit} className="mt-5 space-y-3">
             <div className="relative">
@@ -194,10 +289,18 @@ function AcceptInvite({ flow = "" }) {
 
             <button
               type="submit"
-              disabled={busy || !longEnough || !matches}
+              disabled={busy || !confirmedIdentity || !longEnough || !matches}
               className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-blue-700 text-sm font-bold text-white hover:bg-blue-800 disabled:opacity-50"
             >
               {busy ? <><Loader2 className="h-4 w-4 animate-spin" />Setting up your account…</> : "Create account & continue"}
+            </button>
+            <button
+              type="button"
+              onClick={handleNotMe}
+              disabled={busy}
+              className="min-h-11 w-full rounded-xl text-sm font-bold text-slate-500 hover:bg-slate-50 hover:text-slate-700 disabled:opacity-50"
+            >
+              This isn't me
             </button>
           </form>
           </>

@@ -19,8 +19,21 @@ function json(body: Record<string, unknown>, status = 200) {
   });
 }
 
-function inviteEmailHtml(opts: { companyName: string; fullName: string; actionLink: string; existing: boolean }) {
-  const { companyName, fullName, actionLink, existing } = opts;
+// Names and addresses come from form input; keep them text in the email.
+function escapeHtml(value: string) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function inviteEmailHtml(opts: { companyName: string; fullName: string; email: string; actionLink: string; existing: boolean }) {
+  const companyName = escapeHtml(opts.companyName);
+  const fullName = escapeHtml(opts.fullName);
+  const email = escapeHtml(opts.email);
+  const { actionLink, existing } = opts;
   const greeting = fullName ? `Hi ${fullName},` : "Hi,";
   const lead = existing
     ? `You've been added to <strong>${companyName}</strong> on QCore. Sign in to get started.`
@@ -34,6 +47,12 @@ function inviteEmailHtml(opts: { companyName: string; fullName: string; actionLi
           <p style="margin:0 0 12px;font-size:15px;color:#0f172a;font-weight:600;">${greeting}</p>
           <p style="margin:0 0 20px;font-size:14px;line-height:1.6;color:#475569;">${lead}</p>
           <a href="${actionLink}" style="display:inline-block;background:#1d4ed8;color:#ffffff;text-decoration:none;font-size:14px;font-weight:700;padding:12px 22px;border-radius:10px;">${cta}</a>
+          <!-- The link signs whoever opens it in as this address, so a forwarded
+               copy hands over the account. Say so before anyone forwards it. -->
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:22px 0 0;"><tr><td style="background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:12px 14px;font-size:13px;line-height:1.55;color:#7c2d12;">
+            <strong>This link is for ${email} only &mdash; please don't forward it.</strong><br>
+            Anyone who opens it is signed in as you. Team members get their own invitation: once you're in, invite them from <strong>Company Settings &rarr; Users</strong>.
+          </td></tr></table>
           <p style="margin:22px 0 0;font-size:12px;line-height:1.6;color:#94a3b8;">If the button doesn't work, copy and paste this link into your browser:<br><span style="color:#64748b;word-break:break-all;">${actionLink}</span></p>
         </td></tr>
         <tr><td style="padding:16px 28px;background:#f8fafc;border-top:1px solid #e2e8f0;font-size:11px;color:#94a3b8;">This invitation was sent by ${companyName} via QCore. If you weren't expecting it, you can ignore this email.</td></tr>
@@ -109,7 +128,7 @@ Deno.serve(async (req) => {
       from: fromEmail,
       to: [String(email)],
       subject: existing ? `You've been added to ${companyName} on QCore` : `You're invited to join ${companyName} on QCore`,
-      html: inviteEmailHtml({ companyName, fullName, actionLink, existing })
+      html: inviteEmailHtml({ companyName, fullName, email: String(email), actionLink, existing })
     });
     if (sendRes.error) return json({ sent: false, error: String(sendRes.error.message || sendRes.error) }, 500);
 
