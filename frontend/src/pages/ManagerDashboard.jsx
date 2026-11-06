@@ -910,26 +910,32 @@ function ManagerDashboard() {
       `Archive ${log.number}?\n\nIt will be removed from the review queue. Use this for stale submissions that are no longer available for review — the record stays in the database.`
     );
     if (!confirmed) return;
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from("daily_logs")
       .update({ status: "archived", updated_at: new Date().toISOString() })
-      .eq("id", log.rowId);
-    if (error) {
+      .eq("id", log.rowId)
+      .select("id");
+    if (error || !data?.length) {
       console.error("Daily log archive failed", error);
-      window.alert("The daily log could not be archived. Please try again.");
+      window.alert(error
+        ? "The daily log could not be archived. Please try again."
+        : "That log was not archived — you may not have permission to change it.");
       return;
     }
     setDailyLogs((current) => current.map((row) => (row.id === log.rowId ? { ...row, status: "archived" } : row)));
   }
 
   async function restoreDailyLog(log) {
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from("daily_logs")
       .update({ status: DAILY_LOG_STATUS.SUBMITTED, updated_at: new Date().toISOString() })
-      .eq("id", log.rowId);
-    if (error) {
+      .eq("id", log.rowId)
+      .select("id");
+    if (error || !data?.length) {
       console.error("Daily log restore failed", error);
-      window.alert("The daily log could not be restored. Please try again.");
+      window.alert(error
+        ? "The daily log could not be restored. Please try again."
+        : "That log was not restored — you may not have permission to change it.");
       return;
     }
     setDailyLogs((current) => current.map((row) => (row.id === log.rowId ? { ...row, status: DAILY_LOG_STATUS.SUBMITTED } : row)));

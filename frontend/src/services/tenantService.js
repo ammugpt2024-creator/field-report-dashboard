@@ -1,6 +1,14 @@
 import { supabase } from './supabase';
 import { logAuditEvent } from './auditLogService';
 
+// Postgres does not error when a policy filters an UPDATE or DELETE: it
+// matches no rows, and PostgREST reports that as success. Every admin write
+// below therefore returns its rows and passes them through here, so a blocked
+// change is reported instead of appearing to have worked.
+function assertWritten(rows, message) {
+  if (!Array.isArray(rows) || !rows.length) throw new Error(message);
+}
+
 // ── Platform admin operations ───────────────────────────────────────────────
 
 export async function listCompanies() {
@@ -416,11 +424,13 @@ export async function updateCompanyPayrollSettings(companyId, patch) {
 }
 
 export async function updateCompanyProfile(companyId, patch, previous = {}) {
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from('companies')
     .update({ ...patch, updated_at: new Date().toISOString() })
-    .eq('id', companyId);
+    .eq('id', companyId)
+    .select('id');
   if (error) throw error;
+  assertWritten(data, 'The company profile could not be updated. Only a company admin can change it.');
   logAuditEvent({
     companyId,
     action: 'company_profile_updated',
@@ -435,11 +445,13 @@ export async function updateCompanyProfile(companyId, patch, previous = {}) {
 // trigger sets it from the role's base_role, so the column RLS reads can never
 // drift from the role actually assigned.
 export async function setMemberRole(member, nextRoleId) {
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from('company_users')
     .update({ role_id: nextRoleId, updated_at: new Date().toISOString() })
-    .eq('id', member.id);
+    .eq('id', member.id)
+    .select('id');
   if (error) throw error;
+  assertWritten(data, 'That role change was not saved. Only a company admin can change roles.');
   logAuditEvent({
     companyId: member.company_id,
     action: 'user_role_changed',
@@ -504,11 +516,13 @@ export async function resendInvite(companyId, member) {
 }
 
 export async function setMemberStatus(member, nextStatus) {
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from('company_users')
     .update({ status: nextStatus, updated_at: new Date().toISOString() })
-    .eq('id', member.id);
+    .eq('id', member.id)
+    .select('id');
   if (error) throw error;
+  assertWritten(data, 'That change was not saved. Only a company admin can enable or disable a member.');
   logAuditEvent({
     companyId: member.company_id,
     action: nextStatus === 'disabled' ? 'user_disabled' : 'user_updated',
@@ -525,8 +539,9 @@ export async function setMemberStatus(member, nextStatus) {
 export async function updateMemberDetails(member, { full_name, roleId }) {
   const patch = { full_name, updated_at: new Date().toISOString() };
   if (roleId) patch.role_id = roleId;
-  const { error } = await supabase.from('company_users').update(patch).eq('id', member.id);
+  const { data, error } = await supabase.from('company_users').update(patch).eq('id', member.id).select('id');
   if (error) throw error;
+  assertWritten(data, "Those details were not saved. Only a company admin can edit an employee's record.");
   logAuditEvent({
     companyId: member.company_id,
     action: 'user_updated',
@@ -581,8 +596,9 @@ export async function deleteProject(project) {
   if ((reportCount || 0) > 0) {
     throw new Error(`This project has ${reportCount} report(s). Archive it instead of deleting, to keep the records intact.`);
   }
-  const { error } = await supabase.from('projects').delete().eq('id', project.id);
+  const { data, error } = await supabase.from('projects').delete().eq('id', project.id).select('id');
   if (error) throw error;
+  assertWritten(data, 'That project was not deleted. Only a company admin or project manager can delete it.');
   logAuditEvent({
     companyId: project.company_id,
     action: 'project_deleted',
@@ -621,20 +637,23 @@ export async function assignUserToProject(companyId, projectId, userId, assignme
 // Update a single module's access level on an assignment (merges into the
 // existing permissions map).
 export async function updateAssignmentPermissions(companyId, assignmentId, permissions) {
-  const { error } = await supabase.from('project_assignments').update({ permissions }).eq('id', assignmentId);
+  const { data, error } = await supabase.from('project_assignments').update({ permissions }).eq('id', assignmentId).select('id');
   if (error) throw error;
+  assertWritten(data, 'Those access levels were not saved. Only a company admin or project manager can change them.');
   logAuditEvent({ companyId, action: 'project_assignment_updated', entityType: 'project_assignment', entityId: assignmentId, newValue: { permissions } });
 }
 
 export async function updateAssignmentAccess(companyId, assignmentId, accessLevel) {
-  const { error } = await supabase.from('project_assignments').update({ access_level: accessLevel }).eq('id', assignmentId);
+  const { data, error } = await supabase.from('project_assignments').update({ access_level: accessLevel }).eq('id', assignmentId).select('id');
   if (error) throw error;
+  assertWritten(data, 'That access level was not saved. Only a company admin or project manager can change it.');
   logAuditEvent({ companyId, action: 'project_assignment_updated', entityType: 'project_assignment', entityId: assignmentId, newValue: { accessLevel } });
 }
 
 export async function removeProjectAssignment(companyId, assignmentId) {
-  const { error } = await supabase.from('project_assignments').delete().eq('id', assignmentId);
+  const { data, error } = await supabase.from('project_assignments').delete().eq('id', assignmentId).select('id');
   if (error) throw error;
+  assertWritten(data, 'That person was not removed from the project. Only a company admin or project manager can remove them.');
   logAuditEvent({ companyId, action: 'project_assignment_removed', entityType: 'project_assignment', entityId: assignmentId });
 }
 
@@ -674,8 +693,9 @@ export async function createRole(companyId, { name, description, permissions, ba
 export async function updateRole(companyId, roleId, { name, description, permissions, baseRole }) {
   const patch = { name, description: description || '', permissions: permissions || {} };
   if (baseRole) patch.base_role = baseRole;
-  const { error } = await supabase.from('roles').update(patch).eq('id', roleId);
+  const { data, error } = await supabase.from('roles').update(patch).eq('id', roleId).select('id');
   if (error) throw error;
+  assertWritten(data, 'That role was not saved. Only a company admin can change roles.');
   logAuditEvent({ companyId, action: 'role_updated', entityType: 'role', entityId: roleId, newValue: { name, permissions, base_role: baseRole } });
 }
 
@@ -716,8 +736,9 @@ export async function insertCompanyRow(table, companyId, row, auditAction) {
 }
 
 export async function updateCompanyRow(table, companyId, id, patch, auditAction) {
-  const { error } = await supabase.from(table).update(patch).eq('id', id);
+  const { data, error } = await supabase.from(table).update(patch).eq('id', id).select('id');
   if (error) throw error;
+  assertWritten(data, 'That change was not saved. You may not have permission to edit this record.');
   if (auditAction) {
     logAuditEvent({ companyId, action: auditAction, entityType: table, entityId: id, newValue: patch });
   }

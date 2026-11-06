@@ -70,20 +70,27 @@ export async function createPtoRequest({ pto_type, start_date, end_date, hours, 
 export async function decidePtoRequest(request, decision, comment = '') {
   const { data: auth } = await supabase.auth.getUser();
   const status = decision === 'approved' ? 'approved' : 'denied';
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from('pto_requests')
     .update({ status, reviewed_by: auth?.user?.id || null, reviewed_at: new Date().toISOString(), reviewer_comment: comment || '', updated_at: new Date().toISOString() })
-    .eq('id', request.id);
+    .eq('id', request.id)
+    .select('id');
   if (error) throw error;
+  if (!Array.isArray(data) || !data.length) {
+    throw new Error('That decision was not saved. Only a company admin can approve or deny time off.');
+  }
   logAuditEvent({ companyId: request.company_id, action: `pto_${status}`, entityType: 'pto_request', entityId: request.id, newValue: { status, comment } });
   notifyEmployeeOfDecision(request, status, comment).catch((e) => console.warn('PTO decision email failed:', e?.message));
 }
 
 // Employee can cancel their own pending request.
 export async function cancelPtoRequest(request) {
-  const { error } = await supabase
-    .from('pto_requests').update({ status: 'cancelled', updated_at: new Date().toISOString() }).eq('id', request.id);
+  const { data, error } = await supabase
+    .from('pto_requests').update({ status: 'cancelled', updated_at: new Date().toISOString() }).eq('id', request.id).select('id');
   if (error) throw error;
+  if (!Array.isArray(data) || !data.length) {
+    throw new Error('That request was not cancelled. A request can only be withdrawn while it is still pending.');
+  }
 }
 
 // ── Balances (computed) ─────────────────────────────────────────────────────
