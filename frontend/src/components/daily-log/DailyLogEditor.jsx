@@ -32,6 +32,7 @@ import { createDailyLogPdfSignedUrl, generateHydratedDailyLogPdfBlob, regenerate
 import { logAuditEvent } from "../../services/auditLogService";
 import { sendDailyLogReviewEmail } from "../../services/notificationService";
 import DailyLogSubmitPanel from "./DailyLogSubmitPanel";
+import { compressImageForUpload } from "../../utils/imageCompression";
 
 const DAILY_LOG_ATTACHMENT_BUCKET = "daily-log-attachments";
 const DAILY_LOG_ATTACHMENT_FALLBACK_BUCKET = "report-attachments";
@@ -475,7 +476,9 @@ async function uploadDailyLogAttachment(file, attachment) {
   };
 }
 
-async function createUploadReadyAttachment(file, attachmentType, context) {
+async function createUploadReadyAttachment(originalFile, attachmentType, context) {
+  // Photos are shrunk before upload; the record describes the file stored.
+  const file = await compressImageForUpload(originalFile);
   const attachment = createAttachmentRecord(file, attachmentType, context);
   return {
     file,

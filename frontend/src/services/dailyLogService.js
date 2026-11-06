@@ -422,10 +422,28 @@ function getWeatherSummary(log = {}) {
     "";
 }
 
+// A completed concrete report carried its whole PDF as a base64 data URL, and
+// that copy rode inside the daily log's jsonb payload into the database: a
+// megabyte or so of database disk per report, for a file Storage already
+// holds. Only the browser cache may keep it (as the fallback when the upload
+// failed); the database row never does.
+function stripReportPdfData(report = {}) {
+  if (!report.pdfDataUrl && !report.pdf_data_url) return report;
+  return { ...report, pdfDataUrl: "", pdf_data_url: "" };
+}
+
 // The jsonb payload column must stay small: cached PDF data URLs add megabytes
 // to every upsert and can push the request past the submission timeout.
 function sanitizeDailyLogForSupabasePayload(log = {}) {
-  return stripCachedPdfData(sanitizeDailyLogForBrowserStorage(log));
+  const sanitized = stripCachedPdfData(sanitizeDailyLogForBrowserStorage(log));
+  return {
+    ...sanitized,
+    activities: (sanitized.activities || []).map((activity) => ({
+      ...activity,
+      concreteReports: (activity.concreteReports || []).map(stripReportPdfData),
+      reports: (activity.reports || []).map(stripReportPdfData)
+    }))
+  };
 }
 
 function buildSupabaseDailyLogPayload(log = {}, userId, patch = {}) {

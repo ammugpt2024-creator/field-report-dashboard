@@ -253,7 +253,6 @@ export async function generateAndUploadConcreteReportPdf(log, activity, report) 
   console.info("[Concrete Report PDF] PDF generation started", { dailyLogId: log.id, activityId: activity.id, reportId: report.id });
   const pdfBlob = generateConcreteReportPdfBlob(log, activity, report);
   console.info("[Concrete Report PDF] PDF generated", { reportId: report.id, size: pdfBlob.size });
-  const pdfDataUrl = await blobToDataUrl(pdfBlob);
   const storagePath = getStoragePath(log, activity, report);
   console.info("[Concrete Report PDF] Storage upload started", { bucket: CONCRETE_REPORT_PDF_BUCKET, storagePath, size: pdfBlob.size });
   const { error } = await supabase.storage.from(CONCRETE_REPORT_PDF_BUCKET).upload(storagePath, pdfBlob, {
@@ -263,6 +262,9 @@ export async function generateAndUploadConcreteReportPdf(log, activity, report) 
   });
   if (error) {
     console.warn("[Concrete Report PDF] Storage upload failed", { bucket: CONCRETE_REPORT_PDF_BUCKET, storagePath, error });
+    // Only this fallback needs a base64 copy, and the database payload strips
+    // it again (sanitizeDailyLogForSupabasePayload): it lives in the browser.
+    const pdfDataUrl = await blobToDataUrl(pdfBlob);
     return {
       pdfStoragePath: "",
       pdf_storage_path: "",
@@ -286,7 +288,8 @@ export async function generateAndUploadConcreteReportPdf(log, activity, report) 
     pdf_generation_status: "generated",
     pdfGenerationFailureReason: "",
     pdf_generation_failure_reason: "",
-    pdfDataUrl,
+    // Stored in Storage: no base64 copy to carry around in the log.
+    pdfDataUrl: "",
     pdfStorageMode: "supabase"
   };
 }

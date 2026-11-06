@@ -46,6 +46,7 @@ import {
 import ActionButton from '../components/ActionButton';
 import { BRAND, MODULE_NAMES, WORKFLOW_LABELS } from '../config/branding';
 import { localDateString } from "../utils/dates";
+import { compressImageForUpload } from "../utils/imageCompression";
 import pdfWorkerUrl from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
 
 const ATTACHMENT_BUCKET = 'concrete-test-attachments';
@@ -2573,15 +2574,17 @@ function ConcreteTestLog() {
     const projectFolder = getProjectStorageFolder(projectInfo, projectId);
     for (const attachment of pendingAttachments) {
       setUploadProgress((previous) => ({ ...previous, [attachment.id]: 25 }));
-      const safeName = attachment.name.replace(/[^a-zA-Z0-9_.-]/g, '_');
+      // Photos are shrunk before upload; name, type and size describe the file stored.
+      const uploadFile = await compressImageForUpload(attachment.file);
+      const safeName = uploadFile.name.replace(/[^a-zA-Z0-9_.-]/g, '_');
       const deliveryRecordRowId = attachment.deliveryRecordId
         ? deliveryRecordRowIdsRef.current[attachment.deliveryRecordId]
         : null;
       const attachmentScope = deliveryRecordRowId ? `records/record_${deliveryRecordRowId}` : 'report';
       const path = `${projectFolder}/concrete-test-logs/log_${logId}/attachments/${attachmentScope}/${attachment.category}-${Date.now()}-${safeName}`;
 
-      const { error } = await supabase.storage.from(ATTACHMENT_BUCKET).upload(path, attachment.file, {
-        contentType: attachment.type,
+      const { error } = await supabase.storage.from(ATTACHMENT_BUCKET).upload(path, uploadFile, {
+        contentType: uploadFile.type || attachment.type,
         cacheControl: '0',
         upsert: true
       });
@@ -2591,6 +2594,9 @@ function ConcreteTestLog() {
       const attachmentUrl = await getStorageAccessUrl(ATTACHMENT_BUCKET, path);
       const uploadedAttachment = {
         ...attachment,
+        name: uploadFile.name,
+        size: uploadFile.size,
+        type: uploadFile.type || attachment.type,
         uploaded: true,
         url: attachmentUrl,
         storagePath: path
@@ -2601,11 +2607,11 @@ function ConcreteTestLog() {
           log_id: logId,
           delivery_record_id: deliveryRecordRowId,
           category: attachment.category,
-          file_name: attachment.name,
+          file_name: uploadedAttachment.name,
           file_url: attachmentUrl,
           storage_path: path,
-          content_type: attachment.type,
-          file_size: attachment.size
+          content_type: uploadedAttachment.type,
+          file_size: uploadedAttachment.size
         },
         (nextPayload) => supabase.from('concrete_attachments').insert(nextPayload)
       );
