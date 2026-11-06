@@ -325,7 +325,7 @@ export async function getProjectClientRecipients(projectId) {
   if (!projectId) return { recipients: [], clientName: '' };
   const { data: project, error } = await supabase
     .from('projects')
-    .select('client_id, client_cc_emails, client_name')
+    .select('client_id, client_contact_id, client_cc_emails, client_name')
     .eq('id', projectId)
     .maybeSingle();
   if (error || !project) {
@@ -337,6 +337,8 @@ export async function getProjectClientRecipients(projectId) {
 
   let clientName = project.client_name || '';
   let contactEmail = '';
+  let contactName = '';
+
   if (project.client_id) {
     const { data: client } = await supabase
       .from('clients')
@@ -345,7 +347,23 @@ export async function getProjectClientRecipients(projectId) {
       .maybeSingle();
     if (client && client.status !== 'inactive') {
       clientName = client.client_name || clientName;
+      // The client's own contact is the account contact — the fallback when
+      // a project has not named someone of its own.
       contactEmail = String(client.contact_email || '').trim();
+    }
+  }
+
+  // The person this project reports to, which is usually their project
+  // manager rather than whoever signs the contract.
+  if (project.client_contact_id) {
+    const { data: contact } = await supabase
+      .from('client_contacts')
+      .select('full_name, email, title, status')
+      .eq('id', project.client_contact_id)
+      .maybeSingle();
+    if (contact && contact.status !== 'inactive' && String(contact.email || '').trim()) {
+      contactEmail = String(contact.email).trim();
+      contactName = contact.full_name || '';
     }
   }
 
@@ -354,7 +372,7 @@ export async function getProjectClientRecipients(projectId) {
       .map((email) => String(email || '').trim().toLowerCase())
       .filter((email) => email.includes('@'))
   )];
-  return { recipients, clientName };
+  return { recipients, clientName, contactName };
 }
 
 // The approved daily report, as the client sees it. Internal review comments

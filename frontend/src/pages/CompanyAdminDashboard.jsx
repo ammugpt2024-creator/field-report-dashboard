@@ -305,6 +305,8 @@ export default function CompanyAdminDashboard() {
   const [inviteUi, setInviteUi] = useState({ busy: false, error: "", sentEmail: "" });
   const [resendingId, setResendingId] = useState("");
   const [newClient, setNewClient] = useState(null);
+  const [clientContacts, setClientContacts] = useState([]);
+  const [newContact, setNewContact] = useState(null);
   const [newEquipment, setNewEquipment] = useState(null);
   const [newProject, setNewProject] = useState(null);
   const [profileDraft, setProfileDraft] = useState(null);
@@ -321,9 +323,10 @@ export default function CompanyAdminDashboard() {
     try {
       const ctx = await getMyCompanyContext();
       setContext(ctx);
-      const [projectRows, clientRows, equipmentRows, labRows, supportRows, assignmentRows, roleRows, ptoReqRows, ptoPolicyRows] = await Promise.all([
+      const [projectRows, clientRows, contactRows, equipmentRows, labRows, supportRows, assignmentRows, roleRows, ptoReqRows, ptoPolicyRows] = await Promise.all([
         supabase.from("projects").select("*").order("project_name").then((r) => r.data || []),
         listCompanyRows("clients"),
+        listCompanyRows("client_contacts", "full_name"),
         listCompanyRows("equipment"),
         listCompanyRows("lab_reports"),
         listSupportRequests(),
@@ -336,6 +339,7 @@ export default function CompanyAdminDashboard() {
       setAssignments(assignmentRows);
       setRoles(roleRows);
       setClients(clientRows);
+      setClientContacts(contactRows);
       setEquipment(equipmentRows);
       setLabReports(labRows);
       setSupportRequests(supportRows);
@@ -560,6 +564,41 @@ export default function CompanyAdminDashboard() {
       setInviteUi({ busy: false, error: "", sentEmail: email });
     } catch (err) {
       setInviteUi({ busy: false, error: err.message || "The invitation could not be sent.", sentEmail: "" });
+    }
+  }
+
+// A client is an organisation: the president belongs on the account, while
+  // each project reports to its own manager there.
+  async function submitContact(event) {
+    event.preventDefault();
+    setError("");
+    const email = String(newContact.email || "").trim().toLowerCase();
+    if (email && !/^[^@s]+@[^@s]+.[a-z]{2,}$/i.test(email)) {
+      setError("Enter a valid email address for this contact, or leave it empty.");
+      return;
+    }
+    try {
+      await insertCompanyRow("client_contacts", company.id, { ...newContact, email: email || null }, "client_contact_added");
+      setNewContact(null);
+      await refresh();
+    } catch (err) {
+      setError(err.message || "That contact could not be saved.");
+    }
+  }
+
+  async function removeClientContact(contact) {
+    const inUse = projects.filter((p) => p.client_contact_id === contact.id);
+    const warning = inUse.length
+      ? `
+
+${inUse.length} project(s) send reports to this contact. They will fall back to the client's account contact.`
+      : "";
+    if (!window.confirm(`Remove ${contact.full_name} from this client?${warning}`)) return;
+    try {
+      await updateCompanyRow("client_contacts", company.id, contact.id, { status: "inactive" }, "client_contact_removed");
+      await refresh();
+    } catch (err) {
+      window.alert(err.message || "That contact could not be removed.");
     }
   }
 
@@ -1046,17 +1085,47 @@ export default function CompanyAdminDashboard() {
             action={<SmallButton onClick={() => setNewClient({ client_name: "", client_type: "owner", contact_name: "", contact_email: "" })}><Plus className="h-3.5 w-3.5" />Add</SmallButton>}
           >
             <div className="-my-1 divide-y divide-slate-100">
-              {clients.map((client) => (
-                <div key={client.id} className="flex items-center justify-between gap-3 py-3">
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-bold capitalize text-slate-900">{client.client_name}</p>
-                    <p className="truncate text-xs font-medium text-slate-400">{client.client_type.replace(/_/g, " ")} · {client.contact_name || "—"} {client.contact_email ? `· ${client.contact_email}` : ""}</p>
+              {clients.map((client) => {
+                const contacts = clientContacts.filter((c) => c.client_id === client.id && c.status !== "inactive");
+                return (
+                <div key={client.id} className="py-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-bold capitalize text-slate-900">{client.client_name}</p>
+                      <p className="truncate text-xs font-medium text-slate-400">{client.client_type.replace(/_/g, " ")} · {client.contact_name || "—"} {client.contact_email ? `· ${client.contact_email}` : ""}</p>
+                    </div>
+                    <SmallButton onClick={() => setNewContact({ client_id: client.id, full_name: "", title: "", email: "", phone: "" })} className="border-blue-200 text-blue-700 hover:bg-blue-50">
+                      <Plus className="h-3.5 w-3.5" />Contact
+                    </SmallButton>
+                    <SmallButton onClick={() => updateCompanyRow("clients", company.id, client.id, { status: client.status === "active" ? "inactive" : "active" }, "client_updated").then(refresh)}>
+                      {client.status === "active" ? "Deactivate" : "Activate"}
+                    </SmallButton>
                   </div>
-                  <SmallButton onClick={() => updateCompanyRow("clients", company.id, client.id, { status: client.status === "active" ? "inactive" : "active" }, "client_updated").then(refresh)}>
-                    {client.status === "active" ? "Deactivate" : "Activate"}
-                  </SmallButton>
+                  {/* People at this client. A project points at one of these
+                      for its reports, so the president and each project
+                      manager can both be listed without competing. */}
+                  {contacts.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {contacts.map((contact) => (
+                        <span key={contact.id} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-600">
+                          {contact.full_name}
+                          {contact.title ? <span className="text-slate-400">· {contact.title}</span> : null}
+                          {contact.email ? <span className="text-slate-400">· {contact.email}</span> : <span className="text-amber-700">· no email</span>}
+                          <button
+                            type="button"
+                            title="Remove this contact"
+                            onClick={() => removeClientContact(contact)}
+                            className="ml-0.5 text-slate-400 hover:text-rose-600"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
-              ))}
+                );
+              })}
               {!clients.length && <p className="py-3 text-sm font-semibold text-slate-500">No clients yet — owners, GCs, agencies, utilities, and developers live here.</p>}
             </div>
           </SectionCard>
@@ -1211,6 +1280,35 @@ export default function CompanyAdminDashboard() {
                 </form>
               )}
             </div>
+          </div>
+        )}
+
+        {newContact && (
+          <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/60 sm:items-center sm:p-4">
+            <form onSubmit={submitContact} className="w-full max-w-md rounded-t-3xl bg-white p-4 shadow-2xl sm:rounded-3xl sm:p-6">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-bold">Add contact</h3>
+                <button type="button" onClick={() => { setError(""); setNewContact(null); }} className="rounded-full border border-slate-200 p-2"><X className="h-4 w-4" /></button>
+              </div>
+              <p className="mt-1 text-xs font-medium text-slate-500">
+                {clients.find((c) => c.id === newContact.client_id)?.client_name}. Each project can send its reports to a different person here.
+              </p>
+              <div className="mt-3 space-y-3">
+                <label className="block"><span className="text-xs font-bold uppercase text-slate-500">Name *</span>
+                  <input required value={newContact.full_name} onChange={(e) => setNewContact({ ...newContact, full_name: e.target.value })} className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 px-3 text-sm font-semibold" /></label>
+                <label className="block"><span className="text-xs font-bold uppercase text-slate-500">Title</span>
+                  <input value={newContact.title} onChange={(e) => setNewContact({ ...newContact, title: e.target.value })} placeholder="President, Project Manager, Resident Engineer" className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 px-3 text-sm font-semibold" /></label>
+                <label className="block"><span className="text-xs font-bold uppercase text-slate-500">Email</span>
+                  <input type="email" value={newContact.email} onChange={(e) => setNewContact({ ...newContact, email: e.target.value })} className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 px-3 text-sm font-semibold" /></label>
+                <label className="block"><span className="text-xs font-bold uppercase text-slate-500">Phone</span>
+                  <input value={newContact.phone} onChange={(e) => setNewContact({ ...newContact, phone: e.target.value })} className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 px-3 text-sm font-semibold" /></label>
+                {error && <p className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">{error}</p>}
+              </div>
+              <div className="mt-5 grid grid-cols-2 gap-2">
+                <button type="button" onClick={() => { setError(""); setNewContact(null); }} className="min-h-11 rounded-xl border border-slate-300 text-sm font-bold text-slate-700">Cancel</button>
+                <button type="submit" className="min-h-11 rounded-xl bg-blue-700 text-sm font-bold text-white">Save contact</button>
+              </div>
+            </form>
           </div>
         )}
 
@@ -1404,6 +1502,7 @@ export default function CompanyAdminDashboard() {
             roster={context.roster}
             roles={roles}
             clients={clients}
+            clientContacts={clientContacts}
             assignments={assignments.filter((a) => a.project_id === manageProject.id)}
             onClose={() => setManageProject(null)}
             onChanged={refresh}
@@ -1471,7 +1570,7 @@ function RoleEditorModal({ role, onClose, onSave }) {
 
 // Manage an existing project: edit its details, manage the team (PM / DPM /
 // technicians with per-person access), archive, or delete it.
-function ManageProjectModal({ project, company, roster, roles, clients, assignments, onClose, onChanged, onRemoved }) {
+function ManageProjectModal({ project, company, roster, roles, clients, clientContacts, assignments, onClose, onChanged, onRemoved }) {
   const [fields, setFields] = useState({
     project_name: project.project_name || "",
     project_number: project.project_number || "",
@@ -1481,6 +1580,7 @@ function ManageProjectModal({ project, company, roster, roles, clients, assignme
   });
   const [distribution, setDistribution] = useState({
     client_id: project.client_id || null,
+    client_contact_id: project.client_contact_id || null,
     cc: (project.client_cc_emails || []).join(", ")
   });
   const [busy, setBusy] = useState(false);
@@ -1516,8 +1616,14 @@ function ManageProjectModal({ project, company, roster, roles, clients, assignme
     .map((email) => email.trim().toLowerCase())
     .filter(Boolean);
   const selectedClient = (clients || []).find((c) => c.id === distribution.client_id);
+  const contactsForSelectedClient = (clientContacts || [])
+    .filter((c) => c.client_id === distribution.client_id && c.status !== "inactive");
+  const chosenContact = contactsForSelectedClient.find((c) => c.id === distribution.client_contact_id);
+  // The project contact replaces the account contact when one is named.
+  const primaryEmail = chosenContact?.email
+    || (selectedClient?.status !== "inactive" ? selectedClient?.contact_email : "");
   const distributionPreview = [...new Set(
-    [selectedClient?.status !== "inactive" ? selectedClient?.contact_email : "", ...ccList]
+    [primaryEmail, ...ccList]
       .map((email) => String(email || "").trim().toLowerCase())
       .filter((email) => email.includes("@"))
   )];
@@ -1525,7 +1631,11 @@ function ManageProjectModal({ project, company, roster, roles, clients, assignme
   async function saveDistribution() {
     const invalid = ccList.find((email) => !/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(email));
     if (invalid) { setError(`"${invalid}" is not a valid email address in Copy to.`); return; }
-    await run(() => updateProject(project, { client_id: distribution.client_id, client_cc_emails: ccList }));
+    await run(() => updateProject(project, {
+      client_id: distribution.client_id,
+      client_contact_id: distribution.client_contact_id,
+      client_cc_emails: ccList
+    }));
   }
 
   async function toggleArchive() {
@@ -1599,18 +1709,44 @@ function ManageProjectModal({ project, company, roster, roles, clients, assignme
             After a manager approves a daily report they are asked whether to send it here. Nothing is sent automatically.
           </p>
           <div className="mt-2 space-y-2">
-            <label className="block"><span className="text-xs font-semibold text-slate-600">Client record</span>
+            <label className="block"><span className="text-xs font-semibold text-slate-600">Client</span>
               <select
                 value={distribution.client_id || ""}
-                onChange={(e) => setDistribution({ ...distribution, client_id: e.target.value || null })}
+                onChange={(e) => setDistribution({ ...distribution, client_id: e.target.value || null, client_contact_id: null })}
                 className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm font-semibold"
               >
-                <option value="">No client contact</option>
+                <option value="">No client</option>
                 {(clients || []).filter((c) => c.status !== "inactive").map((c) => (
-                  <option key={c.id} value={c.id}>{c.client_name}{c.contact_email ? ` — ${c.contact_email}` : " (no email)"}</option>
+                  <option key={c.id} value={c.id}>{c.client_name}</option>
                 ))}
               </select>
             </label>
+            {/* One client can run several projects, each reporting to a
+                different person there. The account contact is the fallback. */}
+            <label className="block"><span className="text-xs font-semibold text-slate-600">Reports go to</span>
+              <select
+                value={distribution.client_contact_id || ""}
+                onChange={(e) => setDistribution({ ...distribution, client_contact_id: e.target.value || null })}
+                disabled={!distribution.client_id}
+                className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm font-semibold disabled:bg-slate-50 disabled:text-slate-400"
+              >
+                <option value="">
+                  {selectedClient?.contact_email
+                    ? `Account contact — ${selectedClient.contact_email}`
+                    : "Account contact (no email on file)"}
+                </option>
+                {contactsForSelectedClient.map((contact) => (
+                  <option key={contact.id} value={contact.id}>
+                    {contact.full_name}{contact.title ? ` · ${contact.title}` : ""}{contact.email ? ` — ${contact.email}` : " (no email)"}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {distribution.client_id && !contactsForSelectedClient.length && (
+              <p className="text-[11px] font-medium text-slate-400">
+                No named contacts for this client yet. Add them under Clients &amp; Contractors, then choose one here.
+              </p>
+            )}
             <label className="block"><span className="text-xs font-semibold text-slate-600">Copy to (comma separated)</span>
               <input
                 value={distribution.cc}
