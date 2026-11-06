@@ -578,7 +578,10 @@ export default function CompanyAdminDashboard() {
       return;
     }
     try {
-      await insertCompanyRow("client_contacts", company.id, { ...newContact, email: email || null }, "client_contact_added");
+      const { id, ...fields } = newContact;
+      const patch = { ...fields, email: email || null };
+      if (id) await updateCompanyRow("client_contacts", company.id, id, patch, "client_contact_updated");
+      else await insertCompanyRow("client_contacts", company.id, patch, "client_contact_added");
       setNewContact(null);
       await refresh();
     } catch (err) {
@@ -604,9 +607,22 @@ ${inUse.length} project(s) send reports to this contact. They will fall back to 
 
   async function submitClient(event) {
     event.preventDefault();
-    await insertCompanyRow("clients", company.id, newClient, "client_created");
-    setNewClient(null);
-    await refresh();
+    setError("");
+    const { id, ...fields } = newClient;
+    const email = String(fields.contact_email || "").trim().toLowerCase();
+    if (email && !/^[^@s]+@[^@s]+.[a-z]{2,}$/i.test(email)) {
+      setError("Enter a valid email address for the account contact, or leave it empty.");
+      return;
+    }
+    try {
+      const patch = { ...fields, contact_email: email || null };
+      if (id) await updateCompanyRow("clients", company.id, id, patch, "client_updated");
+      else await insertCompanyRow("clients", company.id, patch, "client_created");
+      setNewClient(null);
+      await refresh();
+    } catch (err) {
+      setError(err.message || "That client could not be saved.");
+    }
   }
 
   async function submitEquipment(event) {
@@ -1090,10 +1106,15 @@ ${inUse.length} project(s) send reports to this contact. They will fall back to 
                 return (
                 <div key={client.id} className="py-3">
                   <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-bold capitalize text-slate-900">{client.client_name}</p>
+                    <button
+                      type="button"
+                      onClick={() => { setError(""); setNewClient({ id: client.id, client_name: client.client_name, client_type: client.client_type, contact_name: client.contact_name || "", contact_email: client.contact_email || "" }); }}
+                      className="min-w-0 flex-1 text-left"
+                      title="Edit this client"
+                    >
+                      <p className="truncate text-sm font-bold capitalize text-slate-900 hover:text-blue-700">{client.client_name}</p>
                       <p className="truncate text-xs font-medium text-slate-400">{client.client_type.replace(/_/g, " ")} · {client.contact_name || "—"} {client.contact_email ? `· ${client.contact_email}` : ""}</p>
-                    </div>
+                    </button>
                     <SmallButton onClick={() => setNewContact({ client_id: client.id, full_name: "", title: "", email: "", phone: "" })} className="border-blue-200 text-blue-700 hover:bg-blue-50">
                       <Plus className="h-3.5 w-3.5" />Contact
                     </SmallButton>
@@ -1108,7 +1129,14 @@ ${inUse.length} project(s) send reports to this contact. They will fall back to 
                     <div className="mt-2 flex flex-wrap gap-1.5">
                       {contacts.map((contact) => (
                         <span key={contact.id} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-600">
-                          {contact.full_name}
+                          <button
+                            type="button"
+                            title="Edit this contact"
+                            onClick={() => { setError(""); setNewContact({ id: contact.id, client_id: contact.client_id, full_name: contact.full_name, title: contact.title || "", email: contact.email || "", phone: contact.phone || "" }); }}
+                            className="font-semibold text-slate-700 hover:text-blue-700"
+                          >
+                            {contact.full_name}
+                          </button>
                           {contact.title ? <span className="text-slate-400">· {contact.title}</span> : null}
                           {contact.email ? <span className="text-slate-400">· {contact.email}</span> : <span className="text-amber-700">· no email</span>}
                           <button
@@ -1287,7 +1315,7 @@ ${inUse.length} project(s) send reports to this contact. They will fall back to 
           <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/60 sm:items-center sm:p-4">
             <form onSubmit={submitContact} className="w-full max-w-md rounded-t-3xl bg-white p-4 shadow-2xl sm:rounded-3xl sm:p-6">
               <div className="flex items-center justify-between">
-                <h3 className="text-lg font-bold">Add contact</h3>
+                <h3 className="text-lg font-bold">{newContact.id ? "Edit contact" : "Add contact"}</h3>
                 <button type="button" onClick={() => { setError(""); setNewContact(null); }} className="rounded-full border border-slate-200 p-2"><X className="h-4 w-4" /></button>
               </div>
               <p className="mt-1 text-xs font-medium text-slate-500">
@@ -1306,7 +1334,7 @@ ${inUse.length} project(s) send reports to this contact. They will fall back to 
               </div>
               <div className="mt-5 grid grid-cols-2 gap-2">
                 <button type="button" onClick={() => { setError(""); setNewContact(null); }} className="min-h-11 rounded-xl border border-slate-300 text-sm font-bold text-slate-700">Cancel</button>
-                <button type="submit" className="min-h-11 rounded-xl bg-blue-700 text-sm font-bold text-white">Save contact</button>
+                <button type="submit" className="min-h-11 rounded-xl bg-blue-700 text-sm font-bold text-white">{newContact.id ? "Save changes" : "Add contact"}</button>
               </div>
             </form>
           </div>
@@ -1315,7 +1343,7 @@ ${inUse.length} project(s) send reports to this contact. They will fall back to 
         {newClient && (
           <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/60 sm:items-center sm:p-4">
             <form onSubmit={submitClient} className="w-full max-w-lg rounded-t-3xl bg-white p-4 shadow-2xl sm:rounded-3xl sm:p-6">
-              <div className="flex items-center justify-between"><h3 className="text-lg font-bold">Add Client</h3>
+              <div className="flex items-center justify-between"><h3 className="text-lg font-bold">{newClient.id ? "Edit client" : "Add client"}</h3>
                 <button type="button" onClick={() => setNewClient(null)} className="rounded-full border border-slate-200 p-2"><X className="h-4 w-4" /></button></div>
               <div className="mt-3 space-y-3">
                 <label className="block"><span className="text-xs font-bold uppercase text-slate-500">Client Name *</span>
@@ -1328,10 +1356,16 @@ ${inUse.length} project(s) send reports to this contact. They will fall back to 
                   <input value={newClient.contact_name} onChange={(event) => setNewClient({ ...newClient, contact_name: event.target.value })} className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 px-3 text-sm font-semibold" /></label>
                 <label className="block"><span className="text-xs font-bold uppercase text-slate-500">Contact Email</span>
                   <input type="email" value={newClient.contact_email} onChange={(event) => setNewClient({ ...newClient, contact_email: event.target.value })} className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 px-3 text-sm font-semibold" /></label>
+                <p className="text-[11px] font-medium text-slate-400">
+                  This is the account contact. Each project can report to a different person — add them with <strong>+ Contact</strong> on the client, then choose one under the project&apos;s Report distribution.
+                </p>
+                {/* The page-level banner sits behind this dialog, so a problem
+                    saving has to be shown here or it is never seen. */}
+                {error && <p className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">{error}</p>}
               </div>
               <div className="mt-4 grid grid-cols-2 gap-2">
-                <button type="button" onClick={() => setNewClient(null)} className="min-h-11 rounded-xl border border-slate-300 text-sm font-bold text-slate-700">Cancel</button>
-                <button type="submit" className="min-h-11 rounded-xl bg-blue-700 text-sm font-bold text-white">Add Client</button>
+                <button type="button" onClick={() => { setError(""); setNewClient(null); }} className="min-h-11 rounded-xl border border-slate-300 text-sm font-bold text-slate-700">Cancel</button>
+                <button type="submit" className="min-h-11 rounded-xl bg-blue-700 text-sm font-bold text-white">{newClient.id ? "Save client" : "Add client"}</button>
               </div>
             </form>
           </div>
